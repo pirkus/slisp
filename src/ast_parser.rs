@@ -1,11 +1,16 @@
 use crate::domain::AstNode;
 use crate::domain::AstNodeType;
-use std::collections::VecDeque;
 use crate::domain::Errors;
 
 struct AstParser;
-impl AstParser {
-    pub fn parse(&self) -> AstNode {
+trait AstParserTrt {
+     fn parse(str: String) -> AstNode;
+
+     fn is_valid(str: String) -> Result<i32, Errors>;
+}
+
+impl AstParserTrt for AstParser {
+     fn parse(input: String) -> AstNode {
         return AstNode {
             value: String::from("3"),
             node_type: AstNodeType::Num,
@@ -13,27 +18,37 @@ impl AstParser {
         };
     }
 
-    pub fn is_valid(str: String) -> Result<i32, Errors> {
-        let mut z: VecDeque<char> = str.chars().collect();
-        let mut par_count: i32 = 0;
-        while(!z.is_empty()) {
-            match  z.pop_front().unwrap() {
-                '(' => par_count += 1,
-                ')' => {
-                    par_count -= 1; 
-                    if par_count == 0 && !z.is_empty() {
-                        return Err(Errors::InvalidSyntax)
-                    }
-                },
-                _ => (),
-            }
-        }
-
-        if par_count != 0 {
-            return Err(Errors::InvalidSyntax)
-        } else {
-            return Ok(0)
-        }
+     fn is_valid(str: String) -> Result<i32, Errors> {
+        str
+            .chars()
+            .collect::<Vec<char>>()
+            .iter()
+            .map(|x| {
+                match x {
+                    '(' => Ok(1),
+                    ')' => Ok(-1),
+                    _ => Ok(0)
+                }
+            }).into_iter()
+            .enumerate()
+            .try_fold(0, |acc, (i, res)| {
+                match res {
+                    Ok(num) => {
+                        if (acc + num == 0) && str.len() > i + 1 {
+                            Err(Errors::InvalidSyntax)
+                        } else {
+                            Ok(acc + num)
+                        }
+                    },
+                    Err(_) => res
+                }
+            }).and_then(|x| {
+                if x == 0 {
+                    Ok(0)
+                } else {
+                    Err(Errors::InvalidSyntax)
+                }
+            })
     }
 }
 
@@ -44,6 +59,7 @@ mod tests {
     #[test]
     fn is_valid_return_true_or_false() {
         assert_eq!(Ok(0), AstParser::is_valid(String::from("()")));
+        assert_eq!(Ok(0), AstParser::is_valid(String::from("(()())")));
         assert_eq!(Err(Errors::InvalidSyntax), AstParser::is_valid(String::from(")")));
         assert_eq!(Err(Errors::InvalidSyntax), AstParser::is_valid(String::from("()()")));
         assert_eq!(Ok(0), AstParser::is_valid(String::from("(let (n 2) n*2)")));
