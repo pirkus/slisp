@@ -1,5 +1,3 @@
-#![deny(warnings)]
-
 mod ast_parser;
 mod domain;
 
