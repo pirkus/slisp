@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 mod ast_parser;
 mod domain;
 
@@ -10,12 +12,12 @@ fn main() {
     let mut ast = AstNode {
         value: String::from("3"),
         node_type: AstNodeType::Num,
-        nodes: Vec::new(),
+        nodes: Box::new(Vec::new()),
     };
     let ast2 = AstNode {
         value: String::from("1"),
         node_type: AstNodeType::Num,
-        nodes: Vec::new(),
+        nodes: Box::new(Vec::new()),
     };
     ast.nodes.push(ast2);
     print(&ast);

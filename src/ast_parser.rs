@@ -4,18 +4,13 @@ use crate::domain::Errors;
 
 struct AstParser;
 trait AstParserTrt {
-     fn parse(str: String) -> AstNode;
-
-     fn is_valid(str: String) -> Result<i32, Errors>;
+    fn parse(str: String) -> AstNode;
+    fn is_valid(str: String) -> Result<i32, Errors>;
 }
 
 impl AstParserTrt for AstParser {
-     fn parse(input: String) -> AstNode {
-        return AstNode {
-            value: String::from("3"),
-            node_type: AstNodeType::Num,
-            nodes: Vec::new(),
-        };
+     fn parse(_input: String) -> AstNode {
+         AstNode::new(String::from("z1"), AstNodeType::Fn, vec![])
     }
 
      fn is_valid(str: String) -> Result<i32, Errors> {
@@ -57,11 +52,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_valid_return_true_or_false() {
+    fn is_valid() {
         assert_eq!(Ok(0), AstParser::is_valid(String::from("()")));
         assert_eq!(Ok(0), AstParser::is_valid(String::from("(()())")));
         assert_eq!(Err(Errors::InvalidSyntax), AstParser::is_valid(String::from(")")));
         assert_eq!(Err(Errors::InvalidSyntax), AstParser::is_valid(String::from("()()")));
-        assert_eq!(Ok(0), AstParser::is_valid(String::from("(let (n 2) n*2)")));
+        assert_eq!(Ok(0), AstParser::is_valid(String::from("(+ (* 2 1) (* 2 1))")));
     }
 }
