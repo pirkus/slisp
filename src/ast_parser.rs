@@ -4,7 +4,7 @@ use crate::domain::Errors;
 
 struct AstParser;
 trait AstParserTrt {
-    fn parse(str: String) -> AstNode;
+    fn parse(input: String) -> AstNode;
     fn is_valid(str: String) -> Result<i32, Errors>;
 }
 
