@@ -5,7 +5,7 @@ jobs:
     docker:
       - image: cimg/rust:1.73.0
     resource_class: small
-    env:
+    environment:
       RUSTFLAGS: -D warnings
     steps:
       - checkout
