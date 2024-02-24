@@ -7,8 +7,8 @@ use crate::domain::AstNodeType;
 fn main() {
     // let mut buffer = String::new();
     // let stdin = io::stdin();
-    let ast = AstNode::new(String::from("3"), AstNodeType::Num,  vec![]);
-    let ast2 = AstNode::new(String::from("1"), AstNodeType::Num, vec![ast]);
+    let ast = AstNode::new(String::from("3"), AstNodeType::Int,  vec![]);
+    let ast2 = AstNode::new(String::from("1"), AstNodeType::Int, vec![ast]);
     println!("Display: {:#?}", ast2);
     // while stdin.read_line(&mut buffer).is_ok() {
     //     // Trim end.
