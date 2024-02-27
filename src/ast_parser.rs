@@ -84,24 +84,27 @@ mod tests {
     #[test]
     fn parse_sexp() {
         // add a test for: "(+ (+ (* 1 2) (* 3   4)))"
+        let mut binding = AstParser::new();
+        let parsed = binding.parse_sexp("(+ 2 (* 3 4))".as_bytes(), 0).1;
         assert_eq!(
-            AstParser::new().parse_sexp("(+ 2 (* 3 4))".as_bytes(), 0).1, 
-                vec![
-                    AstNode::new("$cons-1".to_string(), AstNodeType::List,
-                        vec![
-                            AstNode::new_end_node("+".to_string(), AstNodeType::Symbol),
-                            AstNode::new_end_node("2".to_string(), AstNodeType::Int),
-                            AstNode::new("$cons-0".to_string(), AstNodeType::List, 
-                                vec![
-                                    AstNode::new_end_node("*".to_string(), AstNodeType::Symbol),
-                                    AstNode::new_end_node("3".to_string(), AstNodeType::Int),
-                                    AstNode::new_end_node("4".to_string(), AstNodeType::Int)
-                                ]
-                            )
-                        ]
-                    )
-                ]
+            parsed, 
+            vec![
+                AstNode::new("$cons-1".to_string(), AstNodeType::List,
+                    vec![
+                        AstNode::new_end_node("+".to_string(), AstNodeType::Symbol),
+                        AstNode::new_end_node("2".to_string(), AstNodeType::Int),
+                        AstNode::new("$cons-0".to_string(), AstNodeType::List, 
+                            vec![
+                                AstNode::new_end_node("*".to_string(), AstNodeType::Symbol),
+                                AstNode::new_end_node("3".to_string(), AstNodeType::Int),
+                                AstNode::new_end_node("4".to_string(), AstNodeType::Int)
+                            ]
+                        )
+                    ]
+                )
+            ]
         );
+        print!("{:#?}", parsed)
     }
 
     #[test]
