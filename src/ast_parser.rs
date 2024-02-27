@@ -31,8 +31,9 @@ impl AstParserTrt for AstParser {
                     (i, result)
                 },
                 ' ' => {
-                if !buffer.is_empty() { 
-                    result.push(AstNode::new_end_node(buffer.clone(), if result.is_empty() {AstNodeType::Symbol} else {AstNodeType::Int}))}
+                    if !buffer.is_empty() { 
+                        result.push(AstNode::new_end_node(buffer.clone(), if result.is_empty() {AstNodeType::Symbol} else {AstNodeType::Int}))
+                    }
                     buffer = String::new();
                 },
                 _ => buffer.push(input[i] as char)
