@@ -1,46 +1,58 @@
-
+use std::ops::Add;
 use crate::domain::AstNode;
 use crate::domain::AstNodeType;
 use crate::domain::Errors;
 
 struct AstParser {
-    list_count: u32
+    list_count: u32,
 }
+
 trait AstParserTrt {
     fn new() -> AstParser { AstParser { list_count: 0 } }
-    fn parse_sexp(&mut self, input: &[u8], offset: usize) -> (usize, Vec<AstNode>);
+    fn parse_sexp(&mut self, input: &[u8], offset: usize, buffer: String, end_nodes: Vec<AstNode>) -> Vec<AstNode>;
     fn is_valid(str: String) -> Result<i32, Errors>;
 }
 
 impl AstParserTrt for AstParser {
-    fn parse_sexp(&mut self, input: &[u8], offset: usize) -> (usize, Vec<AstNode>) {
-        let mut result: Vec<AstNode> = Vec::new();
-        let mut buffer = String::new();
-        for i in offset..input.len() {
-            match input[i] as char {
-                '(' => return {
-                    let (new_index, children) = self.parse_sexp(input, i + 1);
-                    let mut list_name = String::from("$cons-");
-                    list_name.push(char::from_digit(self.list_count, 10).unwrap());
-                    self.list_count += 1;
-                    result.push(AstNode::new(list_name, AstNodeType::List, children));
-                    (new_index+1, result)
-                },
-                ')' => return {
-                    result.push(AstNode::new_end_node(buffer.clone(), if result.is_empty() {AstNodeType::Symbol} else {AstNodeType::Int}));
-                    (i, result)
-                },
-                ' ' => {
-                    if !buffer.is_empty() { 
-                        result.push(AstNode::new_end_node(buffer.clone(), if result.is_empty() {AstNodeType::Symbol} else {AstNodeType::Int}))
-                    }
-                    buffer = String::new();
-                },
-                _ => buffer.push(input[i] as char)
-            }
+    fn parse_sexp(&mut self, input: &[u8], offset: usize, buffer: String, end_nodes: Vec<AstNode>) -> Vec<AstNode> {
+        if offset >= input.len() {
+            return end_nodes;
         }
+        match input[offset] as char {
+            '(' => return {
+                let mut list_name = String::from("$cons-");
+                list_name.push(char::from_digit(self.list_count, 10).unwrap());
+                self.list_count += 1;
 
-        panic!("Invalid syntax.")
+                let mut new_end_nodes = end_nodes.clone();
+
+                let result = self.parse_sexp(input, offset + 1, String::new(), vec![]);
+
+                new_end_nodes.push(AstNode::new(list_name, AstNodeType::List, result));
+
+                new_end_nodes
+            },
+            ')' => return {
+                if !buffer.is_empty() {
+                    let mut new_end_nodes = end_nodes.clone();
+                    new_end_nodes.push(AstNode::new_end_node(buffer.clone(), if end_nodes.is_empty() { AstNodeType::Symbol } else { AstNodeType::Int }));
+
+                    new_end_nodes
+                } else {
+                    end_nodes
+                }
+            },
+            ' ' => return {
+                if !buffer.is_empty() {
+                    let mut new_end_nodes = end_nodes.clone();
+                    new_end_nodes.push(AstNode::new_end_node(buffer.clone(), if end_nodes.is_empty() { AstNodeType::Symbol } else { AstNodeType::Int }));
+                    self.parse_sexp(input, offset + 1, String::new(), new_end_nodes)
+                } else {
+                    self.parse_sexp(input, offset + 1, String::new(), end_nodes)
+                }
+            },
+            _ => self.parse_sexp(input, offset + 1, buffer.add(&(input[offset] as char).to_string()), end_nodes)
+        }
     }
 
     fn is_valid(str: String) -> Result<i32, Errors> {
@@ -64,16 +76,16 @@ impl AstParserTrt for AstParser {
                         } else {
                             Ok(acc + num)
                         }
-                    },
+                    }
                     Err(_) => res
                 }
             }).and_then(|x| {
-                if x == 0 {
-                    Ok(0)
-                } else {
-                    Err(Errors::InvalidSyntax)
-                }
-            })
+            if x == 0 {
+                Ok(0)
+            } else {
+                Err(Errors::InvalidSyntax)
+            }
+        })
     }
 }
 
@@ -85,22 +97,22 @@ mod tests {
     fn parse_sexp() {
         // add a test for: "(+ (+ (* 1 2) (* 3   4)))"
         let mut binding = AstParser::new();
-        let parsed = binding.parse_sexp("(+ 2 (* 3 4))".as_bytes(), 0).1;
+        let parsed = binding.parse_sexp("(+ 2 (* 3 4))".as_bytes(), 0, String::new(), vec![]);
         assert_eq!(
-            parsed, 
+            parsed,
             vec![
-                AstNode::new("$cons-1".to_string(), AstNodeType::List,
-                    vec![
-                        AstNode::new_end_node("+".to_string(), AstNodeType::Symbol),
-                        AstNode::new_end_node("2".to_string(), AstNodeType::Int),
-                        AstNode::new("$cons-0".to_string(), AstNodeType::List, 
-                            vec![
-                                AstNode::new_end_node("*".to_string(), AstNodeType::Symbol),
-                                AstNode::new_end_node("3".to_string(), AstNodeType::Int),
-                                AstNode::new_end_node("4".to_string(), AstNodeType::Int)
-                            ]
-                        )
-                    ]
+                AstNode::new("$cons-0".to_string(), AstNodeType::List,
+                             vec![
+                                 AstNode::new_end_node("+".to_string(), AstNodeType::Symbol),
+                                 AstNode::new_end_node("2".to_string(), AstNodeType::Int),
+                                 AstNode::new("$cons-1".to_string(), AstNodeType::List,
+                                              vec![
+                                                  AstNode::new_end_node("*".to_string(), AstNodeType::Symbol),
+                                                  AstNode::new_end_node("3".to_string(), AstNodeType::Int),
+                                                  AstNode::new_end_node("4".to_string(), AstNodeType::Int),
+                                              ],
+                                 ),
+                             ],
                 )
             ]
         );
