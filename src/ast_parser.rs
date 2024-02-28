@@ -11,6 +11,7 @@ trait AstParserTrt {
     fn new() -> AstParser { AstParser { list_count: 0 } }
     fn parse_sexp(&mut self, input: &[u8], offset: usize, buffer: String, end_nodes: Vec<AstNode>) -> Vec<AstNode>;
     fn is_valid(str: String) -> Result<i32, Errors>;
+    fn next_cons(&mut self) -> String;
 }
 
 impl AstParserTrt for AstParser {
@@ -19,20 +20,13 @@ impl AstParserTrt for AstParser {
             return end_nodes;
         }
         match input[offset] as char {
-            '(' => return {
-                let mut list_name = String::from("$cons-");
-                list_name.push(char::from_digit(self.list_count, 10).unwrap());
-                self.list_count += 1;
-
+            '(' => {
                 let mut new_end_nodes = end_nodes.clone();
-
                 let result = self.parse_sexp(input, offset + 1, String::new(), vec![]);
-
-                new_end_nodes.push(AstNode::new(list_name, AstNodeType::List, result));
-
+                new_end_nodes.push(AstNode::new(self.next_cons(), AstNodeType::List, result));
                 new_end_nodes
             },
-            ')' => return {
+            ')' => {
                 if !buffer.is_empty() {
                     let mut new_end_nodes = end_nodes.clone();
                     new_end_nodes.push(AstNode::new_end_node(buffer.clone(), if end_nodes.is_empty() { AstNodeType::Symbol } else { AstNodeType::Int }));
@@ -42,7 +36,7 @@ impl AstParserTrt for AstParser {
                     end_nodes
                 }
             },
-            ' ' => return {
+            ' ' => {
                 if !buffer.is_empty() {
                     let mut new_end_nodes = end_nodes.clone();
                     new_end_nodes.push(AstNode::new_end_node(buffer.clone(), if end_nodes.is_empty() { AstNodeType::Symbol } else { AstNodeType::Int }));
@@ -53,6 +47,14 @@ impl AstParserTrt for AstParser {
             },
             _ => self.parse_sexp(input, offset + 1, buffer.add(&(input[offset] as char).to_string()), end_nodes)
         }
+    }
+
+    fn next_cons(&mut self) -> String {
+        let mut list_name = String::from("$cons-");
+        list_name.push(char::from_digit(self.list_count, 10).unwrap());
+        self.list_count += 1;
+        
+        list_name
     }
 
     fn is_valid(str: String) -> Result<i32, Errors> {
@@ -80,11 +82,11 @@ impl AstParserTrt for AstParser {
                     Err(_) => res
                 }
             }).and_then(|x| {
-            if x == 0 {
-                Ok(0)
-            } else {
-                Err(Errors::InvalidSyntax)
-            }
+                if x == 0 {
+                    Ok(0)
+                } else {
+                    Err(Errors::InvalidSyntax)
+                }
         })
     }
 }
@@ -101,11 +103,11 @@ mod tests {
         assert_eq!(
             parsed,
             vec![
-                AstNode::new("$cons-0".to_string(), AstNodeType::List,
+                AstNode::new("$cons-1".to_string(), AstNodeType::List,
                              vec![
                                  AstNode::new_end_node("+".to_string(), AstNodeType::Symbol),
                                  AstNode::new_end_node("2".to_string(), AstNodeType::Int),
-                                 AstNode::new("$cons-1".to_string(), AstNodeType::List,
+                                 AstNode::new("$cons-0".to_string(), AstNodeType::List,
                                               vec![
                                                   AstNode::new_end_node("*".to_string(), AstNodeType::Symbol),
                                                   AstNode::new_end_node("3".to_string(), AstNodeType::Int),
