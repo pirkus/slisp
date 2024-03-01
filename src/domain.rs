@@ -13,6 +13,23 @@ pub struct AstNode {
     pub nodes: Option<Vec<AstNode>>,
 }
 
+pub enum Primitive {
+    Number(usize),
+    String(String)
+}
+
+pub enum NodeType {
+    List {
+        nodes: Box<Vec<NodeType>>
+    },
+    Symbol {
+        value: String
+    },
+    Primitive {
+        value: Primitive
+    }
+}
+
 impl AstNode {
     pub fn new(value: String, node_type: AstNodeType, nodes: Vec<AstNode>) -> AstNode {
         AstNode { value, node_type, nodes: Some(nodes.clone()) }
