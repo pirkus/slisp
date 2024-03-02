@@ -9,15 +9,13 @@ trait JitRunnerTrt {
 impl JitRunnerTrt for JitRunner {
     fn exec(instructions: &[u8]) -> i64 {
         let mut m = MmapMut::map_anon(instructions.len()).unwrap();
-        m.clone_from_slice(instructions);
+        m.copy_from_slice(instructions);
         let m = m.make_exec().unwrap();
         let func_ptr = m.as_ptr();
 
         unsafe {
             let func: extern "C" fn() -> i64 = std::mem::transmute(func_ptr);
-            let res = func();
-
-            res
+            func()
         }
     }
 }
