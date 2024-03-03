@@ -48,7 +48,7 @@ mod tests {
     fn parse_sexp_new_domain() {
         // add a test for: "(+ (+ (* 1 2) (* 3   4)))"
 // tests for invalid strings ZA
-        let parsed = AstParser::parse_sexp_new_domain("(+ 2 (* 3 4))".as_bytes(), &mut 0);
+        let parsed = AstParser::parse_sexp_new_domain(b"(+ 2 (* 3 4))", &mut 0);
         assert_eq!(
             parsed,
             Node::new_list_from_raw(vec![
@@ -61,6 +61,6 @@ mod tests {
                 ])
             ])
         );
-        print!("{:#?}", parsed)
+        println!("{:#?}", parsed)
     }
 }
