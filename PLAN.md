@@ -55,38 +55,41 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 (and (> 5 3) (< 2 4))      ; → true
 ```
 
-### ✅ **Compiler Mode** (`slisp --compile -o <file> <expr>`)
-**Fully Supported:**
+### ✅ **Compiler Mode** (`slisp --compile -o <file> <expr>`) - **MAJOR BREAKTHROUGH!**
+**Fully Supported with Stack-Based Code Generation:**
 - ✅ Number literals → native executables (`42` → exits with code 42)
 - ✅ Basic arithmetic (`+`, `-`, `*`, `/`) → native executables
-- ✅ Simple expressions → ELF x86-64 executables
+- ✅ **Multi-operand arithmetic** (`(+ 1 2 3 4)`) → native executables 🎉
+- ✅ **Nested expressions** (`(+ 2 (* 3 4))`) → native executables 🎉
+- ✅ **Comparison operations** (`=`, `<`, `>`) → native executables 🎉
+- ✅ **Complex expressions** → ELF x86-64 executables
 
 **Examples:**
 ```bash
-slisp --compile -o hello "42"        # ./hello exits with 42
-slisp --compile -o add "(+ 2 3)"     # ./add exits with 5
-slisp --compile -o mult "(* 4 5)"    # ./mult exits with 20
-slisp --compile -o sub "(- 10 3)"    # ./sub exits with 7
+# Simple cases
+slisp --compile -o hello "42"              # ./hello exits with 42
+slisp --compile -o add "(+ 2 3)"           # ./add exits with 5
+slisp --compile -o multi "(+ 1 2 3)"       # ./multi exits with 6
+slisp --compile -o nested "(+ 2 (* 3 4))"  # ./nested exits with 14
+slisp --compile -o comp "(> 5 3)"          # ./comp exits with 1
+slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 ```
 
-**Compiler Limitations (Solvable with Stack-Based Approach):**
-- ❌ Multi-operand arithmetic (`(+ 1 2 3)`) - **Needs stack accumulation**
-- ❌ Nested expressions (`(+ 2 (* 3 4))`) - **Needs recursive stack ops**
-- ❌ Comparison operations (`=`, `<`, `>`) - **Needs stack-based comparisons**
-- ❌ Logical operations (`and`, `or`, `not`) - **Needs conditional stack logic**
-- ❌ Conditional expressions (`if`) - **Needs stack + conditional jumps**
+**Remaining Compiler Limitations:**
+- ❌ Logical operations (`and`, `or`, `not`) - **Needs conditional logic**
+- ❌ Conditional expressions (`if`) - **Needs conditional jumps**
 - ❌ Variables and functions - **Future language features**
 
 ## Next Implementation Priorities
 
-### 🎯 **Phase 2: Stack-Based Compiler Enhancement** 
-**Key Insight: Current 2-register approach limits us to simple binary operations. Stack-based evaluation will unlock full expression compilation.**
+### ✅ **Phase 2: Stack-Based Compiler Enhancement - COMPLETED!** 
+**BREAKTHROUGH: Stack-based evaluation has unlocked full expression compilation!**
 
-- [ ] **Implement CPU stack-based evaluation** - Use x86-64 push/pop instructions
-- [ ] **Multi-operand arithmetic** - Support `(+ 1 2 3 4)` via stack accumulation
-- [ ] **Nested expressions** - Support `(+ 2 (* 3 4))` via recursive stack operations
-- [ ] **Comparison operations** - Stack-based `=`, `<`, `>` compilation
-- [ ] **Conditional compilation** - Stack-based `if` expression support
+- ✅ **Implement CPU stack-based evaluation** - Use x86-64 push/pop instructions
+- ✅ **Multi-operand arithmetic** - Support `(+ 1 2 3 4)` via stack accumulation
+- ✅ **Nested expressions** - Support `(+ 2 (* 3 4))` via recursive stack operations
+- ✅ **Comparison operations** - Stack-based `=`, `<`, `>` compilation
+- ❌ **Conditional compilation** - Stack-based `if` expression support (next priority)
 
 ### **Phase 2.5: Language Features**
 - [ ] **Variable bindings** (`let`) with environments (interpreter + compiler)
@@ -132,3 +135,4 @@ slisp --compile -o sub "(- 10 3)"    # ./sub exits with 7
 - Test each phase thoroughly before moving to next
 - Functional programming principles for clarity and maintainability
 - Consider debugging/profiling hooks early
+- Always update documentation and tests and PLAN.md with current status so that it is next session ready

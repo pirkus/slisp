@@ -10,61 +10,98 @@ impl X86CodeGen {
     }
 
     pub fn generate(&mut self, program: &IRProgram) -> Vec<u8> {
-        // Use register-based evaluation for ELF compatibility
-        // RAX = accumulator, RBX = temp register
-
-        let mut has_value = false;
+        // Stack-based evaluation using CPU stack
+        // This approach can handle unlimited operands and nested expressions
 
         for instruction in &program.instructions {
             match instruction {
                 IRInstruction::Push(value) => {
-                    if !has_value {
-                        // First value goes to RAX
-                        self.emit(&[0x48, 0xc7, 0xc0]); // mov rax, imm32
-                        self.emit(&(*value as u32).to_le_bytes());
-                        has_value = true;
+                    // Push immediate value onto CPU stack
+                    if *value <= 127 && *value >= -128 {
+                        // Use 8-bit immediate for small values
+                        self.emit(&[0x6a]); // push imm8
+                        self.emit(&[*value as u8]);
                     } else {
-                        // Second value goes to RBX
-                        self.emit(&[0x48, 0xc7, 0xc3]); // mov rbx, imm32
+                        // Use 32-bit immediate for larger values
+                        self.emit(&[0x68]); // push imm32
                         self.emit(&(*value as u32).to_le_bytes());
                     }
                 }
 
                 IRInstruction::Add => {
-                    // add rax, rbx
-                    self.emit(&[0x48, 0x01, 0xd8]);
+                    // Pop two values, add them, push result
+                    self.emit(&[0x58]); // pop rax (second operand)
+                    self.emit(&[0x5b]); // pop rbx (first operand)
+                    self.emit(&[0x48, 0x01, 0xd8]); // add rax, rbx
+                    self.emit(&[0x50]); // push rax (result)
                 }
 
                 IRInstruction::Sub => {
-                    // sub rax, rbx
-                    self.emit(&[0x48, 0x29, 0xd8]);
+                    // Pop two values, subtract them, push result
+                    self.emit(&[0x58]); // pop rax (second operand)
+                    self.emit(&[0x5b]); // pop rbx (first operand)
+                    self.emit(&[0x48, 0x29, 0xc3]); // sub rbx, rax (rbx = rbx - rax)
+                    self.emit(&[0x53]); // push rbx (result)
                 }
 
                 IRInstruction::Mul => {
-                    // imul rax, rbx
-                    self.emit(&[0x48, 0x0f, 0xaf, 0xc3]);
+                    // Pop two values, multiply them, push result
+                    self.emit(&[0x58]); // pop rax (second operand)
+                    self.emit(&[0x5b]); // pop rbx (first operand)
+                    self.emit(&[0x48, 0x0f, 0xaf, 0xd8]); // imul rbx, rax
+                    self.emit(&[0x53]); // push rbx (result)
                 }
 
                 IRInstruction::Div => {
-                    // cqo (sign extend rax to rdx:rax)
-                    self.emit(&[0x48, 0x99]);
-                    // idiv rbx (divide rdx:rax by rbx, quotient in rax)
-                    self.emit(&[0x48, 0xf7, 0xfb]);
+                    // Pop two values, divide them, push result
+                    self.emit(&[0x58]); // pop rax (divisor)
+                    self.emit(&[0x5b]); // pop rbx (dividend)
+                    self.emit(&[0x48, 0x89, 0xd8]); // mov rax, rbx (dividend to rax)
+                    self.emit(&[0x48, 0x89, 0xc1]); // mov rcx, rax (save divisor)
+                    self.emit(&[0x48, 0x99]); // cqo (sign extend rax to rdx:rax)
+                    self.emit(&[0x48, 0xf7, 0xf9]); // idiv rcx
+                    self.emit(&[0x50]); // push rax (quotient)
+                }
+
+                IRInstruction::Equal => {
+                    // Pop two values, compare for equality, push result (1 or 0)
+                    self.emit(&[0x58]); // pop rax
+                    self.emit(&[0x5b]); // pop rbx
+                    self.emit(&[0x48, 0x39, 0xd8]); // cmp rax, rbx
+                    self.emit(&[0x0f, 0x94, 0xc0]); // sete al (set al=1 if equal, 0 otherwise)
+                    self.emit(&[0x48, 0x0f, 0xb6, 0xc0]); // movzx rax, al (zero-extend al to rax)
+                    self.emit(&[0x50]); // push rax
+                }
+
+                IRInstruction::Less => {
+                    // Pop two values, compare if first < second, push result
+                    self.emit(&[0x58]); // pop rax (second)
+                    self.emit(&[0x5b]); // pop rbx (first)
+                    self.emit(&[0x48, 0x39, 0xc3]); // cmp rbx, rax (first cmp second)
+                    self.emit(&[0x0f, 0x9c, 0xc0]); // setl al (set al=1 if first < second)
+                    self.emit(&[0x48, 0x0f, 0xb6, 0xc0]); // movzx rax, al
+                    self.emit(&[0x50]); // push rax
+                }
+
+                IRInstruction::Greater => {
+                    // Pop two values, compare if first > second, push result
+                    self.emit(&[0x58]); // pop rax (second)
+                    self.emit(&[0x5b]); // pop rbx (first)
+                    self.emit(&[0x48, 0x39, 0xc3]); // cmp rbx, rax
+                    self.emit(&[0x0f, 0x9f, 0xc0]); // setg al
+                    self.emit(&[0x48, 0x0f, 0xb6, 0xc0]); // movzx rax, al
+                    self.emit(&[0x50]); // push rax
                 }
 
                 IRInstruction::Return => {
-                    // Result is already in RAX, nothing to do
+                    // Pop final result from stack into rax
+                    self.emit(&[0x58]); // pop rax
                 }
 
                 _ => {
-                    // Unimplemented operations
+                    // Unimplemented operations - for now just ignore
                 }
             }
-        }
-
-        // If no operations were performed, ensure RAX has a value
-        if !has_value {
-            self.emit(&[0x48, 0xc7, 0xc0, 0x00, 0x00, 0x00, 0x00]); // mov rax, 0
         }
 
         self.code.clone()
@@ -102,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn test_arithmetic() {
+    fn test_basic_arithmetic() {
         // Test addition: 2 + 3 = 5
         let mut program = IRProgram::new();
         program.add_instruction(IRInstruction::Push(2));
@@ -120,12 +157,16 @@ mod tests {
     }
 
     #[test]
-    fn test_multiplication() {
-        // Test multiplication: 4 * 5 = 20
+    fn test_multi_operand_arithmetic() {
+        // Test: 1 + 2 + 3 + 4 = 10
         let mut program = IRProgram::new();
+        program.add_instruction(IRInstruction::Push(1));
+        program.add_instruction(IRInstruction::Push(2));
+        program.add_instruction(IRInstruction::Add);
+        program.add_instruction(IRInstruction::Push(3));
+        program.add_instruction(IRInstruction::Add);
         program.add_instruction(IRInstruction::Push(4));
-        program.add_instruction(IRInstruction::Push(5));
-        program.add_instruction(IRInstruction::Mul);
+        program.add_instruction(IRInstruction::Add);
         program.add_instruction(IRInstruction::Return);
 
         let machine_code = compile_to_executable(&program);
@@ -134,12 +175,51 @@ mod tests {
         jit_code.push(0xc3); // ret
 
         let result = JitRunner::exec(&jit_code);
-        assert_eq!(result, 20);
+        assert_eq!(result, 10);
+    }
+
+    #[test]
+    fn test_nested_expression() {
+        // Test: 2 + (3 * 4) = 14
+        // IR: push 2, push 3, push 4, mul, add
+        let mut program = IRProgram::new();
+        program.add_instruction(IRInstruction::Push(2));
+        program.add_instruction(IRInstruction::Push(3));
+        program.add_instruction(IRInstruction::Push(4));
+        program.add_instruction(IRInstruction::Mul);
+        program.add_instruction(IRInstruction::Add);
+        program.add_instruction(IRInstruction::Return);
+
+        let machine_code = compile_to_executable(&program);
+
+        let mut jit_code = machine_code;
+        jit_code.push(0xc3); // ret
+
+        let result = JitRunner::exec(&jit_code);
+        assert_eq!(result, 14);
+    }
+
+    #[test]
+    fn test_comparison() {
+        // Test: 5 > 3 = 1 (true)
+        let mut program = IRProgram::new();
+        program.add_instruction(IRInstruction::Push(5));
+        program.add_instruction(IRInstruction::Push(3));
+        program.add_instruction(IRInstruction::Greater);
+        program.add_instruction(IRInstruction::Return);
+
+        let machine_code = compile_to_executable(&program);
+
+        let mut jit_code = machine_code;
+        jit_code.push(0xc3); // ret
+
+        let result = JitRunner::exec(&jit_code);
+        assert_eq!(result, 1); // true
     }
 
     #[test]
     fn test_subtraction() {
-        // Test subtraction: 10 - 3 = 7
+        // Test: 10 - 3 = 7
         let mut program = IRProgram::new();
         program.add_instruction(IRInstruction::Push(10));
         program.add_instruction(IRInstruction::Push(3));
