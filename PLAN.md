@@ -5,6 +5,7 @@
 - ✅ **JIT runner** - Working x86-64 machine code execution using memory-mapped pages  
 - ✅ **Domain model** - Clean `Node` enum (List, Primitive, Symbol variants)
 - ✅ **Tree-walking evaluator** - Full implementation with comprehensive operations
+- ✅ **REPL interface** - Interactive shell with Ctrl+D exit and error handling
 
 ## Architecture Overview
 ```
@@ -25,7 +26,6 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 
 ### 🚧 **In Progress - Phase 1 Remaining**
 - ❌ **Variable bindings** (`let`) and lexical environments
-- ❌ **CLI integration** - main.rs is currently empty
 
 ## Missing Components
 
@@ -51,16 +51,15 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 
 ## Updated Implementation Roadmap
 
-### 🎯 **Next Priority: Phase 2 - Code Generation Bridge**
+### 🎯 **Next Priority: Phase 1.5 - Enhanced Evaluator**
+- [ ] **Variable bindings** (`let`) with environments
+- [ ] **Function definitions** (`defun`) and calls
+
+### Phase 2: Code Generation Bridge
 - [ ] **Create simple IR** - Stack-based instructions matching evaluator
 - [ ] **x86-64 instruction encoder** - Basic arithmetic operations
 - [ ] **Integrate evaluator → code generator** - Compile expressions to machine code
-- [ ] **CLI interface** - Parse, compile, and execute Lisp expressions
-
-### Phase 2.5: Enhanced Evaluator
-- [ ] **Variable bindings** (`let`) with environments
-- [ ] **Function definitions** (`defun`) and calls
-- [ ] **REPL interface** for interactive development
+- [ ] **Dual mode execution** - Choice between interpreter and compiler
 
 ### Phase 3: Advanced Code Generation  
 - [ ] **Register allocation** - Simple linear scan for locals
