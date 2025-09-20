@@ -1,8 +1,8 @@
 use memmap2::MmapMut;
 
-struct JitRunner;
+pub struct JitRunner;
 
-trait JitRunnerTrt {
+pub trait JitRunnerTrt {
     fn exec(instructions: &[u8]) -> u8;
 }
 
