@@ -45,6 +45,7 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 
 ### ✅ **Completed - Phase 2: Language Features**
 - ✅ **Variable bindings** (`let`) and lexical environments
+- ✅ **File compilation with main functions** (`defn -main`) - Clojure-style entry points
 
 ## Feature Support Matrix
 

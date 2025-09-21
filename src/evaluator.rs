@@ -6,6 +6,11 @@ pub enum Value {
     Number(isize),
     Boolean(bool),
     Nil,
+    Function {
+        params: Vec<String>,
+        body: Box<Node>,
+        closure: Environment, // Captured environment
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -81,11 +86,23 @@ fn eval_list(nodes: &[Box<Node>], env: &Environment) -> Result<Value, EvalError>
             "or" => eval_logical_or(args, env),
             "not" => eval_logical_not(args, env),
             "let" => eval_let(args, env),
-            op => Err(EvalError::UndefinedSymbol(op.to_string())),
+            "fn" => eval_fn(args, env),
+            "def" => eval_def(args, env),
+            "defn" => eval_defn(args, env),
+            op => {
+                // Try to look up the operator as a function in the environment
+                if let Some(func_value) = env.get(op) {
+                    eval_function_call(func_value.clone(), args, env)
+                } else {
+                    Err(EvalError::UndefinedSymbol(op.to_string()))
+                }
+            }
         },
-        _ => Err(EvalError::InvalidOperation(
-            "First element must be a symbol".to_string(),
-        )),
+        _ => {
+            // First element is not a symbol, might be a function expression
+            let func_expr = eval_with_env(operator, env)?;
+            eval_function_call(func_expr, args, env)
+        }
     }
 }
 
@@ -163,6 +180,7 @@ fn eval_if(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
         Value::Boolean(b) => b,
         Value::Number(n) => n != 0,
         Value::Nil => false,
+        Value::Function { .. } => true, // Functions are always truthy
     };
 
     if is_truthy {
@@ -183,6 +201,7 @@ fn eval_logical_and(args: &[Box<Node>], env: &Environment) -> Result<Value, Eval
             Value::Boolean(b) => b,
             Value::Number(n) => n != 0,
             Value::Nil => false,
+            Value::Function { .. } => true, // Functions are always truthy
         };
 
         if !is_truthy {
@@ -204,6 +223,7 @@ fn eval_logical_or(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalE
             Value::Boolean(b) => b,
             Value::Number(n) => n != 0,
             Value::Nil => false,
+            Value::Function { .. } => true, // Functions are always truthy
         };
 
         if is_truthy {
@@ -224,6 +244,7 @@ fn eval_logical_not(args: &[Box<Node>], env: &Environment) -> Result<Value, Eval
         Value::Boolean(b) => b,
         Value::Number(n) => n != 0,
         Value::Nil => false,
+        Value::Function { .. } => true, // Functions are always truthy
     };
 
     Ok(Value::Boolean(!is_truthy))
@@ -282,6 +303,164 @@ fn eval_let(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
 
     // Evaluate body in the new environment
     eval_with_env(&args[1], &new_env)
+}
+
+fn eval_fn(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+    if args.len() != 2 {
+        return Err(EvalError::ArityError("fn".to_string(), 2, args.len()));
+    }
+
+    // First argument should be a vector of parameters [param1 param2 ...]
+    let params = match args[0].as_ref() {
+        Node::Vector { root } => {
+            let mut param_names = Vec::new();
+            for param_node in root {
+                match param_node.as_ref() {
+                    Node::Symbol { value } => param_names.push(value.clone()),
+                    _ => {
+                        return Err(EvalError::TypeError(
+                            "fn parameters must be symbols".to_string(),
+                        ))
+                    }
+                }
+            }
+            param_names
+        }
+        _ => {
+            return Err(EvalError::TypeError(
+                "fn requires a vector of parameters".to_string(),
+            ))
+        }
+    };
+
+    // Second argument is the function body
+    let body = args[1].clone();
+
+    // Create function value with captured environment (closure)
+    Ok(Value::Function {
+        params,
+        body,
+        closure: env.clone(),
+    })
+}
+
+fn eval_function_call(
+    func_value: Value,
+    args: &[Box<Node>],
+    env: &Environment,
+) -> Result<Value, EvalError> {
+    match func_value {
+        Value::Function {
+            params,
+            body,
+            closure,
+        } => {
+            // Check arity
+            if args.len() != params.len() {
+                return Err(EvalError::ArityError(
+                    "function call".to_string(),
+                    params.len(),
+                    args.len(),
+                ));
+            }
+
+            // Create new environment from closure + parameter bindings
+            let mut func_env = closure;
+            for (param, arg) in params.iter().zip(args.iter()) {
+                let arg_value = eval_with_env(arg, env)?;
+                func_env.insert(param.clone(), arg_value);
+            }
+
+            // Evaluate function body in the new environment
+            eval_with_env(&body, &func_env)
+        }
+        _ => Err(EvalError::TypeError(
+            "Cannot call non-function value".to_string(),
+        )),
+    }
+}
+
+fn eval_def(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+    if args.len() != 2 {
+        return Err(EvalError::ArityError("def".to_string(), 2, args.len()));
+    }
+
+    // First argument must be a symbol (the name)
+    let name = match args[0].as_ref() {
+        Node::Symbol { value } => value,
+        _ => {
+            return Err(EvalError::TypeError(
+                "def requires a symbol as first argument".to_string(),
+            ))
+        }
+    };
+
+    // Second argument is the value
+    let value = eval_with_env(&args[1], env)?;
+
+    // For now, we can't actually mutate the global environment in this design
+    // But we can return a special value that indicates a definition was made
+    // This is a limitation we'll address when implementing file compilation
+    Ok(value)
+}
+
+fn eval_defn(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+    if args.len() < 3 {
+        return Err(EvalError::ArityError("defn".to_string(), 3, args.len()));
+    }
+
+    // First argument must be a symbol (the function name)
+    let name = match args[0].as_ref() {
+        Node::Symbol { value } => value,
+        _ => {
+            return Err(EvalError::TypeError(
+                "defn requires a symbol as first argument".to_string(),
+            ))
+        }
+    };
+
+    // Second argument should be a vector of parameters
+    let params = match args[1].as_ref() {
+        Node::Vector { root } => {
+            let mut param_names = Vec::new();
+            for param_node in root {
+                match param_node.as_ref() {
+                    Node::Symbol { value } => param_names.push(value.clone()),
+                    _ => {
+                        return Err(EvalError::TypeError(
+                            "defn parameters must be symbols".to_string(),
+                        ))
+                    }
+                }
+            }
+            param_names
+        }
+        _ => {
+            return Err(EvalError::TypeError(
+                "defn requires a vector of parameters".to_string(),
+            ))
+        }
+    };
+
+    // Rest of arguments form the function body (for now, just take the first one)
+    let body = if args.len() == 3 {
+        args[2].clone()
+    } else {
+        // Multiple body expressions - wrap in an implicit do (not implemented yet)
+        return Err(EvalError::InvalidOperation(
+            "Multiple body expressions not supported yet".to_string(),
+        ));
+    };
+
+    // Create function value
+    let func_value = Value::Function {
+        params,
+        body,
+        closure: env.clone(),
+    };
+
+    // For now, return the function (can't mutate global env in this design)
+    Ok(func_value)
 }
 
 #[cfg(test)]
@@ -460,6 +639,68 @@ mod tests {
         // Non-symbol in binding
         assert!(matches!(
             parse_and_eval("(let [5 x] x)"),
+            Err(EvalError::TypeError(_))
+        ));
+    }
+
+    #[test]
+    fn test_fn_creation() {
+        // Create a simple function
+        let result = parse_and_eval("(fn [x] x)");
+        assert!(matches!(result, Ok(Value::Function { .. })));
+
+        // Function with multiple parameters
+        let result = parse_and_eval("(fn [x y] (+ x y))");
+        assert!(matches!(result, Ok(Value::Function { .. })));
+
+        // Function with no parameters
+        let result = parse_and_eval("(fn [] 42)");
+        assert!(matches!(result, Ok(Value::Function { .. })));
+    }
+
+    #[test]
+    fn test_fn_call_immediate() {
+        // Call function immediately
+        assert_eq!(parse_and_eval("((fn [x] x) 5)"), Ok(Value::Number(5)));
+        assert_eq!(
+            parse_and_eval("((fn [x y] (+ x y)) 3 4)"),
+            Ok(Value::Number(7))
+        );
+        assert_eq!(parse_and_eval("((fn [] 42))"), Ok(Value::Number(42)));
+    }
+
+    #[test]
+    fn test_fn_with_let() {
+        // Function that uses let binding
+        assert_eq!(
+            parse_and_eval("((fn [x] (let [y 10] (+ x y))) 5)"),
+            Ok(Value::Number(15))
+        );
+    }
+
+    #[test]
+    fn test_fn_error_cases() {
+        // Wrong arity in function call
+        assert!(matches!(
+            parse_and_eval("((fn [x] x) 1 2)"),
+            Err(EvalError::ArityError(_, 1, 2))
+        ));
+
+        // Wrong arity in fn definition
+        assert!(matches!(
+            parse_and_eval("(fn [x])"),
+            Err(EvalError::ArityError(_, 2, 1))
+        ));
+
+        // Non-vector parameters
+        assert!(matches!(
+            parse_and_eval("(fn (x) x)"),
+            Err(EvalError::TypeError(_))
+        ));
+
+        // Non-symbol parameter
+        assert!(matches!(
+            parse_and_eval("(fn [5] x)"),
             Err(EvalError::TypeError(_))
         ));
     }

@@ -63,7 +63,7 @@ impl AstParser {
                     }
                     return Node::new_vector_from_raw(sexp);
                 }
-                ' ' => {
+                c if c.is_whitespace() => {
                     if !buffer.is_empty() {
                         sexp.push(Self::parse_atom(&buffer));
                         buffer = String::new();

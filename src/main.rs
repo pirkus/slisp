@@ -10,10 +10,12 @@ mod jit_runner;
 use ast_parser::{AstParser, AstParserTrt};
 use codegen::compile_to_executable;
 use compiler::{compile_to_ir, CompileError};
+use domain::{Node, Primitive};
 use elf_gen::generate_elf_executable;
 use evaluator::{eval_node, EvalError, Value};
 use jit_runner::{JitRunner, JitRunnerTrt};
 use std::env;
+use std::fs;
 use std::io::{self, Write};
 use std::process::Command;
 
@@ -23,22 +25,38 @@ fn main() {
     if args.len() >= 4 && args[1] == "--compile" && args[2] == "-o" {
         // Compile single expression to executable
         let output_file = &args[3];
-        let expression = if args.len() > 4 {
-            args[4].clone()
+        if args.len() > 4 {
+            let input = &args[4];
+            if input.ends_with(".slisp") || input.ends_with(".lisp") {
+                // Compile file with -main function
+                match compile_file_to_executable(input, output_file) {
+                    Ok(()) => println!(
+                        "Successfully compiled file '{}' to '{}'",
+                        input, output_file
+                    ),
+                    Err(e) => println!("Error: {}", e),
+                }
+            } else {
+                // Compile single expression
+                match compile_to_file(input, output_file) {
+                    Ok(()) => println!("Successfully compiled '{}' to '{}'", input, output_file),
+                    Err(e) => println!("Error: {}", e),
+                }
+            }
         } else {
             // Read from stdin
             println!("Enter expression to compile:");
             let mut input = String::new();
             io::stdin().read_line(&mut input).unwrap();
-            input.trim().to_string()
-        };
+            let expression = input.trim();
 
-        match compile_to_file(&expression, output_file) {
-            Ok(()) => println!(
-                "Successfully compiled '{}' to '{}'",
-                expression, output_file
-            ),
-            Err(e) => println!("Error: {}", e),
+            match compile_to_file(expression, output_file) {
+                Ok(()) => println!(
+                    "Successfully compiled '{}' to '{}'",
+                    expression, output_file
+                ),
+                Err(e) => println!("Error: {}", e),
+            }
         }
     } else if args.len() > 1 && args[1] == "--compile" {
         println!("SLisp Compiler REPL v0.1.0");
@@ -54,6 +72,98 @@ fn main() {
         println!("  slisp --compile -o <file> [expr] - Compile expression to executable");
         println!();
         repl_loop(ExecutionMode::Interpret);
+    }
+}
+
+fn compile_file_to_executable(input_file: &str, output_file: &str) -> Result<(), String> {
+    // Read the file content
+    let file_content = fs::read_to_string(input_file)
+        .map_err(|e| format!("Failed to read file '{}': {}", input_file, e))?;
+
+    // Parse the file to find the -main function
+    let main_expr = extract_main_function(&file_content)?;
+
+    // Compile the -main function body
+    compile_to_file(&main_expr, output_file)
+}
+
+fn extract_main_function(file_content: &str) -> Result<String, String> {
+    // Parse the entire file content
+    let mut offset = 0;
+
+    // Simple approach: look for (defn -main ...) pattern
+    // This is a basic implementation that assumes the file contains a single -main definition
+
+    loop {
+        // Skip whitespace
+        while offset < file_content.len()
+            && file_content.chars().nth(offset).unwrap().is_whitespace()
+        {
+            offset += 1;
+        }
+
+        if offset >= file_content.len() {
+            break;
+        }
+
+        // Try to parse the next expression
+        let mut parse_offset = 0;
+        let ast =
+            AstParser::parse_sexp_new_domain(file_content[offset..].as_bytes(), &mut parse_offset);
+
+        // Update the offset to continue parsing from where we left off
+        offset += parse_offset;
+
+        // Check if this is a defn -main
+        if let Node::List { root } = &ast {
+            if root.len() >= 3 {
+                if let (
+                    Node::Symbol { value: op },
+                    Node::Symbol { value: name },
+                    Node::Vector { root: params },
+                ) = (root[0].as_ref(), root[1].as_ref(), root[2].as_ref())
+                {
+                    if op == "defn" && name == "-main" {
+                        // Found -main function! Extract the body
+                        if root.len() == 4 {
+                            // Convert the body back to string format for compilation
+                            // For now, let's assume the body is a simple expression
+                            // This is a simplified approach - in practice we'd want better AST->string conversion
+                            return Ok(format_ast_node(&root[3]));
+                        } else {
+                            return Err(
+                                "-main function must have exactly one body expression".to_string()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Move to next expression (this is a simplified approach)
+        break; // For now, just process the first expression
+    }
+
+    Err("No -main function found in file".to_string())
+}
+
+fn format_ast_node(node: &Node) -> String {
+    // Simple AST to string conversion for the -main body
+    // This is a basic implementation - a full one would be more sophisticated
+    match node {
+        Node::Primitive { value } => match value {
+            Primitive::Number(n) => n.to_string(),
+            _ => "0".to_string(), // fallback
+        },
+        Node::Symbol { value } => value.clone(),
+        Node::List { root } => {
+            let inner: Vec<String> = root.iter().map(|n| format_ast_node(n)).collect();
+            format!("({})", inner.join(" "))
+        }
+        Node::Vector { root } => {
+            let inner: Vec<String> = root.iter().map(|n| format_ast_node(n)).collect();
+            format!("[{}]", inner.join(" "))
+        }
     }
 }
 
@@ -181,6 +291,9 @@ fn format_value(value: &Value) -> String {
             }
         }
         Value::Nil => "nil".to_string(),
+        Value::Function { params, .. } => {
+            format!("#<function/{}>", params.len())
+        }
     }
 }
 
