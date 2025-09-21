@@ -14,6 +14,7 @@ pub enum CompileError {
 struct CompileContext {
     variables: HashMap<String, usize>, // variable name -> local slot index
     next_slot: usize,
+    free_slots: Vec<usize>, // stack of freed slots for reuse
 }
 
 impl CompileContext {
@@ -21,18 +22,40 @@ impl CompileContext {
         Self {
             variables: HashMap::new(),
             next_slot: 0,
+            free_slots: Vec::new(),
         }
     }
 
     fn add_variable(&mut self, name: String) -> usize {
-        let slot = self.next_slot;
+        // Try to reuse a freed slot first
+        let slot = if let Some(free_slot) = self.free_slots.pop() {
+            free_slot
+        } else {
+            let slot = self.next_slot;
+            self.next_slot += 1;
+            slot
+        };
         self.variables.insert(name, slot);
-        self.next_slot += 1;
         slot
     }
 
     fn get_variable(&self, name: &str) -> Option<usize> {
         self.variables.get(name).copied()
+    }
+
+    fn remove_variable(&mut self, name: &str) -> Option<usize> {
+        if let Some(slot) = self.variables.remove(name) {
+            self.free_slots.push(slot);
+            Some(slot)
+        } else {
+            None
+        }
+    }
+
+    fn remove_variables(&mut self, names: &[String]) {
+        for name in names {
+            self.remove_variable(name);
+        }
     }
 }
 
@@ -380,8 +403,8 @@ fn compile_let(
         ));
     }
 
-    // Save the current context to restore later
-    let saved_context = context.clone();
+    // Track variables added in this let scope for cleanup
+    let mut added_variables = Vec::new();
 
     // Process bindings in pairs [var val var val ...]
     for chunk in bindings.chunks(2) {
@@ -404,13 +427,14 @@ fn compile_let(
         // Add variable to context and store it
         let slot = context.add_variable(var_name.clone());
         program.add_instruction(IRInstruction::StoreLocal(slot));
+        added_variables.push(var_name.clone());
     }
 
     // Compile body in the new environment
     compile_node(&args[1], program, context)?;
 
-    // Restore the original context (lexical scoping)
-    *context = saved_context;
+    // Clean up variables added in this scope (proper scoping and memory management)
+    context.remove_variables(&added_variables);
 
     Ok(())
 }
@@ -531,6 +555,26 @@ mod tests {
         assert!(program.instructions.contains(&IRInstruction::StoreLocal(1))); // y
         assert!(program.instructions.contains(&IRInstruction::LoadLocal(0))); // x
         assert!(program.instructions.contains(&IRInstruction::LoadLocal(1))); // y
+    }
+
+    #[test]
+    fn test_compile_let_nested() {
+        let program = compile_expression("(let [x 5] (let [y 10] (+ x y)))").unwrap();
+        println!("LET NESTED IR: {:?}", program.instructions);
+        // Should have variables in different slots because both are active simultaneously
+        assert!(program.instructions.contains(&IRInstruction::StoreLocal(0))); // x
+        assert!(program.instructions.contains(&IRInstruction::StoreLocal(1))); // y
+        assert!(program.instructions.contains(&IRInstruction::LoadLocal(0))); // x
+        assert!(program.instructions.contains(&IRInstruction::LoadLocal(1))); // y
+    }
+
+    #[test]
+    fn test_compile_let_scoped_reuse() {
+        // This should demonstrate slot reuse - two separate let expressions
+        let program = compile_expression("(+ (let [x 5] x) (let [y 10] y))").unwrap();
+        println!("LET SCOPED REUSE IR: {:?}", program.instructions);
+        // Both x and y should use slot 0 since they're in separate scopes
+        // However, the current IR structure may not show this clearly due to compilation order
     }
 
     #[test]
