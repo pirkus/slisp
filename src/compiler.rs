@@ -1,28 +1,65 @@
 use crate::domain::{Node, Primitive};
 use crate::ir::{IRInstruction, IRProgram};
+use std::collections::HashMap;
 
 #[derive(Debug, PartialEq)]
 pub enum CompileError {
     UnsupportedOperation(String),
     InvalidExpression(String),
     ArityError(String, usize, usize),
+    UndefinedVariable(String),
+}
+
+#[derive(Debug, Clone)]
+struct CompileContext {
+    variables: HashMap<String, usize>, // variable name -> local slot index
+    next_slot: usize,
+}
+
+impl CompileContext {
+    fn new() -> Self {
+        Self {
+            variables: HashMap::new(),
+            next_slot: 0,
+        }
+    }
+
+    fn add_variable(&mut self, name: String) -> usize {
+        let slot = self.next_slot;
+        self.variables.insert(name, slot);
+        self.next_slot += 1;
+        slot
+    }
+
+    fn get_variable(&self, name: &str) -> Option<usize> {
+        self.variables.get(name).copied()
+    }
 }
 
 pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
     let mut program = IRProgram::new();
-    compile_node(node, &mut program)?;
+    let mut context = CompileContext::new();
+    compile_node(node, &mut program, &mut context)?;
     program.add_instruction(IRInstruction::Return);
     Ok(program)
 }
 
-fn compile_node(node: &Node, program: &mut IRProgram) -> Result<(), CompileError> {
+fn compile_node(
+    node: &Node,
+    program: &mut IRProgram,
+    context: &mut CompileContext,
+) -> Result<(), CompileError> {
     match node {
         Node::Primitive { value } => compile_primitive(value, program),
-        Node::Symbol { value } => Err(CompileError::UnsupportedOperation(format!(
-            "Free variables not supported: {}",
-            value
-        ))),
-        Node::List { root } => compile_list(root, program),
+        Node::Symbol { value } => {
+            if let Some(slot) = context.get_variable(value) {
+                program.add_instruction(IRInstruction::LoadLocal(slot));
+                Ok(())
+            } else {
+                Err(CompileError::UndefinedVariable(value.clone()))
+            }
+        }
+        Node::List { root } => compile_list(root, program, context),
         Node::Vector { root: _ } => Err(CompileError::UnsupportedOperation(
             "Vectors not supported in compilation yet".to_string(),
         )),
@@ -41,7 +78,11 @@ fn compile_primitive(primitive: &Primitive, program: &mut IRProgram) -> Result<(
     }
 }
 
-fn compile_list(nodes: &[Box<Node>], program: &mut IRProgram) -> Result<(), CompileError> {
+fn compile_list(
+    nodes: &[Box<Node>],
+    program: &mut IRProgram,
+    context: &mut CompileContext,
+) -> Result<(), CompileError> {
     if nodes.is_empty() {
         program.add_instruction(IRInstruction::Push(0)); // nil = 0
         return Ok(());
@@ -52,22 +93,22 @@ fn compile_list(nodes: &[Box<Node>], program: &mut IRProgram) -> Result<(), Comp
 
     match operator.as_ref() {
         Node::Symbol { value } => match value.as_str() {
-            "+" => compile_arithmetic_op(args, program, IRInstruction::Add, "+"),
-            "-" => compile_arithmetic_op(args, program, IRInstruction::Sub, "-"),
-            "*" => compile_arithmetic_op(args, program, IRInstruction::Mul, "*"),
-            "/" => compile_arithmetic_op(args, program, IRInstruction::Div, "/"),
-            "=" => compile_comparison_op(args, program, IRInstruction::Equal, "="),
-            "<" => compile_comparison_op(args, program, IRInstruction::Less, "<"),
-            ">" => compile_comparison_op(args, program, IRInstruction::Greater, ">"),
-            "<=" => compile_comparison_op(args, program, IRInstruction::LessEqual, "<="),
-            ">=" => compile_comparison_op(args, program, IRInstruction::GreaterEqual, ">="),
-            "if" => compile_if(args, program),
-            "and" => compile_logical_and(args, program),
-            "or" => compile_logical_or(args, program),
-            "not" => compile_logical_not(args, program),
-            "let" => Err(CompileError::UnsupportedOperation(
-                "let binding not supported in compilation yet".to_string(),
-            )),
+            "+" => compile_arithmetic_op(args, program, context, IRInstruction::Add, "+"),
+            "-" => compile_arithmetic_op(args, program, context, IRInstruction::Sub, "-"),
+            "*" => compile_arithmetic_op(args, program, context, IRInstruction::Mul, "*"),
+            "/" => compile_arithmetic_op(args, program, context, IRInstruction::Div, "/"),
+            "=" => compile_comparison_op(args, program, context, IRInstruction::Equal, "="),
+            "<" => compile_comparison_op(args, program, context, IRInstruction::Less, "<"),
+            ">" => compile_comparison_op(args, program, context, IRInstruction::Greater, ">"),
+            "<=" => compile_comparison_op(args, program, context, IRInstruction::LessEqual, "<="),
+            ">=" => {
+                compile_comparison_op(args, program, context, IRInstruction::GreaterEqual, ">=")
+            }
+            "if" => compile_if(args, program, context),
+            "and" => compile_logical_and(args, program, context),
+            "or" => compile_logical_or(args, program, context),
+            "not" => compile_logical_not(args, program, context),
+            "let" => compile_let(args, program, context),
             op => Err(CompileError::UnsupportedOperation(op.to_string())),
         },
         _ => Err(CompileError::InvalidExpression(
@@ -79,6 +120,7 @@ fn compile_list(nodes: &[Box<Node>], program: &mut IRProgram) -> Result<(), Comp
 fn compile_arithmetic_op(
     args: &[Box<Node>],
     program: &mut IRProgram,
+    context: &mut CompileContext,
     instruction: IRInstruction,
     op_name: &str,
 ) -> Result<(), CompileError> {
@@ -87,11 +129,11 @@ fn compile_arithmetic_op(
     }
 
     // Compile first operand
-    compile_node(&args[0], program)?;
+    compile_node(&args[0], program, context)?;
 
     // Compile and apply remaining operands
     for arg in &args[1..] {
-        compile_node(arg, program)?;
+        compile_node(arg, program, context)?;
         program.add_instruction(instruction.clone());
     }
 
@@ -101,6 +143,7 @@ fn compile_arithmetic_op(
 fn compile_comparison_op(
     args: &[Box<Node>],
     program: &mut IRProgram,
+    context: &mut CompileContext,
     instruction: IRInstruction,
     op_name: &str,
 ) -> Result<(), CompileError> {
@@ -108,27 +151,31 @@ fn compile_comparison_op(
         return Err(CompileError::ArityError(op_name.to_string(), 2, args.len()));
     }
 
-    compile_node(&args[0], program)?;
-    compile_node(&args[1], program)?;
+    compile_node(&args[0], program, context)?;
+    compile_node(&args[1], program, context)?;
     program.add_instruction(instruction);
 
     Ok(())
 }
 
-fn compile_if(args: &[Box<Node>], program: &mut IRProgram) -> Result<(), CompileError> {
+fn compile_if(
+    args: &[Box<Node>],
+    program: &mut IRProgram,
+    context: &mut CompileContext,
+) -> Result<(), CompileError> {
     if args.len() != 3 {
         return Err(CompileError::ArityError("if".to_string(), 3, args.len()));
     }
 
     // Compile condition
-    compile_node(&args[0], program)?;
+    compile_node(&args[0], program, context)?;
 
     // Jump to else clause if condition is false (0)
     let else_jump_pos = program.len();
     program.add_instruction(IRInstruction::JumpIfZero(0)); // Will be patched
 
     // Compile then clause
-    compile_node(&args[1], program)?;
+    compile_node(&args[1], program, context)?;
 
     // Jump over else clause
     let end_jump_pos = program.len();
@@ -141,7 +188,7 @@ fn compile_if(args: &[Box<Node>], program: &mut IRProgram) -> Result<(), Compile
     }
 
     // Compile else clause
-    compile_node(&args[2], program)?;
+    compile_node(&args[2], program, context)?;
 
     // Patch end jump target
     let end_pos = program.len();
@@ -152,14 +199,18 @@ fn compile_if(args: &[Box<Node>], program: &mut IRProgram) -> Result<(), Compile
     Ok(())
 }
 
-fn compile_logical_and(args: &[Box<Node>], program: &mut IRProgram) -> Result<(), CompileError> {
+fn compile_logical_and(
+    args: &[Box<Node>],
+    program: &mut IRProgram,
+    context: &mut CompileContext,
+) -> Result<(), CompileError> {
     if args.is_empty() {
         program.add_instruction(IRInstruction::Push(1)); // true
         return Ok(());
     }
 
     if args.len() == 1 {
-        compile_node(&args[0], program)?;
+        compile_node(&args[0], program, context)?;
         // Convert to boolean (0 or 1)
         program.add_instruction(IRInstruction::Push(0));
         program.add_instruction(IRInstruction::Equal);
@@ -168,7 +219,7 @@ fn compile_logical_and(args: &[Box<Node>], program: &mut IRProgram) -> Result<()
     }
 
     // Compile first argument
-    compile_node(&args[0], program)?;
+    compile_node(&args[0], program, context)?;
 
     // For each additional argument, short-circuit if current result is false
     let mut false_jumps = Vec::new();
@@ -186,7 +237,7 @@ fn compile_logical_and(args: &[Box<Node>], program: &mut IRProgram) -> Result<()
         false_jumps.push(false_jump);
 
         // Current value is true, so evaluate next argument
-        compile_node(arg, program)?;
+        compile_node(arg, program, context)?;
     }
 
     // Convert final result to boolean and jump to end
@@ -219,14 +270,18 @@ fn compile_logical_and(args: &[Box<Node>], program: &mut IRProgram) -> Result<()
     Ok(())
 }
 
-fn compile_logical_or(args: &[Box<Node>], program: &mut IRProgram) -> Result<(), CompileError> {
+fn compile_logical_or(
+    args: &[Box<Node>],
+    program: &mut IRProgram,
+    context: &mut CompileContext,
+) -> Result<(), CompileError> {
     if args.is_empty() {
         program.add_instruction(IRInstruction::Push(0)); // false
         return Ok(());
     }
 
     if args.len() == 1 {
-        compile_node(&args[0], program)?;
+        compile_node(&args[0], program, context)?;
         // Convert to boolean (0 or 1)
         program.add_instruction(IRInstruction::Push(0));
         program.add_instruction(IRInstruction::Equal);
@@ -235,7 +290,7 @@ fn compile_logical_or(args: &[Box<Node>], program: &mut IRProgram) -> Result<(),
     }
 
     // Compile first argument
-    compile_node(&args[0], program)?;
+    compile_node(&args[0], program, context)?;
 
     // For each additional argument, short-circuit if current result is true
     let mut true_jumps = Vec::new();
@@ -251,7 +306,7 @@ fn compile_logical_or(args: &[Box<Node>], program: &mut IRProgram) -> Result<(),
         true_jumps.push(true_jump);
 
         // Current value is false, so evaluate next argument
-        compile_node(arg, program)?;
+        compile_node(arg, program, context)?;
     }
 
     // Convert final result to boolean and jump to end
@@ -284,13 +339,78 @@ fn compile_logical_or(args: &[Box<Node>], program: &mut IRProgram) -> Result<(),
     Ok(())
 }
 
-fn compile_logical_not(args: &[Box<Node>], program: &mut IRProgram) -> Result<(), CompileError> {
+fn compile_logical_not(
+    args: &[Box<Node>],
+    program: &mut IRProgram,
+    context: &mut CompileContext,
+) -> Result<(), CompileError> {
     if args.len() != 1 {
         return Err(CompileError::ArityError("not".to_string(), 1, args.len()));
     }
 
-    compile_node(&args[0], program)?;
+    compile_node(&args[0], program, context)?;
     program.add_instruction(IRInstruction::Not);
+
+    Ok(())
+}
+
+fn compile_let(
+    args: &[Box<Node>],
+    program: &mut IRProgram,
+    context: &mut CompileContext,
+) -> Result<(), CompileError> {
+    if args.len() != 2 {
+        return Err(CompileError::ArityError("let".to_string(), 2, args.len()));
+    }
+
+    // First argument should be a vector of bindings [var1 val1 var2 val2 ...]
+    let bindings = match args[0].as_ref() {
+        Node::Vector { root } => root,
+        _ => {
+            return Err(CompileError::InvalidExpression(
+                "let requires a vector of bindings".to_string(),
+            ))
+        }
+    };
+
+    // Check that we have an even number of binding elements
+    if bindings.len() % 2 != 0 {
+        return Err(CompileError::InvalidExpression(
+            "let bindings must have even number of elements".to_string(),
+        ));
+    }
+
+    // Save the current context to restore later
+    let saved_context = context.clone();
+
+    // Process bindings in pairs [var val var val ...]
+    for chunk in bindings.chunks(2) {
+        let var_node = &chunk[0];
+        let val_node = &chunk[1];
+
+        // Variable must be a symbol
+        let var_name = match var_node.as_ref() {
+            Node::Symbol { value } => value,
+            _ => {
+                return Err(CompileError::InvalidExpression(
+                    "let binding variables must be symbols".to_string(),
+                ))
+            }
+        };
+
+        // Compile the value expression
+        compile_node(val_node, program, context)?;
+
+        // Add variable to context and store it
+        let slot = context.add_variable(var_name.clone());
+        program.add_instruction(IRInstruction::StoreLocal(slot));
+    }
+
+    // Compile body in the new environment
+    compile_node(&args[1], program, context)?;
+
+    // Restore the original context (lexical scoping)
+    *context = saved_context;
 
     Ok(())
 }
@@ -377,5 +497,66 @@ mod tests {
         let program = compile_expression("(and 1 0)").unwrap();
         println!("AND FALSE IR: {:?}", program.instructions);
         assert!(program.instructions.len() > 3); // Should have multiple instructions
+    }
+
+    #[test]
+    fn test_compile_let_simple() {
+        let program = compile_expression("(let [x 5] x)").unwrap();
+        println!("LET SIMPLE IR: {:?}", program.instructions);
+        // Should have: Push(5), StoreLocal(0), LoadLocal(0), Return
+        assert!(program.instructions.contains(&IRInstruction::Push(5)));
+        assert!(program.instructions.contains(&IRInstruction::StoreLocal(0)));
+        assert!(program.instructions.contains(&IRInstruction::LoadLocal(0)));
+        assert!(program.instructions.contains(&IRInstruction::Return));
+    }
+
+    #[test]
+    fn test_compile_let_expression() {
+        let program = compile_expression("(let [x 5] (+ x 3))").unwrap();
+        println!("LET EXPRESSION IR: {:?}", program.instructions);
+        // Should have variable operations and arithmetic
+        assert!(program.instructions.contains(&IRInstruction::Push(5)));
+        assert!(program.instructions.contains(&IRInstruction::StoreLocal(0)));
+        assert!(program.instructions.contains(&IRInstruction::LoadLocal(0)));
+        assert!(program.instructions.contains(&IRInstruction::Push(3)));
+        assert!(program.instructions.contains(&IRInstruction::Add));
+    }
+
+    #[test]
+    fn test_compile_let_multiple_bindings() {
+        let program = compile_expression("(let [x 5 y 10] (+ x y))").unwrap();
+        println!("LET MULTIPLE IR: {:?}", program.instructions);
+        // Should have two variable stores and loads
+        assert!(program.instructions.contains(&IRInstruction::StoreLocal(0))); // x
+        assert!(program.instructions.contains(&IRInstruction::StoreLocal(1))); // y
+        assert!(program.instructions.contains(&IRInstruction::LoadLocal(0))); // x
+        assert!(program.instructions.contains(&IRInstruction::LoadLocal(1))); // y
+    }
+
+    #[test]
+    fn test_compile_let_error_cases() {
+        // Wrong arity
+        assert!(matches!(
+            compile_expression("(let [x 5])"),
+            Err(CompileError::ArityError(_, 2, 1))
+        ));
+
+        // Non-vector bindings
+        assert!(matches!(
+            compile_expression("(let (x 5) x)"),
+            Err(CompileError::InvalidExpression(_))
+        ));
+
+        // Odd number of binding elements
+        assert!(matches!(
+            compile_expression("(let [x] x)"),
+            Err(CompileError::InvalidExpression(_))
+        ));
+
+        // Non-symbol in binding
+        assert!(matches!(
+            compile_expression("(let [5 x] x)"),
+            Err(CompileError::InvalidExpression(_))
+        ));
     }
 }

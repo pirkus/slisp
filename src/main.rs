@@ -208,5 +208,6 @@ fn format_compile_error(error: &CompileError) -> String {
                 op, expected, actual
             )
         }
+        CompileError::UndefinedVariable(var) => format!("Undefined variable: {}", var),
     }
 }

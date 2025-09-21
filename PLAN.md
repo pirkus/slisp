@@ -80,6 +80,7 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 - ✅ **Comparison operations** (`=`, `<`, `>`, `<=`, `>=`) → native executables 🎉
 - ✅ **Logical operations** (`and`, `or`, `not`) → native executables 🎉
 - ✅ **Conditional expressions** (`if`) → native executables 🎉
+- ✅ **Variable bindings** (`let [var val ...] body`) → native executables 🎉
 - ✅ **Complex expressions** → ELF x86-64 executables
 
 **Examples:**
@@ -92,11 +93,12 @@ slisp --compile -o nested "(+ 2 (* 3 4))"  # ./nested exits with 14
 slisp --compile -o comp "(> 5 3)"          # ./comp exits with 1
 slisp --compile -o logical "(and 1 1)"     # ./logical exits with 1
 slisp --compile -o conditional "(if (> 5 3) 42 0)" # ./conditional exits with 42
+slisp --compile -o let_simple "(let [x 5] x)"     # ./let_simple exits with 5
+slisp --compile -o let_expr "(let [x 5] (+ x 3))" # ./let_expr exits with 8
 slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 ```
 
 **Remaining Compiler Limitations:**
-- ❌ **Variable bindings** (`let`) - Interpreter-only for now
 - ❌ **Function definitions** (`defun`) - Future language features
 
 ## Next Implementation Priorities
@@ -112,11 +114,10 @@ slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 - ✅ **Logical operations** - Stack-based `and`, `or`, `not` with short-circuit evaluation
 
 ### ✅ **Phase 2.5: Language Features - COMPLETED!**
-- ✅ **Variable bindings** (`let`) with environments (interpreter mode)
+- ✅ **Variable bindings** (`let`) with environments (interpreter + compiler modes)
 - [ ] **Function definitions** (`defun`) and calls (interpreter + compiler)
 
 ### **Phase 3: Advanced Language Features**
-- [ ] **Let binding compilation** - Stack-based variable bindings for compiler mode
 - [ ] **Function definitions** (`defun`) and calls (interpreter + compiler)
 
 ### **Phase 3: Advanced Compiler Features**

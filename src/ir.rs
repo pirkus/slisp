@@ -26,6 +26,10 @@ pub enum IRInstruction {
     JumpIfZero(usize), // Jump to instruction index if top of stack is 0
     Jump(usize),       // Unconditional jump to instruction index
 
+    // Variable operations
+    StoreLocal(usize), // Pop value and store in local variable slot
+    LoadLocal(usize),  // Push value from local variable slot
+
     // Program flow
     Return, // Return top of stack as program result
 }

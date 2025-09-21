@@ -15,12 +15,20 @@ impl X86CodeGen {
 
     // Optimized single-pass code generation with size pre-calculation
     pub fn generate(&mut self, program: &IRProgram) -> Vec<u8> {
+        // Check if we need a stack frame (if there are local variables)
+        let has_locals = program.instructions.iter().any(|inst| {
+            matches!(
+                inst,
+                IRInstruction::StoreLocal(_) | IRInstruction::LoadLocal(_)
+            )
+        });
+
         // Pre-calculate instruction positions without generating code
         self.calculate_positions(program);
 
         // Single pass: generate code with known positions
         self.code.clear();
-        self.generate_code(program);
+        self.generate_code(program, has_locals);
 
         self.code.clone()
     }
@@ -30,14 +38,33 @@ impl X86CodeGen {
         self.instruction_positions.clear();
         let mut position = 0;
 
+        // Account for prologue if we have local variables
+        let has_locals = program.instructions.iter().any(|inst| {
+            matches!(
+                inst,
+                IRInstruction::StoreLocal(_) | IRInstruction::LoadLocal(_)
+            )
+        });
+        if has_locals {
+            position += 8; // prologue: push rbp + mov rbp,rsp + sub rsp,128
+        }
+
         for instruction in &program.instructions {
             self.instruction_positions.push(position);
-            position += self.instruction_size(instruction);
+            position += self.instruction_size_with_context(instruction, has_locals);
         }
     }
 
     // Calculate size of a single instruction in bytes
     fn instruction_size(&self, instruction: &IRInstruction) -> usize {
+        self.instruction_size_with_context(instruction, false)
+    }
+
+    fn instruction_size_with_context(
+        &self,
+        instruction: &IRInstruction,
+        has_locals: bool,
+    ) -> usize {
         match instruction {
             IRInstruction::Push(value) => {
                 if *value <= 127 && *value >= -128 {
@@ -59,13 +86,28 @@ impl X86CodeGen {
             IRInstruction::JumpIfZero(_) => 10, // pop + cmp + je with 32-bit offset
             IRInstruction::Jump(_) => 5,       // jmp with 32-bit offset
             IRInstruction::Pop => 1,           // pop rax
-            IRInstruction::Return => 1,        // pop rax
+            IRInstruction::StoreLocal(_) => 11, // mov [rbp-offset], rax; pop rax
+            IRInstruction::LoadLocal(_) => 10, // push [rbp-offset]
+            IRInstruction::Return => {
+                if has_locals {
+                    5 // pop rax + mov rsp,rbp + pop rbp
+                } else {
+                    1 // pop rax
+                }
+            }
             IRInstruction::And | IRInstruction::Or => 0, // handled in compiler logic
         }
     }
 
     // Single code generation pass with known positions
-    fn generate_code(&mut self, program: &IRProgram) {
+    fn generate_code(&mut self, program: &IRProgram, has_locals: bool) {
+        // Add prologue if we have local variables
+        if has_locals {
+            self.emit(&[0x55]); // push rbp
+            self.emit(&[0x48, 0x89, 0xe5]); // mov rbp, rsp
+                                            // Reserve space for locals (we'll use a fixed amount)
+            self.emit(&[0x48, 0x83, 0xec, 0x80]); // sub rsp, 128 (space for 16 locals)
+        }
         for (_i, instruction) in program.instructions.iter().enumerate() {
             match instruction {
                 IRInstruction::Push(value) => {
@@ -205,8 +247,38 @@ impl X86CodeGen {
                     self.emit(&[0x58]); // pop rax (discard)
                 }
 
+                IRInstruction::StoreLocal(slot) => {
+                    self.emit(&[0x58]); // pop rax
+                                        // mov [rbp - 8*(slot+1)], rax
+                    let offset = 8 * (slot + 1);
+                    if offset <= 127 {
+                        self.emit(&[0x48, 0x89, 0x45]);
+                        self.emit(&[((-(offset as i8)) as u8)]);
+                    } else {
+                        self.emit(&[0x48, 0x89, 0x85]);
+                        self.emit(&(-(offset as i32)).to_le_bytes());
+                    }
+                }
+
+                IRInstruction::LoadLocal(slot) => {
+                    // push [rbp - 8*(slot+1)]
+                    let offset = 8 * (slot + 1);
+                    if offset <= 127 {
+                        self.emit(&[0xff, 0x75]);
+                        self.emit(&[((-(offset as i8)) as u8)]);
+                    } else {
+                        self.emit(&[0xff, 0xb5]);
+                        self.emit(&(-(offset as i32)).to_le_bytes());
+                    }
+                }
+
                 IRInstruction::Return => {
                     self.emit(&[0x58]); // pop rax
+                                        // Add epilogue if we have local variables
+                    if has_locals {
+                        self.emit(&[0x48, 0x89, 0xec]); // mov rsp, rbp
+                        self.emit(&[0x5d]); // pop rbp
+                    }
                 }
 
                 IRInstruction::And | IRInstruction::Or => {
