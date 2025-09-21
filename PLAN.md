@@ -2,7 +2,7 @@
 
 ## Current State
 - ✅ **AST parser** - Complete with robust error handling for malformed s-expressions
-- ✅ **JIT runner** - Working x86-64 machine code execution using memory-mapped pages  
+- ✅ **JIT runner** - Working x86-64 machine code execution using memory-mapped pages
 - ✅ **Domain model** - Clean `Node` enum (List, Primitive, Symbol variants)
 - ✅ **Tree-walking evaluator** - Full implementation with comprehensive operations
 - ✅ **REPL interface** - Interactive shell with Ctrl+D exit and error handling
@@ -104,7 +104,7 @@ slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 
 ## Next Implementation Priorities
 
-### ✅ **Phase 2: Stack-Based Compiler Enhancement - COMPLETED!** 
+### ✅ **Phase 2: Stack-Based Compiler Enhancement - COMPLETED!**
 **BREAKTHROUGH: Stack-based evaluation has unlocked full expression compilation!**
 
 - ✅ **Implement CPU stack-based evaluation** - Use x86-64 push/pop instructions
@@ -116,6 +116,7 @@ slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 
 ### ✅ **Phase 2.5: Language Features - COMPLETED!**
 - ✅ **Variable bindings** (`let`) with environments (interpreter + compiler modes)
+- [ ] **Make sure the memory model when calling functions is releasing memory properly
 - [ ] **Function definitions** (`defun`) and calls (interpreter + compiler)
 
 ### **Phase 3: Advanced Language Features**
@@ -126,14 +127,14 @@ slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 - [ ] **Function call conventions** - System V ABI for x86-64
 - [ ] **Memory management** - Stack frames and local variables
 
-### Phase 3: Advanced Code Generation  
+### Phase 3: Advanced Code Generation
 - [ ] **Register allocation** - Simple linear scan for locals
 - [ ] **Function call conventions** - System V ABI for x86-64
 - [ ] **Stack frame management** - Proper function prologue/epilogue
 
 ### Phase 4: Advanced Features
 - [ ] **Closures** and lexical scoping
-- [ ] **Garbage collection** 
+- [ ] **Garbage collection**
 - [ ] **Standard library** functions
 - [ ] **Optimization passes** (constant folding, dead code elimination)
 
