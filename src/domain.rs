@@ -21,13 +21,13 @@ impl Node {
 
     pub fn new_list_from_raw(nodes: Vec<Node>) -> Node {
         Node::List {
-            root: nodes.into_iter().map(|x| Box::new(x)).collect(),
+            root: nodes.into_iter().map(Box::new).collect(),
         }
     }
 
     pub fn new_vector_from_raw(nodes: Vec<Node>) -> Node {
         Node::Vector {
-            root: nodes.into_iter().map(|x| Box::new(x)).collect(),
+            root: nodes.into_iter().map(Box::new).collect(),
         }
     }
 }

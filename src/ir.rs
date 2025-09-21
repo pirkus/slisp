@@ -2,7 +2,6 @@
 pub enum IRInstruction {
     // Stack operations
     Push(i64), // Push immediate value
-    Pop,       // Pop and discard top value
 
     // Arithmetic operations
     Add, // Pop two values, push sum
@@ -18,8 +17,6 @@ pub enum IRInstruction {
     GreaterEqual, // Pop two values, push 1 if second >= first, 0 otherwise
 
     // Logical operations
-    And, // Pop two values, push logical AND
-    Or,  // Pop two values, push logical OR
     Not, // Pop one value, push logical NOT
 
     // Control flow

@@ -55,11 +55,6 @@ impl X86CodeGen {
         }
     }
 
-    // Calculate size of a single instruction in bytes
-    fn instruction_size(&self, instruction: &IRInstruction) -> usize {
-        self.instruction_size_with_context(instruction, false)
-    }
-
     fn instruction_size_with_context(
         &self,
         instruction: &IRInstruction,
@@ -85,7 +80,6 @@ impl X86CodeGen {
             IRInstruction::Not => 12,          // 1+4+3+4+1: pop + cmp rax,0 + sete + movzx + push
             IRInstruction::JumpIfZero(_) => 10, // pop + cmp + je with 32-bit offset
             IRInstruction::Jump(_) => 5,       // jmp with 32-bit offset
-            IRInstruction::Pop => 1,           // pop rax
             IRInstruction::StoreLocal(_) => 11, // mov [rbp-offset], rax; pop rax
             IRInstruction::LoadLocal(_) => 10, // push [rbp-offset]
             IRInstruction::Return => {
@@ -95,7 +89,6 @@ impl X86CodeGen {
                     1 // pop rax
                 }
             }
-            IRInstruction::And | IRInstruction::Or => 0, // handled in compiler logic
         }
     }
 
@@ -243,10 +236,6 @@ impl X86CodeGen {
                     self.emit(&offset.to_le_bytes());
                 }
 
-                IRInstruction::Pop => {
-                    self.emit(&[0x58]); // pop rax (discard)
-                }
-
                 IRInstruction::StoreLocal(slot) => {
                     self.emit(&[0x58]); // pop rax
                                         // mov [rbp - 8*(slot+1)], rax
@@ -279,10 +268,6 @@ impl X86CodeGen {
                         self.emit(&[0x48, 0x89, 0xec]); // mov rsp, rbp
                         self.emit(&[0x5d]); // pop rbp
                     }
-                }
-
-                IRInstruction::And | IRInstruction::Or => {
-                    // These are handled in compiler logic
                 }
             }
         }
