@@ -23,6 +23,9 @@ fn compile_node(node: &Node, program: &mut IRProgram) -> Result<(), CompileError
             value
         ))),
         Node::List { root } => compile_list(root, program),
+        Node::Vector { root: _ } => Err(CompileError::UnsupportedOperation(
+            "Vectors not supported in compilation yet".to_string(),
+        )),
     }
 }
 
@@ -62,6 +65,9 @@ fn compile_list(nodes: &[Box<Node>], program: &mut IRProgram) -> Result<(), Comp
             "and" => compile_logical_and(args, program),
             "or" => compile_logical_or(args, program),
             "not" => compile_logical_not(args, program),
+            "let" => Err(CompileError::UnsupportedOperation(
+                "let binding not supported in compilation yet".to_string(),
+            )),
             op => Err(CompileError::UnsupportedOperation(op.to_string())),
         },
         _ => Err(CompileError::InvalidExpression(

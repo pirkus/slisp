@@ -27,6 +27,7 @@ fn eval_with_env(node: &Node, env: &Environment) -> Result<Value, EvalError> {
         Node::Primitive { value } => eval_primitive(value),
         Node::Symbol { value } => eval_symbol(value, env),
         Node::List { root } => eval_list(root, env),
+        Node::Vector { root } => eval_vector(root, env),
     }
 }
 
@@ -79,6 +80,7 @@ fn eval_list(nodes: &[Box<Node>], env: &Environment) -> Result<Value, EvalError>
             "and" => eval_logical_and(args, env),
             "or" => eval_logical_or(args, env),
             "not" => eval_logical_not(args, env),
+            "let" => eval_let(args, env),
             op => Err(EvalError::UndefinedSymbol(op.to_string())),
         },
         _ => Err(EvalError::InvalidOperation(
@@ -227,6 +229,61 @@ fn eval_logical_not(args: &[Box<Node>], env: &Environment) -> Result<Value, Eval
     Ok(Value::Boolean(!is_truthy))
 }
 
+fn eval_vector(_nodes: &[Box<Node>], _env: &Environment) -> Result<Value, EvalError> {
+    // For now, vectors just evaluate to Nil - they're used as data structures in let
+    Ok(Value::Nil)
+}
+
+fn eval_let(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+    if args.len() != 2 {
+        return Err(EvalError::ArityError("let".to_string(), 2, args.len()));
+    }
+
+    // First argument should be a vector of bindings [var1 val1 var2 val2 ...]
+    let bindings = match args[0].as_ref() {
+        Node::Vector { root } => root,
+        _ => {
+            return Err(EvalError::TypeError(
+                "let requires a vector of bindings".to_string(),
+            ))
+        }
+    };
+
+    // Check that we have an even number of binding elements
+    if bindings.len() % 2 != 0 {
+        return Err(EvalError::TypeError(
+            "let bindings must have even number of elements".to_string(),
+        ));
+    }
+
+    // Create new environment with bindings
+    let mut new_env = env.clone();
+
+    // Process bindings in pairs [var val var val ...]
+    for chunk in bindings.chunks(2) {
+        let var_node = &chunk[0];
+        let val_node = &chunk[1];
+
+        // Variable must be a symbol
+        let var_name = match var_node.as_ref() {
+            Node::Symbol { value } => value,
+            _ => {
+                return Err(EvalError::TypeError(
+                    "let binding variables must be symbols".to_string(),
+                ))
+            }
+        };
+
+        // Evaluate the value in the current environment (not new_env)
+        // This allows for sequential binding where later bindings can reference earlier ones
+        let val = eval_with_env(val_node, &new_env)?;
+        new_env.insert(var_name.clone(), val);
+    }
+
+    // Evaluate body in the new environment
+    eval_with_env(&args[1], &new_env)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,5 +387,80 @@ mod tests {
     fn test_empty_list() {
         let empty_list = Node::List { root: vec![] };
         assert_eq!(eval_node(&empty_list), Ok(Value::Nil));
+    }
+
+    #[test]
+    fn test_let_binding() {
+        assert_eq!(parse_and_eval("(let [x 5] x)"), Ok(Value::Number(5)));
+        assert_eq!(parse_and_eval("(let [x 5] (+ x 3))"), Ok(Value::Number(8)));
+        assert_eq!(
+            parse_and_eval("(let [x 5 y 10] (+ x y))"),
+            Ok(Value::Number(15))
+        );
+    }
+
+    #[test]
+    fn test_let_sequential_binding() {
+        // Later bindings can reference earlier ones
+        assert_eq!(
+            parse_and_eval("(let [x 5 y (+ x 2)] y)"),
+            Ok(Value::Number(7))
+        );
+        assert_eq!(
+            parse_and_eval("(let [x 3 y (* x 2) z (+ x y)] z)"),
+            Ok(Value::Number(9))
+        );
+    }
+
+    #[test]
+    fn test_let_nested() {
+        assert_eq!(
+            parse_and_eval("(let [x 5] (let [y 10] (+ x y)))"),
+            Ok(Value::Number(15))
+        );
+    }
+
+    #[test]
+    fn test_let_shadow_binding() {
+        // Inner let should shadow outer binding
+        assert_eq!(
+            parse_and_eval("(let [x 5] (let [x 10] x))"),
+            Ok(Value::Number(10))
+        );
+    }
+
+    #[test]
+    fn test_let_complex_expressions() {
+        assert_eq!(
+            parse_and_eval("(let [x 5 y 3] (if (> x y) (+ x y) (* x y)))"),
+            Ok(Value::Number(8))
+        );
+    }
+
+    #[test]
+    fn test_let_error_cases() {
+        // Odd number of binding elements
+        assert!(matches!(
+            parse_and_eval("(let [x] x)"),
+            Err(EvalError::TypeError(_))
+        ));
+
+        // Wrong arity
+        assert!(matches!(
+            parse_and_eval("(let [x 5])"),
+            Err(EvalError::ArityError(_, 2, 1))
+        ));
+
+        // Non-vector bindings
+        assert!(matches!(
+            parse_and_eval("(let (x 5) x)"),
+            Err(EvalError::TypeError(_))
+        ));
+
+        // Non-symbol in binding
+        assert!(matches!(
+            parse_and_eval("(let [5 x] x)"),
+            Err(EvalError::TypeError(_))
+        ));
     }
 }

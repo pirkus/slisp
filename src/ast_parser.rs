@@ -13,7 +13,16 @@ impl AstParserTrt for AstParser {
 }
 
 impl AstParser {
-    fn parse_sexp_internal(input: &[u8], offset: &mut usize, inside_list: bool) -> Node {
+    fn parse_sexp_internal(input: &[u8], offset: &mut usize, inside_container: bool) -> Node {
+        Self::parse_container(input, offset, inside_container, false)
+    }
+
+    fn parse_container(
+        input: &[u8],
+        offset: &mut usize,
+        inside_container: bool,
+        is_vector: bool,
+    ) -> Node {
         let mut buffer = String::new();
         let mut sexp = vec![];
 
@@ -21,26 +30,42 @@ impl AstParser {
             let c = input[*offset] as char;
             match c {
                 '(' => {
+                    if !buffer.is_empty() {
+                        sexp.push(Self::parse_atom(&buffer));
+                        buffer = String::new();
+                    }
                     *offset += 1;
-                    sexp.push(Self::parse_sexp_internal(input, offset, true));
+                    sexp.push(Self::parse_container(input, offset, true, false));
+                }
+                '[' => {
+                    if !buffer.is_empty() {
+                        sexp.push(Self::parse_atom(&buffer));
+                        buffer = String::new();
+                    }
+                    *offset += 1;
+                    sexp.push(Self::parse_container(input, offset, true, true));
                 }
                 ')' => {
-                    if !inside_list {
-                        // Unopened parenthesis - panic
+                    if !inside_container || is_vector {
                         panic!("Unexpected closing parenthesis");
                     }
                     if !buffer.is_empty() {
-                        sexp.push(Node::new_number(buffer.parse().unwrap()));
+                        sexp.push(Self::parse_atom(&buffer));
                     }
                     return Node::new_list_from_raw(sexp);
                 }
+                ']' => {
+                    if !inside_container || !is_vector {
+                        panic!("Unexpected closing bracket");
+                    }
+                    if !buffer.is_empty() {
+                        sexp.push(Self::parse_atom(&buffer));
+                    }
+                    return Node::new_vector_from_raw(sexp);
+                }
                 ' ' => {
                     if !buffer.is_empty() {
-                        sexp.push(if sexp.is_empty() {
-                            Node::Symbol { value: buffer }
-                        } else {
-                            Node::new_number(buffer.parse().unwrap())
-                        });
+                        sexp.push(Self::parse_atom(&buffer));
                         buffer = String::new();
                     }
                 }
@@ -52,15 +77,24 @@ impl AstParser {
         }
 
         // If we reach end of input
-        if inside_list {
-            // We're inside a list but never found closing parenthesis - panic
-            panic!("Unclosed parenthesis");
+        if inside_container {
+            panic!("Unclosed container");
         }
 
         if !buffer.is_empty() {
-            Node::new_number(buffer.parse().unwrap())
+            Self::parse_atom(&buffer)
         } else {
             sexp.first().unwrap().to_owned()
+        }
+    }
+
+    fn parse_atom(buffer: &str) -> Node {
+        if let Ok(num) = buffer.parse::<usize>() {
+            Node::new_number(num)
+        } else {
+            Node::Symbol {
+                value: buffer.to_string(),
+            }
         }
     }
 }
@@ -129,10 +163,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn parse_single_symbol() {
-        // This actually panics because the parser tries to parse "hello" as a number
-        AstParser::parse_sexp_new_domain(b"hello", &mut 0);
+        let parsed = AstParser::parse_sexp_new_domain(b"hello", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::Symbol {
+                value: "hello".to_string()
+            }
+        );
     }
 
     #[test]
@@ -172,15 +210,31 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn parse_invalid_number_in_list() {
-        AstParser::parse_sexp_new_domain(b"(+ abc 2)", &mut 0);
+    fn parse_symbol_in_list() {
+        let parsed = AstParser::parse_sexp_new_domain(b"(+ abc 2)", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::new_list_from_raw(vec![
+                Node::Symbol {
+                    value: "+".to_string()
+                },
+                Node::Symbol {
+                    value: "abc".to_string()
+                },
+                Node::new_number(2)
+            ])
+        );
     }
 
     #[test]
-    #[should_panic]
-    fn parse_invalid_standalone_number() {
-        AstParser::parse_sexp_new_domain(b"abc123def", &mut 0);
+    fn parse_complex_symbol() {
+        let parsed = AstParser::parse_sexp_new_domain(b"abc123def", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::Symbol {
+                value: "abc123def".to_string()
+            }
+        );
     }
 
     #[test]
@@ -190,9 +244,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn parse_malformed_number() {
-        AstParser::parse_sexp_new_domain(b"(+ 1.2.3 4)", &mut 0);
+    fn parse_symbol_with_dots() {
+        let parsed = AstParser::parse_sexp_new_domain(b"(+ 1.2.3 4)", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::new_list_from_raw(vec![
+                Node::Symbol {
+                    value: "+".to_string()
+                },
+                Node::Symbol {
+                    value: "1.2.3".to_string()
+                },
+                Node::new_number(4)
+            ])
+        );
     }
 
     #[test]
@@ -213,5 +278,45 @@ mod tests {
     #[should_panic]
     fn parse_unopened_parenthesis() {
         AstParser::parse_sexp_new_domain(b"2 )", &mut 0);
+    }
+
+    #[test]
+    fn parse_vector() {
+        let parsed = AstParser::parse_sexp_new_domain(b"[x 5 y 10]", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::new_vector_from_raw(vec![
+                Node::Symbol {
+                    value: "x".to_string()
+                },
+                Node::new_number(5),
+                Node::Symbol {
+                    value: "y".to_string()
+                },
+                Node::new_number(10)
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_let_expression() {
+        let parsed = AstParser::parse_sexp_new_domain(b"(let [x 5] x)", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::new_list_from_raw(vec![
+                Node::Symbol {
+                    value: "let".to_string()
+                },
+                Node::new_vector_from_raw(vec![
+                    Node::Symbol {
+                        value: "x".to_string()
+                    },
+                    Node::new_number(5)
+                ]),
+                Node::Symbol {
+                    value: "x".to_string()
+                }
+            ])
+        );
     }
 }

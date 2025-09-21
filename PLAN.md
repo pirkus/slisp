@@ -43,8 +43,8 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 - ✅ **Dual execution modes** - Both interpreter and compiler with CLI interface
 - ✅ **Conditional compilation** - Full support for if/and/or/not in compiler mode
 
-### 🚧 **In Progress - Phase 2: Language Features**
-- ❌ **Variable bindings** (`let`) and lexical environments
+### ✅ **Completed - Phase 2: Language Features**
+- ✅ **Variable bindings** (`let`) and lexical environments
 
 ## Feature Support Matrix
 
@@ -57,6 +57,7 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 - ✅ Conditional expressions (`if condition then else`)
 - ✅ Nested expressions (`(+ 2 (* 3 4))`)
 - ✅ Empty lists (`()`)
+- ✅ **Variable bindings** (`let [var val ...] body`) with lexical scoping
 - ✅ Comprehensive error handling and type checking
 
 **Examples:**
@@ -66,6 +67,8 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 (* (+ 1 2) (- 5 3))        ; → 6
 (if (> 10 5) 42 0)         ; → 42
 (and (> 5 3) (< 2 4))      ; → true
+(let [x 5] x)              ; → 5
+(let [x 5 y 10] (+ x y))   ; → 15
 ```
 
 ### ✅ **Compiler Mode** (`slisp --compile -o <file> <expr>`) - **MAJOR BREAKTHROUGH!**
@@ -93,7 +96,8 @@ slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 ```
 
 **Remaining Compiler Limitations:**
-- ❌ Variables and functions - **Future language features**
+- ❌ **Variable bindings** (`let`) - Interpreter-only for now
+- ❌ **Function definitions** (`defun`) - Future language features
 
 ## Next Implementation Priorities
 
@@ -107,8 +111,12 @@ slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 - ✅ **Conditional compilation** - Stack-based `if` expression support with conditional jumps
 - ✅ **Logical operations** - Stack-based `and`, `or`, `not` with short-circuit evaluation
 
-### **Phase 2.5: Language Features**
-- [ ] **Variable bindings** (`let`) with environments (interpreter + compiler)
+### ✅ **Phase 2.5: Language Features - COMPLETED!**
+- ✅ **Variable bindings** (`let`) with environments (interpreter mode)
+- [ ] **Function definitions** (`defun`) and calls (interpreter + compiler)
+
+### **Phase 3: Advanced Language Features**
+- [ ] **Let binding compilation** - Stack-based variable bindings for compiler mode
 - [ ] **Function definitions** (`defun`) and calls (interpreter + compiler)
 
 ### **Phase 3: Advanced Compiler Features**
