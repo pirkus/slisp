@@ -37,9 +37,8 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 - ✅ **Conditional expressions** (`if`) with proper truthiness handling
 - ✅ **Comprehensive error handling** (arity, type, undefined symbol errors)
 - ✅ **Nested expression evaluation** - Full recursive support
-- ✅ **Test coverage** - 25+ passing tests across parser and evaluator
 - ✅ **IR compilation** - Stack-based intermediate representation
-- ✅ **x86-64 code generation** - Complete machine code generation for expressions
+- ✅ **x86-64 code generation** - Optimized single-pass machine code generation
 - ✅ **ELF executable generation** - Creates standalone native executables
 - ✅ **Dual execution modes** - Both interpreter and compiler with CLI interface
 - ✅ **Conditional compilation** - Full support for if/and/or/not in compiler mode
@@ -153,3 +152,4 @@ slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 - Functional programming principles for clarity and maintainability
 - Consider debugging/profiling hooks early
 - Always update documentation and tests and PLAN.md with current status so that it is next session ready
+- if you fail to rewrite a file, try the diff again, do not try simpler solutions or complete rewrites

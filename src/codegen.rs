@@ -13,149 +13,60 @@ impl X86CodeGen {
         }
     }
 
-    // Two-pass code generation for accurate jump offsets
+    // Optimized single-pass code generation with size pre-calculation
     pub fn generate(&mut self, program: &IRProgram) -> Vec<u8> {
-        // First pass: generate code and record instruction positions
-        self.first_pass(program);
+        // Pre-calculate instruction positions without generating code
+        self.calculate_positions(program);
 
-        // Second pass: regenerate with correct jump offsets
+        // Single pass: generate code with known positions
         self.code.clear();
-        self.second_pass(program);
+        self.generate_code(program);
 
         self.code.clone()
     }
 
-    fn first_pass(&mut self, program: &IRProgram) {
+    // Fast position calculation without code generation
+    fn calculate_positions(&mut self, program: &IRProgram) {
         self.instruction_positions.clear();
-        self.code.clear();
+        let mut position = 0;
 
         for instruction in &program.instructions {
-            self.instruction_positions.push(self.code.len());
-
-            match instruction {
-                IRInstruction::Push(value) => {
-                    if *value <= 127 && *value >= -128 {
-                        self.emit(&[0x6a]);
-                        self.emit(&[*value as u8]);
-                    } else {
-                        self.emit(&[0x68]);
-                        self.emit(&(*value as u32).to_le_bytes());
-                    }
-                }
-
-                IRInstruction::Add => {
-                    self.emit(&[0x58]); // pop rax
-                    self.emit(&[0x5b]); // pop rbx
-                    self.emit(&[0x48, 0x01, 0xd8]); // add rax, rbx
-                    self.emit(&[0x50]); // push rax
-                }
-
-                IRInstruction::Sub => {
-                    self.emit(&[0x58]); // pop rax
-                    self.emit(&[0x5b]); // pop rbx
-                    self.emit(&[0x48, 0x29, 0xc3]); // sub rbx, rax
-                    self.emit(&[0x53]); // push rbx
-                }
-
-                IRInstruction::Mul => {
-                    self.emit(&[0x58]); // pop rax
-                    self.emit(&[0x5b]); // pop rbx
-                    self.emit(&[0x48, 0x0f, 0xaf, 0xd8]); // imul rbx, rax
-                    self.emit(&[0x53]); // push rbx
-                }
-
-                IRInstruction::Div => {
-                    self.emit(&[0x58]); // pop rax (divisor)
-                    self.emit(&[0x5b]); // pop rbx (dividend)
-                    self.emit(&[0x48, 0x89, 0xd8]); // mov rax, rbx
-                    self.emit(&[0x48, 0x89, 0xc1]); // mov rcx, rax
-                    self.emit(&[0x48, 0x99]); // cqo
-                    self.emit(&[0x48, 0xf7, 0xf9]); // idiv rcx
-                    self.emit(&[0x50]); // push rax
-                }
-
-                IRInstruction::Equal => {
-                    self.emit(&[0x58]); // pop rax
-                    self.emit(&[0x5b]); // pop rbx
-                    self.emit(&[0x48, 0x39, 0xd8]); // cmp rax, rbx
-                    self.emit(&[0x0f, 0x94, 0xc0]); // sete al
-                    self.emit(&[0x48, 0x0f, 0xb6, 0xc0]); // movzx rax, al
-                    self.emit(&[0x50]); // push rax
-                }
-
-                IRInstruction::Less => {
-                    self.emit(&[0x58]); // pop rax (second)
-                    self.emit(&[0x5b]); // pop rbx (first)
-                    self.emit(&[0x48, 0x39, 0xc3]); // cmp rbx, rax
-                    self.emit(&[0x0f, 0x9c, 0xc0]); // setl al
-                    self.emit(&[0x48, 0x0f, 0xb6, 0xc0]); // movzx rax, al
-                    self.emit(&[0x50]); // push rax
-                }
-
-                IRInstruction::Greater => {
-                    self.emit(&[0x58]); // pop rax (second)
-                    self.emit(&[0x5b]); // pop rbx (first)
-                    self.emit(&[0x48, 0x39, 0xc3]); // cmp rbx, rax
-                    self.emit(&[0x0f, 0x9f, 0xc0]); // setg al
-                    self.emit(&[0x48, 0x0f, 0xb6, 0xc0]); // movzx rax, al
-                    self.emit(&[0x50]); // push rax
-                }
-
-                IRInstruction::LessEqual => {
-                    self.emit(&[0x58]); // pop rax (second)
-                    self.emit(&[0x5b]); // pop rbx (first)
-                    self.emit(&[0x48, 0x39, 0xc3]); // cmp rbx, rax
-                    self.emit(&[0x0f, 0x9e, 0xc0]); // setle al
-                    self.emit(&[0x48, 0x0f, 0xb6, 0xc0]); // movzx rax, al
-                    self.emit(&[0x50]); // push rax
-                }
-
-                IRInstruction::GreaterEqual => {
-                    self.emit(&[0x58]); // pop rax (second)
-                    self.emit(&[0x5b]); // pop rbx (first)
-                    self.emit(&[0x48, 0x39, 0xc3]); // cmp rbx, rax
-                    self.emit(&[0x0f, 0x9d, 0xc0]); // setge al
-                    self.emit(&[0x48, 0x0f, 0xb6, 0xc0]); // movzx rax, al
-                    self.emit(&[0x50]); // push rax
-                }
-
-                IRInstruction::Not => {
-                    self.emit(&[0x58]); // pop rax
-                    self.emit(&[0x48, 0x83, 0xf8, 0x00]); // cmp rax, 0
-                    self.emit(&[0x0f, 0x94, 0xc0]); // sete al
-                    self.emit(&[0x48, 0x0f, 0xb6, 0xc0]); // movzx rax, al
-                    self.emit(&[0x50]); // push rax
-                }
-
-                IRInstruction::JumpIfZero(_) => {
-                    self.emit(&[0x58]); // pop rax
-                    self.emit(&[0x48, 0x83, 0xf8, 0x00]); // cmp rax, 0
-                    self.emit(&[0x0f, 0x84]); // je
-                    self.emit(&[0x00, 0x00, 0x00, 0x00]); // placeholder offset
-                }
-
-                IRInstruction::Jump(_) => {
-                    self.emit(&[0xe9]); // jmp
-                    self.emit(&[0x00, 0x00, 0x00, 0x00]); // placeholder offset
-                }
-
-                IRInstruction::Pop => {
-                    self.emit(&[0x58]); // pop rax (discard)
-                }
-
-                IRInstruction::Return => {
-                    self.emit(&[0x58]); // pop rax
-                }
-
-                IRInstruction::And | IRInstruction::Or => {
-                    // These are handled in compiler logic
-                }
-            }
+            self.instruction_positions.push(position);
+            position += self.instruction_size(instruction);
         }
     }
 
-    fn second_pass(&mut self, program: &IRProgram) {
-        for (i, instruction) in program.instructions.iter().enumerate() {
+    // Calculate size of a single instruction in bytes
+    fn instruction_size(&self, instruction: &IRInstruction) -> usize {
+        match instruction {
+            IRInstruction::Push(value) => {
+                if *value <= 127 && *value >= -128 {
+                    2
+                } else {
+                    5
+                }
+            }
+            IRInstruction::Add => 6, // 1+1+3+1: pop rax + pop rbx + add rax,rbx + push rax
+            IRInstruction::Sub => 6, // 1+1+3+1: pop rax + pop rbx + sub rbx,rax + push rbx
+            IRInstruction::Mul => 7, // 1+1+4+1: pop rax + pop rbx + imul rbx,rax + push rbx
+            IRInstruction::Div => 14, // 1+1+3+3+2+3+1: pop + pop + mov + mov + cqo + idiv + push
+            IRInstruction::Equal => 13, // 1+1+3+3+4+1: pop + pop + cmp + sete + movzx + push
+            IRInstruction::Less => 13, // 1+1+3+3+4+1: pop + pop + cmp + setl + movzx + push
+            IRInstruction::Greater => 13, // 1+1+3+3+4+1: pop + pop + cmp + setg + movzx + push
+            IRInstruction::LessEqual => 13, // 1+1+3+3+4+1: pop + pop + cmp + setle + movzx + push
+            IRInstruction::GreaterEqual => 13, // 1+1+3+3+4+1: pop + pop + cmp + setge + movzx + push
+            IRInstruction::Not => 12,          // 1+4+3+4+1: pop + cmp rax,0 + sete + movzx + push
+            IRInstruction::JumpIfZero(_) => 10, // pop + cmp + je with 32-bit offset
+            IRInstruction::Jump(_) => 5,       // jmp with 32-bit offset
+            IRInstruction::Pop => 1,           // pop rax
+            IRInstruction::Return => 1,        // pop rax
+            IRInstruction::And | IRInstruction::Or => 0, // handled in compiler logic
+        }
+    }
+
+    // Single code generation pass with known positions
+    fn generate_code(&mut self, program: &IRProgram) {
+        for (_i, instruction) in program.instructions.iter().enumerate() {
             match instruction {
                 IRInstruction::Push(value) => {
                     if *value <= 127 && *value >= -128 {
@@ -255,16 +166,34 @@ impl X86CodeGen {
                     self.emit(&[0x58]); // pop rax
                     self.emit(&[0x48, 0x83, 0xf8, 0x00]); // cmp rax, 0
 
-                    let current_pos = self.code.len() + 6; // Position after this instruction
+                    if *target >= self.instruction_positions.len() {
+                        panic!(
+                            "JumpIfZero target {} out of bounds (max {})",
+                            *target,
+                            self.instruction_positions.len() - 1
+                        );
+                    }
+
+                    let current_instruction_pos = self.instruction_positions[_i];
+                    let current_pos = current_instruction_pos + 10; // Position after complete JumpIfZero instruction
                     let target_pos = self.instruction_positions[*target];
                     let offset = (target_pos as i32) - (current_pos as i32);
 
-                    self.emit(&[0x0f, 0x84]); // je
-                    self.emit(&offset.to_le_bytes());
+                    self.emit(&[0x0f, 0x84]); // je (2 bytes)
+                    self.emit(&offset.to_le_bytes()); // 4-byte offset
                 }
 
                 IRInstruction::Jump(target) => {
-                    let current_pos = self.code.len() + 5; // Position after this instruction
+                    if *target >= self.instruction_positions.len() {
+                        panic!(
+                            "Jump target {} out of bounds (max {})",
+                            *target,
+                            self.instruction_positions.len() - 1
+                        );
+                    }
+
+                    let current_instruction_pos = self.instruction_positions[_i];
+                    let current_pos = current_instruction_pos + 5; // Position after jmp instruction (1+4)
                     let target_pos = self.instruction_positions[*target];
                     let offset = (target_pos as i32) - (current_pos as i32);
 
