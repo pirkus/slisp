@@ -152,38 +152,63 @@ fn compile_logical_and(args: &[Box<Node>], program: &mut IRProgram) -> Result<()
         return Ok(());
     }
 
-    let mut end_jumps = Vec::new();
+    if args.len() == 1 {
+        compile_node(&args[0], program)?;
+        // Convert to boolean (0 or 1)
+        program.add_instruction(IRInstruction::Push(0));
+        program.add_instruction(IRInstruction::Equal);
+        program.add_instruction(IRInstruction::Not);
+        return Ok(());
+    }
 
-    for (i, arg) in args.iter().enumerate() {
+    // Compile first argument
+    compile_node(&args[0], program)?;
+
+    // For each additional argument, short-circuit if current result is false
+    let mut false_jumps = Vec::new();
+
+    for arg in &args[1..] {
+        // Test if current value is false (0) - if so, short-circuit to false
+        program.add_instruction(IRInstruction::Push(0));
+        program.add_instruction(IRInstruction::Equal);
+
+        // If current value is false (Equal result will be 1), we need to NOT jump
+        // So we invert the test: jump if Equal result is 0 (meaning value was NOT 0)
+        program.add_instruction(IRInstruction::Not);
+        let false_jump = program.len();
+        program.add_instruction(IRInstruction::JumpIfZero(0)); // Will be patched
+        false_jumps.push(false_jump);
+
+        // Current value is true, so evaluate next argument
         compile_node(arg, program)?;
-
-        // For all but the last argument, jump to end if false
-        if i < args.len() - 1 {
-            // Duplicate value for testing
-            program.add_instruction(IRInstruction::Push(0));
-            program.add_instruction(IRInstruction::Equal);
-
-            let jump_pos = program.len();
-            program.add_instruction(IRInstruction::JumpIfZero(0)); // Will be patched
-            end_jumps.push(jump_pos);
-
-            // Pop the original value since we're continuing
-            program.add_instruction(IRInstruction::Pop);
-        }
     }
 
-    // Patch all end jumps
-    let end_pos = program.len();
-    for jump_pos in end_jumps {
-        if let IRInstruction::JumpIfZero(ref mut target) = &mut program.instructions[jump_pos] {
-            *target = end_pos;
-        }
-    }
-
-    // Convert final result to boolean (0 or 1)
+    // Convert final result to boolean and jump to end
     program.add_instruction(IRInstruction::Push(0));
     program.add_instruction(IRInstruction::Equal);
     program.add_instruction(IRInstruction::Not);
+
+    let end_jump = program.len();
+    program.add_instruction(IRInstruction::Jump(0)); // Will be patched
+
+    // False result path: push 0
+    let false_label = program.len();
+    program.add_instruction(IRInstruction::Push(0));
+
+    // Patch all jumps
+    let end_label = program.len();
+
+    // Patch false jumps to false result
+    for jump_pos in false_jumps {
+        if let IRInstruction::JumpIfZero(ref mut target) = &mut program.instructions[jump_pos] {
+            *target = false_label;
+        }
+    }
+
+    // Patch end jump
+    if let IRInstruction::Jump(ref mut target) = &mut program.instructions[end_jump] {
+        *target = end_label;
+    }
 
     Ok(())
 }
@@ -194,39 +219,61 @@ fn compile_logical_or(args: &[Box<Node>], program: &mut IRProgram) -> Result<(),
         return Ok(());
     }
 
-    let mut end_jumps = Vec::new();
+    if args.len() == 1 {
+        compile_node(&args[0], program)?;
+        // Convert to boolean (0 or 1)
+        program.add_instruction(IRInstruction::Push(0));
+        program.add_instruction(IRInstruction::Equal);
+        program.add_instruction(IRInstruction::Not);
+        return Ok(());
+    }
 
-    for (i, arg) in args.iter().enumerate() {
+    // Compile first argument
+    compile_node(&args[0], program)?;
+
+    // For each additional argument, short-circuit if current result is true
+    let mut true_jumps = Vec::new();
+
+    for arg in &args[1..] {
+        // Test if current value is true (non-zero) - if so, short-circuit to true
+        program.add_instruction(IRInstruction::Push(0));
+        program.add_instruction(IRInstruction::Equal);
+
+        // If current value is true (Equal result will be 0), jump to true result
+        let true_jump = program.len();
+        program.add_instruction(IRInstruction::JumpIfZero(0)); // Will be patched
+        true_jumps.push(true_jump);
+
+        // Current value is false, so evaluate next argument
         compile_node(arg, program)?;
-
-        // For all but the last argument, jump to end if true
-        if i < args.len() - 1 {
-            // Duplicate value for testing
-            program.add_instruction(IRInstruction::Push(0));
-            program.add_instruction(IRInstruction::Equal);
-            program.add_instruction(IRInstruction::Not);
-
-            let jump_pos = program.len();
-            program.add_instruction(IRInstruction::JumpIfZero(0)); // Will be patched
-            end_jumps.push(jump_pos);
-
-            // Pop the original value since we're continuing
-            program.add_instruction(IRInstruction::Pop);
-        }
     }
 
-    // Patch all end jumps
-    let end_pos = program.len();
-    for jump_pos in end_jumps {
-        if let IRInstruction::JumpIfZero(ref mut target) = &mut program.instructions[jump_pos] {
-            *target = end_pos;
-        }
-    }
-
-    // Convert final result to boolean (0 or 1)
+    // Convert final result to boolean and jump to end
     program.add_instruction(IRInstruction::Push(0));
     program.add_instruction(IRInstruction::Equal);
     program.add_instruction(IRInstruction::Not);
+
+    let end_jump = program.len();
+    program.add_instruction(IRInstruction::Jump(0)); // Will be patched
+
+    // True result path: push 1
+    let true_label = program.len();
+    program.add_instruction(IRInstruction::Push(1));
+
+    // Patch all jumps
+    let end_label = program.len();
+
+    // Patch true jumps to true result
+    for jump_pos in true_jumps {
+        if let IRInstruction::JumpIfZero(ref mut target) = &mut program.instructions[jump_pos] {
+            *target = true_label;
+        }
+    }
+
+    // Patch end jump
+    if let IRInstruction::Jump(ref mut target) = &mut program.instructions[end_jump] {
+        *target = end_label;
+    }
 
     Ok(())
 }
@@ -289,5 +336,40 @@ mod tests {
                 IRInstruction::Return
             ]
         );
+    }
+
+    #[test]
+    fn test_compile_if_true() {
+        let program = compile_expression("(if (> 5 3) 42 0)").unwrap();
+        // Should generate: push 5, push 3, greater, jumpifzero else, push 42, jump end, push 0, return
+        println!("If IR: {:?}", program.instructions);
+        assert!(program.instructions.len() > 5); // Should have multiple instructions
+    }
+
+    #[test]
+    fn test_compile_not() {
+        let program = compile_expression("(not 0)").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::Push(0),
+                IRInstruction::Not,
+                IRInstruction::Return
+            ]
+        );
+    }
+
+    #[test]
+    fn test_compile_and() {
+        let program = compile_expression("(and 1 1)").unwrap();
+        println!("AND IR: {:?}", program.instructions);
+        assert!(program.instructions.len() > 3); // Should have multiple instructions
+    }
+
+    #[test]
+    fn test_compile_and_false() {
+        let program = compile_expression("(and 1 0)").unwrap();
+        println!("AND FALSE IR: {:?}", program.instructions);
+        assert!(program.instructions.len() > 3); // Should have multiple instructions
     }
 }

@@ -30,7 +30,21 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 - ✅ **ELF executable generation** - Creates standalone native executables
 - ✅ **Dual execution modes** - Both interpreter and compiler with CLI interface
 
-### 🚧 **In Progress - Phase 1 Remaining**
+### ✅ **Completed - Phase 1: Basic Evaluator & Compiler**
+- ✅ **Arithmetic operations** (`+`, `-`, `*`, `/`) with multi-operand support
+- ✅ **Comparison operations** (`=`, `<`, `>`, `<=`, `>=`)
+- ✅ **Logical operations** (`and`, `or`, `not`) with short-circuit evaluation
+- ✅ **Conditional expressions** (`if`) with proper truthiness handling
+- ✅ **Comprehensive error handling** (arity, type, undefined symbol errors)
+- ✅ **Nested expression evaluation** - Full recursive support
+- ✅ **Test coverage** - 25+ passing tests across parser and evaluator
+- ✅ **IR compilation** - Stack-based intermediate representation
+- ✅ **x86-64 code generation** - Complete machine code generation for expressions
+- ✅ **ELF executable generation** - Creates standalone native executables
+- ✅ **Dual execution modes** - Both interpreter and compiler with CLI interface
+- ✅ **Conditional compilation** - Full support for if/and/or/not in compiler mode
+
+### 🚧 **In Progress - Phase 2: Language Features**
 - ❌ **Variable bindings** (`let`) and lexical environments
 
 ## Feature Support Matrix
@@ -61,7 +75,9 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 - ✅ Basic arithmetic (`+`, `-`, `*`, `/`) → native executables
 - ✅ **Multi-operand arithmetic** (`(+ 1 2 3 4)`) → native executables 🎉
 - ✅ **Nested expressions** (`(+ 2 (* 3 4))`) → native executables 🎉
-- ✅ **Comparison operations** (`=`, `<`, `>`) → native executables 🎉
+- ✅ **Comparison operations** (`=`, `<`, `>`, `<=`, `>=`) → native executables 🎉
+- ✅ **Logical operations** (`and`, `or`, `not`) → native executables 🎉
+- ✅ **Conditional expressions** (`if`) → native executables 🎉
 - ✅ **Complex expressions** → ELF x86-64 executables
 
 **Examples:**
@@ -72,12 +88,12 @@ slisp --compile -o add "(+ 2 3)"           # ./add exits with 5
 slisp --compile -o multi "(+ 1 2 3)"       # ./multi exits with 6
 slisp --compile -o nested "(+ 2 (* 3 4))"  # ./nested exits with 14
 slisp --compile -o comp "(> 5 3)"          # ./comp exits with 1
+slisp --compile -o logical "(and 1 1)"     # ./logical exits with 1
+slisp --compile -o conditional "(if (> 5 3) 42 0)" # ./conditional exits with 42
 slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 ```
 
 **Remaining Compiler Limitations:**
-- ❌ Logical operations (`and`, `or`, `not`) - **Needs conditional logic**
-- ❌ Conditional expressions (`if`) - **Needs conditional jumps**
 - ❌ Variables and functions - **Future language features**
 
 ## Next Implementation Priorities
@@ -88,8 +104,9 @@ slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 - ✅ **Implement CPU stack-based evaluation** - Use x86-64 push/pop instructions
 - ✅ **Multi-operand arithmetic** - Support `(+ 1 2 3 4)` via stack accumulation
 - ✅ **Nested expressions** - Support `(+ 2 (* 3 4))` via recursive stack operations
-- ✅ **Comparison operations** - Stack-based `=`, `<`, `>` compilation
-- ❌ **Conditional compilation** - Stack-based `if` expression support (next priority)
+- ✅ **Comparison operations** - Stack-based `=`, `<`, `>`, `<=`, `>=` compilation
+- ✅ **Conditional compilation** - Stack-based `if` expression support with conditional jumps
+- ✅ **Logical operations** - Stack-based `and`, `or`, `not` with short-circuit evaluation
 
 ### **Phase 2.5: Language Features**
 - [ ] **Variable bindings** (`let`) with environments (interpreter + compiler)
