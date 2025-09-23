@@ -106,13 +106,53 @@ fn extract_main_function(file_content: &str) -> Result<String, String> {
             break;
         }
 
-        // Try to parse the next expression
-        let mut parse_offset = 0;
-        let ast =
-            AstParser::parse_sexp_new_domain(file_content[offset..].as_bytes(), &mut parse_offset);
+        // Find the end of this S-expression by tracking parentheses depth
+        let start_offset = offset;
+        let mut depth = 0;
+        let mut in_string = false;
+        let mut found_expression = false;
 
-        // Update the offset to continue parsing from where we left off
-        offset += parse_offset;
+        while offset < file_content.len() {
+            let c = file_content.chars().nth(offset).unwrap();
+
+            match c {
+                '(' if !in_string => {
+                    depth += 1;
+                    found_expression = true;
+                }
+                ')' if !in_string => {
+                    depth -= 1;
+                    if depth == 0 && found_expression {
+                        offset += 1; // Include the closing paren
+                        break;
+                    }
+                }
+                '"' => in_string = !in_string,
+                _ if !in_string && !c.is_whitespace() && depth == 0 => {
+                    // Single atom at top level
+                    found_expression = true;
+                    while offset < file_content.len() {
+                        let next_c = file_content.chars().nth(offset).unwrap();
+                        if next_c.is_whitespace() || next_c == '(' || next_c == ')' {
+                            break;
+                        }
+                        offset += 1;
+                    }
+                    break;
+                }
+                _ => {}
+            }
+            offset += 1;
+        }
+
+        if !found_expression {
+            break;
+        }
+
+        // Parse this single expression
+        let expression_text = &file_content[start_offset..offset];
+        let mut parse_offset = 0;
+        let ast = AstParser::parse_sexp_new_domain(expression_text.as_bytes(), &mut parse_offset);
 
         // Check if this is a defn -main
         if let Node::List { root } = &ast {
@@ -120,7 +160,7 @@ fn extract_main_function(file_content: &str) -> Result<String, String> {
                 if let (
                     Node::Symbol { value: op },
                     Node::Symbol { value: name },
-                    Node::Vector { root: params },
+                    Node::Vector { root: _params },
                 ) = (root[0].as_ref(), root[1].as_ref(), root[2].as_ref())
                 {
                     if op == "defn" && name == "-main" {
@@ -140,8 +180,7 @@ fn extract_main_function(file_content: &str) -> Result<String, String> {
             }
         }
 
-        // Move to next expression (this is a simplified approach)
-        break; // For now, just process the first expression
+        // Continue to next expression
     }
 
     Err("No -main function found in file".to_string())

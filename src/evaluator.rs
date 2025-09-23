@@ -386,7 +386,7 @@ fn eval_def(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
     }
 
     // First argument must be a symbol (the name)
-    let name = match args[0].as_ref() {
+    let _name = match args[0].as_ref() {
         Node::Symbol { value } => value,
         _ => {
             return Err(EvalError::TypeError(
@@ -410,7 +410,7 @@ fn eval_defn(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> 
     }
 
     // First argument must be a symbol (the function name)
-    let name = match args[0].as_ref() {
+    let _name = match args[0].as_ref() {
         Node::Symbol { value } => value,
         _ => {
             return Err(EvalError::TypeError(
@@ -703,5 +703,136 @@ mod tests {
             parse_and_eval("(fn [5] x)"),
             Err(EvalError::TypeError(_))
         ));
+    }
+
+    #[test]
+    fn test_defn_creation() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let mut env = HashMap::new();
+        let ast = AstParser::parse_sexp_new_domain(b"(defn inc [x] (+ x 1))", &mut 0);
+        let result = eval_node_with_env(&ast, &mut env).unwrap();
+
+        // Should return the function value
+        assert!(matches!(result, Value::Function { .. }));
+
+        // Should be stored in environment
+        assert!(env.contains_key("inc"));
+        assert!(matches!(env.get("inc"), Some(Value::Function { .. })));
+    }
+
+    #[test]
+    fn test_defn_and_call() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let mut env = HashMap::new();
+
+        // Define function
+        let ast1 = AstParser::parse_sexp_new_domain(b"(defn inc [x] (+ x 1))", &mut 0);
+        eval_node_with_env(&ast1, &mut env).unwrap();
+
+        // Call function
+        let ast2 = AstParser::parse_sexp_new_domain(b"(inc 5)", &mut 0);
+        let result = eval_node_with_env(&ast2, &mut env).unwrap();
+
+        assert_eq!(result, Value::Number(6));
+    }
+
+    #[test]
+    fn test_defn_multiple_params() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let mut env = HashMap::new();
+
+        // Define function with multiple parameters
+        let ast1 = AstParser::parse_sexp_new_domain(b"(defn add [x y] (+ x y))", &mut 0);
+        eval_node_with_env(&ast1, &mut env).unwrap();
+
+        // Call function
+        let ast2 = AstParser::parse_sexp_new_domain(b"(add 3 4)", &mut 0);
+        let result = eval_node_with_env(&ast2, &mut env).unwrap();
+
+        assert_eq!(result, Value::Number(7));
+    }
+
+    #[test]
+    fn test_defn_with_let() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let mut env = HashMap::new();
+
+        // Define function that uses let
+        let ast1 = AstParser::parse_sexp_new_domain(
+            b"(defn double-plus-one [x] (let [doubled (* x 2)] (+ doubled 1)))",
+            &mut 0,
+        );
+        eval_node_with_env(&ast1, &mut env).unwrap();
+
+        // Call function
+        let ast2 = AstParser::parse_sexp_new_domain(b"(double-plus-one 5)", &mut 0);
+        let result = eval_node_with_env(&ast2, &mut env).unwrap();
+
+        assert_eq!(result, Value::Number(11));
+    }
+
+    #[test]
+    fn test_defn_error_cases() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let mut env = HashMap::new();
+
+        // Wrong arity
+        let ast1 = AstParser::parse_sexp_new_domain(b"(defn foo [x])", &mut 0);
+        assert!(matches!(
+            eval_node_with_env(&ast1, &mut env),
+            Err(EvalError::ArityError(_, 3, 2))
+        ));
+
+        // Non-symbol name
+        let ast2 = AstParser::parse_sexp_new_domain(b"(defn 123 [x] x)", &mut 0);
+        assert!(matches!(
+            eval_node_with_env(&ast2, &mut env),
+            Err(EvalError::TypeError(_))
+        ));
+
+        // Non-vector parameters
+        let ast3 = AstParser::parse_sexp_new_domain(b"(defn foo (x) x)", &mut 0);
+        assert!(matches!(
+            eval_node_with_env(&ast3, &mut env),
+            Err(EvalError::TypeError(_))
+        ));
+
+        // Non-symbol parameter
+        let ast4 = AstParser::parse_sexp_new_domain(b"(defn foo [123] x)", &mut 0);
+        assert!(matches!(
+            eval_node_with_env(&ast4, &mut env),
+            Err(EvalError::TypeError(_))
+        ));
+    }
+
+    #[test]
+    fn test_def_variable() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let mut env = HashMap::new();
+
+        // Define variable
+        let ast1 = AstParser::parse_sexp_new_domain(b"(def x 42)", &mut 0);
+        let result = eval_node_with_env(&ast1, &mut env).unwrap();
+
+        assert_eq!(result, Value::Number(42));
+        assert_eq!(env.get("x"), Some(&Value::Number(42)));
+
+        // Use variable
+        let ast2 = AstParser::parse_sexp_new_domain(b"(+ x 8)", &mut 0);
+        let result2 = eval_node_with_env(&ast2, &mut env).unwrap();
+
+        assert_eq!(result2, Value::Number(50));
     }
 }

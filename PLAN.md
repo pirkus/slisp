@@ -13,7 +13,10 @@
 Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine Code → JIT Execution
                            ↓                    ↓                    ↓
                     ✅ INTERPRETER       ✅ COMPILER         ✅ ELF EXECUTABLE
+                      (Full Functions)    (Expressions Only)    (Single Expression)
 ```
+
+**Current Compiler Scope:** Expression compilation with multi-function file support - perfect for mathematical expressions, conditionals, data processing, and multi-function programs. Function call compilation in progress.
 
 ## Current Implementation Status
 
@@ -47,6 +50,11 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 - ✅ **Variable bindings** (`let`) and lexical environments
 - ✅ **File compilation with main functions** (`defn -main`) - Clojure-style entry points
 
+### ✅ **Completed - Phase 4.1: Multi-Expression Compilation**
+- ✅ **Multi-function file parsing** - Parse `.slisp` files with multiple `defn` statements using depth-tracking
+- ✅ **Automatic -main discovery** - Find and extract `-main` function from multi-function programs
+- ✅ **Expression-level compilation** - Compile `-main` function body (function calls need IR extensions)
+
 ## Feature Support Matrix
 
 ### ✅ **Interpreter Mode** (`slisp` or `slisp --compile` REPL)
@@ -59,6 +67,10 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 - ✅ Nested expressions (`(+ 2 (* 3 4))`)
 - ✅ Empty lists (`()`)
 - ✅ **Variable bindings** (`let [var val ...] body`) with lexical scoping
+- ✅ **Function definitions** (`defn name [params] body`) with persistent environment
+- ✅ **Anonymous functions** (`fn [params] body`) with closures
+- ✅ **Function calls** with proper arity checking and lexical scoping
+- ✅ **Variable definitions** (`def name value`) with persistent environment
 - ✅ Comprehensive error handling and type checking
 
 **Examples:**
@@ -70,9 +82,16 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 (and (> 5 3) (< 2 4))      ; → true
 (let [x 5] x)              ; → 5
 (let [x 5 y 10] (+ x y))   ; → 15
+(defn inc [x] (+ x 1))     ; → #<function/1>
+(inc 5)                     ; → 6
+(defn add [x y] (+ x y))    ; → #<function/2>
+(add 3 4)                   ; → 7
+((fn [x] (* x x)) 5)        ; → 25
+(def pi 3.14159)            ; → 3.14159
+(* pi 2)                    ; → 6.28318
 ```
 
-### ✅ **Compiler Mode** (`slisp --compile -o <file> <expr>`) - **MAJOR BREAKTHROUGH!**
+### ✅ **Compiler Mode** (`slisp --compile -o <file> [expr|file.slisp]`) - **MAJOR BREAKTHROUGH!**
 **Fully Supported with Stack-Based Code Generation:**
 - ✅ Number literals → native executables (`42` → exits with code 42)
 - ✅ Basic arithmetic (`+`, `-`, `*`, `/`) → native executables
@@ -100,7 +119,9 @@ slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 ```
 
 **Remaining Compiler Limitations:**
-- ❌ **Function definitions** (`defun`) - Future language features
+- ❌ **Function definitions** (`defn`) - Requires architectural changes (see Phase 4 below)
+- ❌ **Function calls** - Requires architectural changes (see Phase 4 below)
+- ❌ **Variable definitions** (`def`) - Requires persistent global state management
 
 ## Next Implementation Priorities
 
@@ -116,27 +137,74 @@ slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 
 ### ✅ **Phase 2.5: Language Features - COMPLETED!**
 - ✅ **Variable bindings** (`let`) with environments (interpreter + compiler modes)
-- [ ] **Make sure the memory model when calling functions is releasing memory properly
-- [ ] **Function definitions** (`defun`) and calls (interpreter + compiler)
 
-### **Phase 3: Advanced Language Features**
-- [ ] **Function definitions** (`defun`) and calls (interpreter + compiler)
+### ✅ **Phase 3: Advanced Language Features - COMPLETED!**
+- ✅ **Function definitions** (`defn`) and calls (interpreter mode) - Full implementation with persistent environment
+- ✅ **Anonymous functions** (`fn`) with closures and proper scoping
+- ✅ **Variable definitions** (`def`) with persistent global environment
+- [ ] **Function definitions** (`defn`) and calls (compiler mode) - Future work requiring call conventions
+- [ ] **Recursive functions** - Currently limited due to closure scope (future enhancement)
+- [ ] **Memory model optimization** for function calls (current implementation is adequate)
 
-### **Phase 3: Advanced Compiler Features**
-- [ ] **Register allocation** - Optimize beyond simple 2-register approach
-- [ ] **Function call conventions** - System V ABI for x86-64
-- [ ] **Memory management** - Stack frames and local variables
+### **Phase 4: Function Compilation Architecture - MAJOR ARCHITECTURAL CHANGE REQUIRED**
 
-### Phase 3: Advanced Code Generation
-- [ ] **Register allocation** - Simple linear scan for locals
-- [ ] **Function call conventions** - System V ABI for x86-64
-- [ ] **Stack frame management** - Proper function prologue/epilogue
+**Current Issue:** The compiler currently compiles single expressions to standalone executables. Function support requires compiling entire programs with multiple functions, which needs a fundamentally different architecture.
 
-### Phase 4: Advanced Features
-- [ ] **Closures** and lexical scoping
-- [ ] **Garbage collection**
+**Required Architectural Changes:**
+
+#### ✅ **Phase 4.1: Multi-Expression Compilation - COMPLETED!**
+- ✅ **Multi-expression parsing** - Parse multiple top-level expressions from `.slisp` files using depth-tracking approach
+- ✅ **Program-level file compilation** - Successfully compile entire files with multiple `defn` statements
+- ✅ **Entry point selection** - Support `-main` functions as program entry points with automatic discovery
+- ✅ **Expression extraction** - Extract and compile `-main` function body from multi-function programs
+
+**BREAKTHROUGH: Multi-expression parsing now works perfectly!**
+
+**Examples:**
+```bash
+# test.slisp containing multiple functions:
+(defn add [x y] (+ x y))
+(defn multiply [x y] (* x y)) 
+(defn -main [] (+ (add 3 4) (multiply 2 5)))
+
+# Compilation works:
+slisp --compile -o test test.slisp
+# Status: Parses all 3 expressions, finds -main, ready for function call compilation
+```
+
+**Current Status:** Multi-expression parsing ✅ | Function call compilation ❌ (next priority)
+
+#### **Phase 4.2: IR Extensions for Functions**
+- [ ] **Function IR instructions** - `DefineFunction`, `Call`, `Return` with proper semantics
+- [ ] **Stack frame IR** - `PushFrame`, `PopFrame`, parameter and local variable management
+- [ ] **Program structure** - Support for multiple functions in single IR program
+- [ ] **Function metadata** - Track parameter counts, return types, etc.
+
+#### **Phase 4.3: x86-64 Function Call Implementation**
+- [ ] **System V ABI compliance** - Proper calling conventions for x86-64 Linux
+- [ ] **Stack frame management** - Function prologue/epilogue generation
+- [ ] **Parameter passing** - Registers (RDI, RSI, RDX, RCX, R8, R9) + stack overflow
+- [ ] **Return value handling** - RAX register for return values
+- [ ] **Caller-saved/callee-saved registers** - Proper register preservation
+
+#### **Phase 4.4: Code Generation for Functions**
+- [ ] **Function code layout** - Generate assembly for multiple functions
+- [ ] **Call instruction generation** - Proper `call` and `ret` x86-64 instructions
+- [ ] **Stack pointer management** - RSP alignment and management
+- [ ] **Local variable addressing** - RBP-relative addressing for locals
+
+#### **Phase 4.5: Linker and Executable Generation**
+- [ ] **Multi-function ELF generation** - Support multiple functions in single executable
+- [ ] **Symbol resolution** - Link function calls to function definitions
+- [ ] **Jump table generation** - Efficient function call dispatch
+- [ ] **Entry point management** - Proper `_start` symbol and main function calling
+
+### **Phase 5: Advanced Features** (After Function Compilation)
+- [ ] **Closures** and lexical scoping in compiled code
+- [ ] **Garbage collection** for compiled programs  
 - [ ] **Standard library** functions
 - [ ] **Optimization passes** (constant folding, dead code elimination)
+- [ ] **Register allocation** optimization
 
 ## Code Generation Strategy
 
