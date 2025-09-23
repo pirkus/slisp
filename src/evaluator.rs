@@ -24,10 +24,10 @@ pub enum EvalError {
 type Environment = HashMap<String, Value>;
 
 pub fn eval_node(node: &Node) -> Result<Value, EvalError> {
-    eval_with_env(node, &Environment::new())
+    eval_with_env(node, &mut Environment::new())
 }
 
-fn eval_with_env(node: &Node, env: &Environment) -> Result<Value, EvalError> {
+fn eval_with_env(node: &Node, env: &mut Environment) -> Result<Value, EvalError> {
     match node {
         Node::Primitive { value } => eval_primitive(value),
         Node::Symbol { value } => eval_symbol(value, env),
@@ -51,7 +51,7 @@ fn eval_symbol(symbol: &str, env: &Environment) -> Result<Value, EvalError> {
         .ok_or_else(|| EvalError::UndefinedSymbol(symbol.to_string()))
 }
 
-fn eval_list(nodes: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+fn eval_list(nodes: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
     if nodes.is_empty() {
         return Ok(Value::Nil);
     }
@@ -108,7 +108,7 @@ fn eval_list(nodes: &[Box<Node>], env: &Environment) -> Result<Value, EvalError>
 
 fn eval_arithmetic_op<F>(
     args: &[Box<Node>],
-    env: &Environment,
+    env: &mut Environment,
     op: F,
     op_name: &str,
 ) -> Result<Value, EvalError>
@@ -147,7 +147,7 @@ where
 
 fn eval_comparison_op<F>(
     args: &[Box<Node>],
-    env: &Environment,
+    env: &mut Environment,
     op: F,
     op_name: &str,
 ) -> Result<Value, EvalError>
@@ -170,7 +170,7 @@ where
     }
 }
 
-fn eval_if(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+fn eval_if(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
     if args.len() != 3 {
         return Err(EvalError::ArityError("if".to_string(), 3, args.len()));
     }
@@ -190,7 +190,7 @@ fn eval_if(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
     }
 }
 
-fn eval_logical_and(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+fn eval_logical_and(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
     if args.is_empty() {
         return Ok(Value::Boolean(true));
     }
@@ -212,7 +212,7 @@ fn eval_logical_and(args: &[Box<Node>], env: &Environment) -> Result<Value, Eval
     Ok(Value::Boolean(true))
 }
 
-fn eval_logical_or(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+fn eval_logical_or(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
     if args.is_empty() {
         return Ok(Value::Boolean(false));
     }
@@ -234,7 +234,7 @@ fn eval_logical_or(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalE
     Ok(Value::Boolean(false))
 }
 
-fn eval_logical_not(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+fn eval_logical_not(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
     if args.len() != 1 {
         return Err(EvalError::ArityError("not".to_string(), 1, args.len()));
     }
@@ -255,7 +255,7 @@ fn eval_vector(_nodes: &[Box<Node>], _env: &Environment) -> Result<Value, EvalEr
     Ok(Value::Nil)
 }
 
-fn eval_let(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+fn eval_let(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
     if args.len() != 2 {
         return Err(EvalError::ArityError("let".to_string(), 2, args.len()));
     }
@@ -297,12 +297,12 @@ fn eval_let(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
 
         // Evaluate the value in the current environment (not new_env)
         // This allows for sequential binding where later bindings can reference earlier ones
-        let val = eval_with_env(val_node, &new_env)?;
+        let val = eval_with_env(val_node, &mut new_env)?;
         new_env.insert(var_name.clone(), val);
     }
 
     // Evaluate body in the new environment
-    eval_with_env(&args[1], &new_env)
+    eval_with_env(&args[1], &mut new_env)
 }
 
 fn eval_fn(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
@@ -347,7 +347,7 @@ fn eval_fn(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
 fn eval_function_call(
     func_value: Value,
     args: &[Box<Node>],
-    env: &Environment,
+    env: &mut Environment,
 ) -> Result<Value, EvalError> {
     match func_value {
         Value::Function {
@@ -372,7 +372,7 @@ fn eval_function_call(
             }
 
             // Evaluate function body in the new environment
-            eval_with_env(&body, &func_env)
+            eval_with_env(&body, &mut func_env)
         }
         _ => Err(EvalError::TypeError(
             "Cannot call non-function value".to_string(),
@@ -380,7 +380,7 @@ fn eval_function_call(
     }
 }
 
-fn eval_def(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+fn eval_def(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
     if args.len() != 2 {
         return Err(EvalError::ArityError("def".to_string(), 2, args.len()));
     }
@@ -398,13 +398,15 @@ fn eval_def(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
     // Second argument is the value
     let value = eval_with_env(&args[1], env)?;
 
-    // For now, we can't actually mutate the global environment in this design
-    // But we can return a special value that indicates a definition was made
-    // This is a limitation we'll address when implementing file compilation
+    // Store the binding in the environment
+    if let Node::Symbol { value: name } = args[0].as_ref() {
+        env.insert(name.clone(), value.clone());
+    }
+
     Ok(value)
 }
 
-fn eval_defn(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+fn eval_defn(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
     if args.len() < 3 {
         return Err(EvalError::ArityError("defn".to_string(), 3, args.len()));
     }
@@ -459,7 +461,11 @@ fn eval_defn(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> 
         closure: env.clone(),
     };
 
-    // For now, return the function (can't mutate global env in this design)
+    // Store the function in the environment
+    if let Node::Symbol { value: name } = args[0].as_ref() {
+        env.insert(name.clone(), func_value.clone());
+    }
+
     Ok(func_value)
 }
 
@@ -712,7 +718,7 @@ mod tests {
 
         let mut env = HashMap::new();
         let ast = AstParser::parse_sexp_new_domain(b"(defn inc [x] (+ x 1))", &mut 0);
-        let result = eval_node_with_env(&ast, &mut env).unwrap();
+        let result = eval_with_env(&ast, &mut env).unwrap();
 
         // Should return the function value
         assert!(matches!(result, Value::Function { .. }));
@@ -731,11 +737,11 @@ mod tests {
 
         // Define function
         let ast1 = AstParser::parse_sexp_new_domain(b"(defn inc [x] (+ x 1))", &mut 0);
-        eval_node_with_env(&ast1, &mut env).unwrap();
+        eval_with_env(&ast1, &mut env).unwrap();
 
         // Call function
         let ast2 = AstParser::parse_sexp_new_domain(b"(inc 5)", &mut 0);
-        let result = eval_node_with_env(&ast2, &mut env).unwrap();
+        let result = eval_with_env(&ast2, &mut env).unwrap();
 
         assert_eq!(result, Value::Number(6));
     }
@@ -749,11 +755,11 @@ mod tests {
 
         // Define function with multiple parameters
         let ast1 = AstParser::parse_sexp_new_domain(b"(defn add [x y] (+ x y))", &mut 0);
-        eval_node_with_env(&ast1, &mut env).unwrap();
+        eval_with_env(&ast1, &mut env).unwrap();
 
         // Call function
         let ast2 = AstParser::parse_sexp_new_domain(b"(add 3 4)", &mut 0);
-        let result = eval_node_with_env(&ast2, &mut env).unwrap();
+        let result = eval_with_env(&ast2, &mut env).unwrap();
 
         assert_eq!(result, Value::Number(7));
     }
@@ -770,11 +776,11 @@ mod tests {
             b"(defn double-plus-one [x] (let [doubled (* x 2)] (+ doubled 1)))",
             &mut 0,
         );
-        eval_node_with_env(&ast1, &mut env).unwrap();
+        eval_with_env(&ast1, &mut env).unwrap();
 
         // Call function
         let ast2 = AstParser::parse_sexp_new_domain(b"(double-plus-one 5)", &mut 0);
-        let result = eval_node_with_env(&ast2, &mut env).unwrap();
+        let result = eval_with_env(&ast2, &mut env).unwrap();
 
         assert_eq!(result, Value::Number(11));
     }
@@ -789,28 +795,28 @@ mod tests {
         // Wrong arity
         let ast1 = AstParser::parse_sexp_new_domain(b"(defn foo [x])", &mut 0);
         assert!(matches!(
-            eval_node_with_env(&ast1, &mut env),
+            eval_with_env(&ast1, &mut env),
             Err(EvalError::ArityError(_, 3, 2))
         ));
 
         // Non-symbol name
         let ast2 = AstParser::parse_sexp_new_domain(b"(defn 123 [x] x)", &mut 0);
         assert!(matches!(
-            eval_node_with_env(&ast2, &mut env),
+            eval_with_env(&ast2, &mut env),
             Err(EvalError::TypeError(_))
         ));
 
         // Non-vector parameters
         let ast3 = AstParser::parse_sexp_new_domain(b"(defn foo (x) x)", &mut 0);
         assert!(matches!(
-            eval_node_with_env(&ast3, &mut env),
+            eval_with_env(&ast3, &mut env),
             Err(EvalError::TypeError(_))
         ));
 
         // Non-symbol parameter
         let ast4 = AstParser::parse_sexp_new_domain(b"(defn foo [123] x)", &mut 0);
         assert!(matches!(
-            eval_node_with_env(&ast4, &mut env),
+            eval_with_env(&ast4, &mut env),
             Err(EvalError::TypeError(_))
         ));
     }
@@ -824,14 +830,14 @@ mod tests {
 
         // Define variable
         let ast1 = AstParser::parse_sexp_new_domain(b"(def x 42)", &mut 0);
-        let result = eval_node_with_env(&ast1, &mut env).unwrap();
+        let result = eval_with_env(&ast1, &mut env).unwrap();
 
         assert_eq!(result, Value::Number(42));
         assert_eq!(env.get("x"), Some(&Value::Number(42)));
 
         // Use variable
         let ast2 = AstParser::parse_sexp_new_domain(b"(+ x 8)", &mut 0);
-        let result2 = eval_node_with_env(&ast2, &mut env).unwrap();
+        let result2 = eval_with_env(&ast2, &mut env).unwrap();
 
         assert_eq!(result2, Value::Number(50));
     }
