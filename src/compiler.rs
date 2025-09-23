@@ -1,5 +1,5 @@
 use crate::domain::{Node, Primitive};
-use crate::ir::{IRInstruction, IRProgram};
+use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
 use std::collections::HashMap;
 
 #[derive(Debug, PartialEq)]
@@ -8,21 +8,29 @@ pub enum CompileError {
     InvalidExpression(String),
     ArityError(String, usize, usize),
     UndefinedVariable(String),
+    UndefinedFunction(String),
+    DuplicateFunction(String),
 }
 
 #[derive(Debug, Clone)]
 struct CompileContext {
     variables: HashMap<String, usize>, // variable name -> local slot index
+    parameters: HashMap<String, usize>, // parameter name -> param slot index
+    functions: HashMap<String, FunctionInfo>, // function name -> function info
     next_slot: usize,
     free_slots: Vec<usize>, // stack of freed slots for reuse
+    in_function: bool,      // true when compiling inside a function
 }
 
 impl CompileContext {
     fn new() -> Self {
         Self {
             variables: HashMap::new(),
+            parameters: HashMap::new(),
+            functions: HashMap::new(),
             next_slot: 0,
             free_slots: Vec::new(),
+            in_function: false,
         }
     }
 
@@ -41,6 +49,26 @@ impl CompileContext {
 
     fn get_variable(&self, name: &str) -> Option<usize> {
         self.variables.get(name).copied()
+    }
+
+    fn add_parameter(&mut self, name: String, slot: usize) {
+        self.parameters.insert(name, slot);
+    }
+
+    fn get_parameter(&self, name: &str) -> Option<usize> {
+        self.parameters.get(name).copied()
+    }
+
+    fn add_function(&mut self, name: String, info: FunctionInfo) -> Result<(), CompileError> {
+        if self.functions.contains_key(&name) {
+            return Err(CompileError::DuplicateFunction(name));
+        }
+        self.functions.insert(name, info);
+        Ok(())
+    }
+
+    fn get_function(&self, name: &str) -> Option<&FunctionInfo> {
+        self.functions.get(name)
     }
 
     fn remove_variable(&mut self, name: &str) -> Option<usize> {
@@ -67,6 +95,69 @@ pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
     Ok(program)
 }
 
+pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> {
+    let mut program = IRProgram::new();
+    let mut context = CompileContext::new();
+
+    // First pass: find all function definitions
+    for expr in expressions {
+        if let Node::List { root } = expr {
+            if !root.is_empty() {
+                if let Node::Symbol { value } = root[0].as_ref() {
+                    if value == "defn" {
+                        // Register function in context but don't compile yet
+                        if root.len() != 4 {
+                            return Err(CompileError::ArityError(
+                                "defn".to_string(),
+                                3,
+                                root.len() - 1,
+                            ));
+                        }
+
+                        let func_name = match root[1].as_ref() {
+                            Node::Symbol { value } => value.clone(),
+                            _ => {
+                                return Err(CompileError::InvalidExpression(
+                                    "Function name must be a symbol".to_string(),
+                                ))
+                            }
+                        };
+
+                        let params = match root[2].as_ref() {
+                            Node::Vector { root } => root,
+                            _ => {
+                                return Err(CompileError::InvalidExpression(
+                                    "Function parameters must be a vector".to_string(),
+                                ))
+                            }
+                        };
+
+                        let func_info = FunctionInfo {
+                            name: func_name.clone(),
+                            param_count: params.len(),
+                            start_address: 0, // Will be set during compilation
+                            local_count: 0,
+                        };
+                        context.add_function(func_name, func_info)?;
+                    }
+                }
+            }
+        }
+    }
+
+    // Second pass: compile all expressions
+    for expr in expressions {
+        compile_node(expr, &mut program, &mut context)?;
+    }
+
+    // Find -main function and set as entry point
+    if context.get_function("-main").is_some() {
+        program.set_entry_point("-main".to_string());
+    }
+
+    Ok(program)
+}
+
 fn compile_node(
     node: &Node,
     program: &mut IRProgram,
@@ -75,7 +166,11 @@ fn compile_node(
     match node {
         Node::Primitive { value } => compile_primitive(value, program),
         Node::Symbol { value } => {
-            if let Some(slot) = context.get_variable(value) {
+            // Check parameters first (they have priority over local variables)
+            if let Some(slot) = context.get_parameter(value) {
+                program.add_instruction(IRInstruction::LoadParam(slot));
+                Ok(())
+            } else if let Some(slot) = context.get_variable(value) {
                 program.add_instruction(IRInstruction::LoadLocal(slot));
                 Ok(())
             } else {
@@ -132,7 +227,15 @@ fn compile_list(
             "or" => compile_logical_or(args, program, context),
             "not" => compile_logical_not(args, program, context),
             "let" => compile_let(args, program, context),
-            op => Err(CompileError::UnsupportedOperation(op.to_string())),
+            "defn" => compile_defn(args, program, context),
+            op => {
+                // Check if it's a function call
+                if let Some(func_info) = context.get_function(op) {
+                    compile_function_call(op, args, program, context, func_info.param_count)
+                } else {
+                    Err(CompileError::UnsupportedOperation(op.to_string()))
+                }
+            }
         },
         _ => Err(CompileError::InvalidExpression(
             "First element must be a symbol".to_string(),
@@ -439,6 +542,124 @@ fn compile_let(
     Ok(())
 }
 
+fn compile_defn(
+    args: &[Box<Node>],
+    program: &mut IRProgram,
+    context: &mut CompileContext,
+) -> Result<(), CompileError> {
+    if args.len() != 3 {
+        return Err(CompileError::ArityError("defn".to_string(), 3, args.len()));
+    }
+
+    // Function name
+    let func_name = match args[0].as_ref() {
+        Node::Symbol { value } => value.clone(),
+        _ => {
+            return Err(CompileError::InvalidExpression(
+                "Function name must be a symbol".to_string(),
+            ))
+        }
+    };
+
+    // Parameters vector
+    let params = match args[1].as_ref() {
+        Node::Vector { root } => root,
+        _ => {
+            return Err(CompileError::InvalidExpression(
+                "Function parameters must be a vector".to_string(),
+            ))
+        }
+    };
+
+    // Extract parameter names
+    let mut param_names = Vec::new();
+    for param in params {
+        match param.as_ref() {
+            Node::Symbol { value } => param_names.push(value.clone()),
+            _ => {
+                return Err(CompileError::InvalidExpression(
+                    "Function parameters must be symbols".to_string(),
+                ))
+            }
+        }
+    }
+
+    let param_count = param_names.len();
+    let start_address = program.len();
+
+    // Create function info and add to context if not already present
+    let func_info = FunctionInfo {
+        name: func_name.clone(),
+        param_count,
+        start_address,
+        local_count: 0, // Will be updated during compilation
+    };
+
+    // Only add if not already in context (could be pre-registered by compile_program)
+    if context.get_function(&func_name).is_none() {
+        context.add_function(func_name.clone(), func_info.clone())?;
+    }
+
+    // Create new context for function compilation
+    let mut func_context = context.clone();
+    func_context.in_function = true;
+    func_context.parameters.clear();
+    func_context.variables.clear();
+    func_context.next_slot = 0;
+    func_context.free_slots.clear();
+
+    // Add parameters to function context
+    for (i, param_name) in param_names.iter().enumerate() {
+        func_context.add_parameter(param_name.clone(), i);
+    }
+
+    // Add function definition instruction
+    program.add_instruction(IRInstruction::DefineFunction(
+        func_name.clone(),
+        param_count,
+        start_address,
+    ));
+
+    // Compile function body
+    compile_node(&args[2], program, &mut func_context)?;
+
+    // Add return instruction
+    program.add_instruction(IRInstruction::Return);
+
+    // Update function info in program
+    let mut updated_func_info = func_info;
+    updated_func_info.local_count = func_context.next_slot;
+    program.add_function(updated_func_info);
+
+    Ok(())
+}
+
+fn compile_function_call(
+    func_name: &str,
+    args: &[Box<Node>],
+    program: &mut IRProgram,
+    context: &mut CompileContext,
+    expected_param_count: usize,
+) -> Result<(), CompileError> {
+    if args.len() != expected_param_count {
+        return Err(CompileError::ArityError(
+            func_name.to_string(),
+            expected_param_count,
+            args.len(),
+        ));
+    }
+
+    // Compile arguments (they will be pushed onto stack)
+    for arg in args {
+        compile_node(arg, program, context)?;
+    }
+
+    // Call the function
+    program.add_instruction(IRInstruction::Call(func_name.to_string(), args.len()));
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -600,6 +821,99 @@ mod tests {
         // Non-symbol in binding
         assert!(matches!(
             compile_expression("(let [5 x] x)"),
+            Err(CompileError::InvalidExpression(_))
+        ));
+    }
+
+    #[test]
+    fn test_compile_defn() {
+        let program = compile_expression("(defn add [x y] (+ x y))").unwrap();
+        println!("DEFN IR: {:?}", program.instructions);
+
+        // Should have DefineFunction instruction
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::DefineFunction(name, param_count, _)
+            if name == "add" && *param_count == 2
+        )));
+
+        // Should have parameter loads and arithmetic
+        assert!(program.instructions.contains(&IRInstruction::LoadParam(0))); // x
+        assert!(program.instructions.contains(&IRInstruction::LoadParam(1))); // y
+        assert!(program.instructions.contains(&IRInstruction::Add));
+        assert!(program.instructions.contains(&IRInstruction::Return));
+    }
+
+    #[test]
+    fn test_compile_function_call() {
+        // This test requires a two-pass compilation since we need the function definition first
+        let expressions = vec![
+            AstParser::parse_sexp_new_domain("(defn inc [x] (+ x 1))".as_bytes(), &mut 0),
+            AstParser::parse_sexp_new_domain("(inc 5)".as_bytes(), &mut 0),
+        ];
+
+        let program = compile_program(&expressions).unwrap();
+        println!("FUNCTION CALL IR: {:?}", program.instructions);
+
+        // Should have function definition
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::DefineFunction(name, param_count, _)
+            if name == "inc" && *param_count == 1
+        )));
+
+        // Should have function call
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::Call(name, arg_count)
+            if name == "inc" && *arg_count == 1
+        )));
+
+        // Should push argument before call
+        assert!(program.instructions.contains(&IRInstruction::Push(5)));
+    }
+
+    #[test]
+    fn test_compile_main_function() {
+        let expressions = vec![
+            AstParser::parse_sexp_new_domain("(defn add [x y] (+ x y))".as_bytes(), &mut 0),
+            AstParser::parse_sexp_new_domain("(defn -main [] (add 3 4))".as_bytes(), &mut 0),
+        ];
+
+        let program = compile_program(&expressions).unwrap();
+        println!("MAIN FUNCTION IR: {:?}", program);
+
+        // Should have entry point set
+        assert_eq!(program.entry_point, Some("-main".to_string()));
+
+        // Should have both function definitions
+        assert!(program.functions.iter().any(|f| f.name == "add"));
+        assert!(program.functions.iter().any(|f| f.name == "-main"));
+    }
+
+    #[test]
+    fn test_compile_function_error_cases() {
+        // Wrong arity
+        assert!(matches!(
+            compile_expression("(defn add [x])"),
+            Err(CompileError::ArityError(_, 3, 2))
+        ));
+
+        // Non-symbol function name
+        assert!(matches!(
+            compile_expression("(defn 123 [x] x)"),
+            Err(CompileError::InvalidExpression(_))
+        ));
+
+        // Non-vector parameters
+        assert!(matches!(
+            compile_expression("(defn add (x y) (+ x y))"),
+            Err(CompileError::InvalidExpression(_))
+        ));
+
+        // Non-symbol parameter
+        assert!(matches!(
+            compile_expression("(defn add [x 123] (+ x 123))"),
             Err(CompileError::InvalidExpression(_))
         ));
     }

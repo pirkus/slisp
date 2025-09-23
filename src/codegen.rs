@@ -89,6 +89,14 @@ impl X86CodeGen {
                     1 // pop rax
                 }
             }
+            // Function operations (placeholder sizes for now)
+            IRInstruction::DefineFunction(_, _, _) => 0, // No code generated, just metadata
+            IRInstruction::Call(_, _) => 5,              // call instruction placeholder
+            IRInstruction::CallIndirect(_) => 5,         // call instruction placeholder
+            IRInstruction::PushFrame(_) => 8,            // stack frame setup placeholder
+            IRInstruction::PopFrame => 4,                // stack frame teardown placeholder
+            IRInstruction::StoreParam(_) => 8,           // parameter store placeholder
+            IRInstruction::LoadParam(_) => 8,            // parameter load placeholder
         }
     }
 
@@ -268,6 +276,39 @@ impl X86CodeGen {
                         self.emit(&[0x48, 0x89, 0xec]); // mov rsp, rbp
                         self.emit(&[0x5d]); // pop rbp
                     }
+                }
+
+                // Function operations (placeholders for Phase 4.2)
+                IRInstruction::DefineFunction(_, _, _) => {
+                    // No code generation needed - this is metadata only
+                }
+                IRInstruction::Call(_, _) => {
+                    // TODO: Implement function call in Phase 4.3
+                    // For now, just push 0 as placeholder
+                    self.emit(&[0x6a, 0x00]); // push 0
+                }
+                IRInstruction::CallIndirect(_) => {
+                    // TODO: Implement indirect call in Phase 4.3
+                    // For now, just push 0 as placeholder
+                    self.emit(&[0x6a, 0x00]); // push 0
+                }
+                IRInstruction::PushFrame(_) => {
+                    // TODO: Implement stack frame management in Phase 4.3
+                    // For now, no-op
+                }
+                IRInstruction::PopFrame => {
+                    // TODO: Implement stack frame management in Phase 4.3
+                    // For now, no-op
+                }
+                IRInstruction::StoreParam(_) => {
+                    // TODO: Implement parameter handling in Phase 4.3
+                    // For now, just pop the value
+                    self.emit(&[0x58]); // pop rax
+                }
+                IRInstruction::LoadParam(_) => {
+                    // TODO: Implement parameter handling in Phase 4.3
+                    // For now, just push 0
+                    self.emit(&[0x6a, 0x00]); // push 0
                 }
             }
         }

@@ -164,7 +164,7 @@ slisp --compile -o complex "(* (+ 1 2) (- 8 3))" # ./complex exits with 15
 ```bash
 # test.slisp containing multiple functions:
 (defn add [x y] (+ x y))
-(defn multiply [x y] (* x y)) 
+(defn multiply [x y] (* x y))
 (defn -main [] (+ (add 3 4) (multiply 2 5)))
 
 # Compilation works:
@@ -174,11 +174,16 @@ slisp --compile -o test test.slisp
 
 **Current Status:** Multi-expression parsing ✅ | Function call compilation ❌ (next priority)
 
-#### **Phase 4.2: IR Extensions for Functions**
-- [ ] **Function IR instructions** - `DefineFunction`, `Call`, `Return` with proper semantics
-- [ ] **Stack frame IR** - `PushFrame`, `PopFrame`, parameter and local variable management
-- [ ] **Program structure** - Support for multiple functions in single IR program
-- [ ] **Function metadata** - Track parameter counts, return types, etc.
+#### ✅ **Phase 4.2: IR Extensions for Functions - COMPLETED!**
+- ✅ **Function IR instructions** - `DefineFunction`, `Call`, `CallIndirect`, `Return` with proper semantics
+- ✅ **Stack frame IR** - `PushFrame`, `PopFrame`, parameter and local variable management
+- ✅ **Program structure** - Support for multiple functions in single IR program with `FunctionInfo` metadata
+- ✅ **Function metadata** - Track parameter counts, start addresses, local variable counts
+- ✅ **Function compilation** - `defn` compilation with parameter handling and function calls
+- ✅ **Multi-program compilation** - `compile_program()` function for multi-expression files
+- ✅ **Entry point detection** - Automatic `-main` function discovery and entry point setting
+
+**Current Status:** IR supports complete function semantics | Code generation has placeholders (Phase 4.3 next)
 
 #### **Phase 4.3: x86-64 Function Call Implementation**
 - [ ] **System V ABI compliance** - Proper calling conventions for x86-64 Linux
@@ -201,7 +206,7 @@ slisp --compile -o test test.slisp
 
 ### **Phase 5: Advanced Features** (After Function Compilation)
 - [ ] **Closures** and lexical scoping in compiled code
-- [ ] **Garbage collection** for compiled programs  
+- [ ] **Garbage collection** for compiled programs
 - [ ] **Standard library** functions
 - [ ] **Optimization passes** (constant folding, dead code elimination)
 - [ ] **Register allocation** optimization
@@ -224,11 +229,10 @@ slisp --compile -o test test.slisp
 - **Better performance** - Native stack operations are fast
 - **Natural recursion** - Stack handles nesting automatically
 
-## Technical Considerations
-- Use existing JIT infrastructure with `memmap2`
-- Incremental development - start with expression evaluation
+## Instructions for agents
 - Test each phase thoroughly before moving to next
-- Functional programming principles for clarity and maintainability
+- Functional programming principles for clarity and maintainability (immutability, pure functions where possible)
 - Consider debugging/profiling hooks early
 - Always update documentation and tests and PLAN.md with current status so that it is next session ready
 - if you fail to rewrite a file, try the diff again, do not try simpler solutions or complete rewrites
+- feel free to add/expand the plan as you see fit

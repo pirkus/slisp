@@ -361,5 +361,7 @@ fn format_compile_error(error: &CompileError) -> String {
             )
         }
         CompileError::UndefinedVariable(var) => format!("Undefined variable: {}", var),
+        CompileError::UndefinedFunction(func) => format!("Undefined function: {}", func),
+        CompileError::DuplicateFunction(func) => format!("Duplicate function definition: {}", func),
     }
 }
