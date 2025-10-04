@@ -1,0 +1,11 @@
+(defn add [x y] (+ x y))
+
+(defn subtract [x y] (- x y))
+
+(defn multiply [x y] (* x y))
+
+(defn compute [a b c]
+  (add (multiply a b) c))
+
+(defn -main []
+  (compute 3 4 5))

@@ -1,8 +1,10 @@
-use crate::ir::{IRInstruction, IRProgram};
+use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
+use std::collections::HashMap;
 
 pub struct X86CodeGen {
     code: Vec<u8>,
     instruction_positions: Vec<usize>,
+    function_addresses: HashMap<String, usize>, // function name -> code offset
 }
 
 impl X86CodeGen {
@@ -10,11 +12,17 @@ impl X86CodeGen {
         Self {
             code: Vec::new(),
             instruction_positions: Vec::new(),
+            function_addresses: HashMap::new(),
         }
     }
 
     // Optimized single-pass code generation with size pre-calculation
     pub fn generate(&mut self, program: &IRProgram) -> Vec<u8> {
+        // For programs with functions, use multi-function code generation
+        if !program.functions.is_empty() && program.entry_point.is_some() {
+            return self.generate_multi_function(program);
+        }
+
         // Check if we need a stack frame (if there are local variables)
         let has_locals = program.instructions.iter().any(|inst| {
             matches!(
@@ -31,6 +39,269 @@ impl X86CodeGen {
         self.generate_code(program, has_locals);
 
         self.code.clone()
+    }
+
+    // Generate code for multi-function programs
+    fn generate_multi_function(&mut self, program: &IRProgram) -> Vec<u8> {
+        self.code.clear();
+        self.function_addresses.clear();
+
+        // TWO-PASS APPROACH:
+        // Pass 1: Generate all functions in separate buffers to know their sizes and addresses
+        // Pass 2: Combine them with correct call addresses
+
+        // Determine generation order: entry point first, then others
+        let mut ordered_functions = Vec::new();
+
+        if let Some(entry_name) = &program.entry_point {
+            if let Some(entry_func) = program.functions.iter().find(|f| &f.name == entry_name) {
+                ordered_functions.push(entry_func.clone());
+            }
+        }
+
+        for func_info in &program.functions {
+            if program.entry_point.as_ref() != Some(&func_info.name) {
+                ordered_functions.push(func_info.clone());
+            }
+        }
+
+        // Pass 1: Calculate addresses by generating functions in order
+        let mut current_address = 0;
+        for func_info in &ordered_functions {
+            self.function_addresses.insert(func_info.name.clone(), current_address);
+
+            // Calculate size by generating to temporary buffer
+            let saved_code = self.code.clone();
+            self.code.clear();
+            self.generate_function(program, func_info);
+            let func_size = self.code.len();
+            self.code = saved_code;
+
+            current_address += func_size;
+        }
+
+        // Pass 2: Generate all functions with correct addresses now available
+        self.code.clear();
+        for func_info in &ordered_functions {
+            self.generate_function(program, func_info);
+        }
+
+        self.code.clone()
+    }
+
+    // Generate code for a single function
+    fn generate_function(&mut self, program: &IRProgram, func_info: &FunctionInfo) {
+        // Note: function address should already be in function_addresses from pass 1
+        // We don't update it here to avoid changing addresses during generation
+
+        // Generate function prologue
+        self.generate_prologue(func_info);
+
+        // Find the instructions for this function
+        // Instructions are between DefineFunction and Return
+        let mut in_function = false;
+        let mut function_instructions = Vec::new();
+
+        for inst in &program.instructions {
+            match inst {
+                IRInstruction::DefineFunction(name, _, _) if name == &func_info.name => {
+                    in_function = true;
+                }
+                IRInstruction::Return if in_function => {
+                    function_instructions.push(inst.clone());
+                    break;
+                }
+                _ if in_function => {
+                    function_instructions.push(inst.clone());
+                }
+                _ => {}
+            }
+        }
+
+        // Generate code for function body
+        for inst in &function_instructions {
+            self.generate_instruction(inst, func_info);
+        }
+    }
+
+    // Generate function prologue (System V ABI)
+    fn generate_prologue(&mut self, func_info: &FunctionInfo) {
+        self.emit(&[0x55]); // push rbp
+        self.emit(&[0x48, 0x89, 0xe5]); // mov rbp, rsp
+
+        // Allocate stack space for parameters + locals + scratch space
+        // We need space for:
+        // - Parameters: param_count * 8 bytes
+        // - Local variables: local_count * 8 bytes
+        // - Red zone / scratch space: 128 bytes (for safety during calls)
+        let param_space = func_info.param_count * 8;
+        let local_space = func_info.local_count * 8;
+        let stack_size = param_space + local_space + 128;
+
+        if stack_size > 0 {
+            if stack_size <= 127 {
+                self.emit(&[0x48, 0x83, 0xec, stack_size as u8]); // sub rsp, imm8
+            } else {
+                self.emit(&[0x48, 0x81, 0xec]); // sub rsp, imm32
+                self.emit(&(stack_size as u32).to_le_bytes());
+            }
+        }
+
+        // Save parameters to stack (System V ABI: RDI, RSI, RDX, RCX, R8, R9)
+        // We need to save them because they'll be used by child function calls
+        let param_regs: Vec<u8> = vec![0x7f, 0x77, 0x75, 0x4d, 0x45, 0x4d]; // RDI, RSI, RDX, RCX, R8, R9 offsets
+        let param_reg_codes: Vec<&[u8]> = vec![
+            &[0x48, 0x89, 0x7d], // mov [rbp+offset], rdi
+            &[0x48, 0x89, 0x75], // mov [rbp+offset], rsi
+            &[0x48, 0x89, 0x55], // mov [rbp+offset], rdx
+            &[0x48, 0x89, 0x4d], // mov [rbp+offset], rcx
+            &[0x4c, 0x89, 0x45], // mov [rbp+offset], r8
+            &[0x4c, 0x89, 0x4d], // mov [rbp+offset], r9
+        ];
+
+        for i in 0..func_info.param_count.min(6) {
+            // Store param at [rbp - 8*(i+1)]
+            let offset = 8 * (i + 1);
+            self.emit(param_reg_codes[i]);
+            self.emit(&[((-(offset as i8)) as u8)]);
+        }
+    }
+
+    // Generate function epilogue (System V ABI)
+    fn generate_epilogue(&mut self) {
+        self.emit(&[0x48, 0x89, 0xec]); // mov rsp, rbp
+        self.emit(&[0x5d]); // pop rbp
+        self.emit(&[0xc3]); // ret
+    }
+
+    // Generate code for a single instruction in function context
+    fn generate_instruction(&mut self, inst: &IRInstruction, func_info: &FunctionInfo) {
+        match inst {
+            IRInstruction::Push(value) => {
+                if *value <= 127 && *value >= -128 {
+                    self.emit(&[0x6a]);
+                    self.emit(&[*value as u8]);
+                } else {
+                    self.emit(&[0x68]);
+                    self.emit(&(*value as u32).to_le_bytes());
+                }
+            }
+
+            IRInstruction::Add => {
+                self.emit(&[0x58]); // pop rax
+                self.emit(&[0x5b]); // pop rbx
+                self.emit(&[0x48, 0x01, 0xd8]); // add rax, rbx
+                self.emit(&[0x50]); // push rax
+            }
+
+            IRInstruction::Sub => {
+                self.emit(&[0x58]); // pop rax
+                self.emit(&[0x5b]); // pop rbx
+                self.emit(&[0x48, 0x29, 0xc3]); // sub rbx, rax
+                self.emit(&[0x53]); // push rbx
+            }
+
+            IRInstruction::Mul => {
+                self.emit(&[0x58]); // pop rax
+                self.emit(&[0x5b]); // pop rbx
+                self.emit(&[0x48, 0x0f, 0xaf, 0xd8]); // imul rbx, rax
+                self.emit(&[0x53]); // push rbx
+            }
+
+            IRInstruction::Div => {
+                self.emit(&[0x58]); // pop rax (divisor)
+                self.emit(&[0x5b]); // pop rbx (dividend)
+                self.emit(&[0x48, 0x89, 0xd8]); // mov rax, rbx
+                self.emit(&[0x48, 0x89, 0xc1]); // mov rcx, rax
+                self.emit(&[0x48, 0x99]); // cqo
+                self.emit(&[0x48, 0xf7, 0xf9]); // idiv rcx
+                self.emit(&[0x50]); // push rax
+            }
+
+            IRInstruction::LoadParam(slot) => {
+                // Load parameter from stack location [rbp - 8*(slot+1)]
+                let offset = 8 * (slot + 1);
+                if offset <= 127 {
+                    self.emit(&[0xff, 0x75]); // push [rbp+offset]
+                    self.emit(&[((-(offset as i8)) as u8)]);
+                } else {
+                    self.emit(&[0xff, 0xb5]); // push [rbp+offset]
+                    self.emit(&(-(offset as i32)).to_le_bytes());
+                }
+            }
+
+            IRInstruction::StoreLocal(slot) => {
+                self.emit(&[0x58]); // pop rax
+                // Store at [rbp - 8*(func_info.param_count + slot + 1)]
+                // Locals come after parameters
+                let offset = 8 * (func_info.param_count + slot + 1);
+                if offset <= 127 {
+                    self.emit(&[0x48, 0x89, 0x45]);
+                    self.emit(&[((-(offset as i8)) as u8)]);
+                } else {
+                    self.emit(&[0x48, 0x89, 0x85]);
+                    self.emit(&(-(offset as i32)).to_le_bytes());
+                }
+            }
+
+            IRInstruction::LoadLocal(slot) => {
+                // Load from [rbp - 8*(func_info.param_count + slot + 1)]
+                let offset = 8 * (func_info.param_count + slot + 1);
+                if offset <= 127 {
+                    self.emit(&[0xff, 0x75]);
+                    self.emit(&[((-(offset as i8)) as u8)]);
+                } else {
+                    self.emit(&[0xff, 0xb5]);
+                    self.emit(&(-(offset as i32)).to_le_bytes());
+                }
+            }
+
+            IRInstruction::Call(func_name, arg_count) => {
+                // Pop arguments from stack and place in registers (System V ABI)
+                // RDI, RSI, RDX, RCX, R8, R9
+                let arg_regs: Vec<&[u8]> = vec![
+                    &[0x5f], // pop rdi
+                    &[0x5e], // pop rsi
+                    &[0x5a], // pop rdx
+                    &[0x59], // pop rcx
+                    &[0x41, 0x58], // pop r8
+                    &[0x41, 0x59], // pop r9
+                ];
+
+                // Pop arguments in reverse order (last arg first)
+                for i in (0..*arg_count.min(&6)).rev() {
+                    self.emit(arg_regs[i]);
+                }
+
+                // Call the function
+                if let Some(&func_addr) = self.function_addresses.get(func_name) {
+                    let current_pos = self.code.len();
+                    let call_offset = (func_addr as i32) - ((current_pos + 5) as i32);
+                    self.emit(&[0xe8]); // call
+                    self.emit(&call_offset.to_le_bytes());
+                } else {
+                    // Function not yet generated, emit placeholder
+                    // This will be fixed in a second pass
+                    self.emit(&[0xe8, 0x00, 0x00, 0x00, 0x00]); // call 0 (placeholder)
+                }
+
+                // Result is in RAX, push it onto stack
+                self.emit(&[0x50]); // push rax
+            }
+
+            IRInstruction::Return => {
+                self.emit(&[0x58]); // pop rax (return value)
+                self.generate_epilogue();
+            }
+
+            // Ignore DefineFunction in instruction generation
+            IRInstruction::DefineFunction(_, _, _) => {}
+
+            // Other instructions - basic implementations or placeholders
+            _ => {
+                // Placeholder for unimplemented instructions
+            }
+        }
     }
 
     // Fast position calculation without code generation
@@ -305,10 +576,17 @@ impl X86CodeGen {
                     // For now, just pop the value
                     self.emit(&[0x58]); // pop rax
                 }
-                IRInstruction::LoadParam(_) => {
-                    // TODO: Implement parameter handling in Phase 4.3
-                    // For now, just push 0
-                    self.emit(&[0x6a, 0x00]); // push 0
+                IRInstruction::LoadParam(slot) => {
+                    // Load parameter from stack location [rbp - 8*(slot+1)]
+                    // Parameters are stored after prologue, right after rbp
+                    let offset = 8 * (slot + 1);
+                    if offset <= 127 {
+                        self.emit(&[0xff, 0x75]); // push [rbp+offset]
+                        self.emit(&[((-(offset as i8)) as u8)]);
+                    } else {
+                        self.emit(&[0xff, 0xb5]); // push [rbp+offset]
+                        self.emit(&(-(offset as i32)).to_le_bytes());
+                    }
                 }
             }
         }

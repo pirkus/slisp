@@ -46,7 +46,8 @@ fn create_minimal_elf(machine_code: &[u8]) -> Vec<u8> {
     // Program Header (56 bytes)
     let code_file_offset = 0x1000u64; // Start code at page boundary
     let code_vaddr = 0x401000u64; // Virtual address for code
-    let total_code_size = machine_code.len() + 12; // code + exit syscall
+    let entry_stub_size = 5 + 3 + 7 + 2; // call(5) + mov rdi,rax(3) + mov rax,60(7) + syscall(2) = 17 bytes
+    let total_code_size = entry_stub_size + machine_code.len();
 
     elf.extend_from_slice(&1u32.to_le_bytes()); // p_type: PT_LOAD
     elf.extend_from_slice(&5u32.to_le_bytes()); // p_flags: PF_X | PF_R
@@ -62,15 +63,34 @@ fn create_minimal_elf(machine_code: &[u8]) -> Vec<u8> {
         elf.push(0);
     }
 
-    // Add the machine code
-    elf.extend_from_slice(machine_code);
-
-    // Add exit syscall to properly terminate
+    // Add entry point stub that calls the first function (assumed to be main)
+    // and then exits with its return value
+    // The call instruction is 5 bytes, followed by 16 bytes of exit code (3+11+2)
+    // So after the call (at offset 5), we need to skip 16 bytes to reach machine code
+    // But the call offset is relative to the END of the call instruction (offset 5)
+    // Machine code starts at offset 5+16 = 21, so we need: offset 21 - offset 5 = 16... wait
+    // Actually: call is at 0, ends at 5. Exit code is 5-21. Machine code starts at 21.
+    // So from end of call (5), we want to jump to 21: offset = 21 - 5 = 16. But that's wrong.
+    // Let me recalculate: exit code is 16 bytes. call+exit = 21 bytes. Code at offset 21.
+    // Call at 0x1000, ends at 0x1005. Want to jump to 0x1000+21 = 0x1015.
+    // From 0x1005, offset to 0x1015 is 0x10 (16). But code actually starts at 0x1011?
+    // Oh! The entry_stub_size calculation is wrong. It's 5+16 = 21, but exit code is 3+11+2 = 16
+    // Wait, let me count: call(5) + mov rdi,rax(3) + mov rax,60(11... no wait)
+    // mov rdi,rax = 48 89 c7 = 3 bytes
+    // mov rax,60 = 48 c7 c0 3c 00 00 00 = 7 bytes (not 11!)
+    // syscall = 0f 05 = 2 bytes
+    // Total exit code = 3+7+2 = 12 bytes
+    // So call goes from 0x1000-0x1005 (5 bytes), exit code is 0x1005-0x1011 (12 bytes)
+    // Code starts at 0x1011. From end of call (0x1005) to code (0x1011) = 12 bytes
     elf.extend_from_slice(&[
-        0x48, 0x89, 0xc7, // mov rdi, rax (move return value to exit code)
-        0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00, // mov rax, 60 (sys_exit)
-        0x0f, 0x05, // syscall
+        0xe8, 0x0c, 0x00, 0x00, 0x00, // call +12 (skip exit code to reach machine code)
+        0x48, 0x89, 0xc7, // mov rdi, rax (3 bytes)
+        0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00, // mov rax, 60 (7 bytes)
+        0x0f, 0x05, // syscall (2 bytes)
     ]);
+
+    // Add the machine code (functions)
+    elf.extend_from_slice(machine_code);
 
     elf
 }
