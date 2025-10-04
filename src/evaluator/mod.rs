@@ -1,3 +1,12 @@
+/// Evaluator module - interprets AST nodes
+///
+/// This module is organized into:
+/// - primitives: Arithmetic, comparison, and logical operations
+/// - special_forms: Special forms (if, let, fn, def, defn)
+
+mod primitives;
+mod special_forms;
+
 use crate::domain::{Node, Primitive};
 use std::collections::HashMap;
 
@@ -21,13 +30,15 @@ pub enum EvalError {
     TypeError(String),
 }
 
-type Environment = HashMap<String, Value>;
+pub type Environment = HashMap<String, Value>;
 
+/// Evaluate a node with a fresh environment
 pub fn eval_node(node: &Node) -> Result<Value, EvalError> {
     eval_with_env(node, &mut Environment::new())
 }
 
-fn eval_with_env(node: &Node, env: &mut Environment) -> Result<Value, EvalError> {
+/// Evaluate a node with the given environment
+pub(crate) fn eval_with_env(node: &Node, env: &mut Environment) -> Result<Value, EvalError> {
     match node {
         Node::Primitive { value } => eval_primitive(value),
         Node::Symbol { value } => eval_symbol(value, env),
@@ -61,10 +72,10 @@ fn eval_list(nodes: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalEr
 
     match operator.as_ref() {
         Node::Symbol { value } => match value.as_str() {
-            "+" => eval_arithmetic_op(args, env, |a, b| a + b, "+"),
-            "-" => eval_arithmetic_op(args, env, |a, b| a - b, "-"),
-            "*" => eval_arithmetic_op(args, env, |a, b| a * b, "*"),
-            "/" => eval_arithmetic_op(
+            "+" => primitives::eval_arithmetic_op(args, env, |a, b| a + b, "+"),
+            "-" => primitives::eval_arithmetic_op(args, env, |a, b| a - b, "-"),
+            "*" => primitives::eval_arithmetic_op(args, env, |a, b| a * b, "*"),
+            "/" => primitives::eval_arithmetic_op(
                 args,
                 env,
                 |a, b| {
@@ -76,23 +87,23 @@ fn eval_list(nodes: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalEr
                 },
                 "/",
             ),
-            "=" => eval_comparison_op(args, env, |a, b| a == b, "="),
-            "<" => eval_comparison_op(args, env, |a, b| a < b, "<"),
-            ">" => eval_comparison_op(args, env, |a, b| a > b, ">"),
-            "<=" => eval_comparison_op(args, env, |a, b| a <= b, "<="),
-            ">=" => eval_comparison_op(args, env, |a, b| a >= b, ">="),
-            "if" => eval_if(args, env),
-            "and" => eval_logical_and(args, env),
-            "or" => eval_logical_or(args, env),
-            "not" => eval_logical_not(args, env),
-            "let" => eval_let(args, env),
-            "fn" => eval_fn(args, env),
-            "def" => eval_def(args, env),
-            "defn" => eval_defn(args, env),
+            "=" => primitives::eval_comparison_op(args, env, |a, b| a == b, "="),
+            "<" => primitives::eval_comparison_op(args, env, |a, b| a < b, "<"),
+            ">" => primitives::eval_comparison_op(args, env, |a, b| a > b, ">"),
+            "<=" => primitives::eval_comparison_op(args, env, |a, b| a <= b, "<="),
+            ">=" => primitives::eval_comparison_op(args, env, |a, b| a >= b, ">="),
+            "if" => special_forms::eval_if(args, env),
+            "and" => primitives::eval_logical_and(args, env),
+            "or" => primitives::eval_logical_or(args, env),
+            "not" => primitives::eval_logical_not(args, env),
+            "let" => special_forms::eval_let(args, env),
+            "fn" => special_forms::eval_fn(args, env),
+            "def" => special_forms::eval_def(args, env),
+            "defn" => special_forms::eval_defn(args, env),
             op => {
                 // Try to look up the operator as a function in the environment
                 if let Some(func_value) = env.get(op) {
-                    eval_function_call(func_value.clone(), args, env)
+                    special_forms::eval_function_call(func_value.clone(), args, env)
                 } else {
                     Err(EvalError::UndefinedSymbol(op.to_string()))
                 }
@@ -101,372 +112,14 @@ fn eval_list(nodes: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalEr
         _ => {
             // First element is not a symbol, might be a function expression
             let func_expr = eval_with_env(operator, env)?;
-            eval_function_call(func_expr, args, env)
+            special_forms::eval_function_call(func_expr, args, env)
         }
     }
-}
-
-fn eval_arithmetic_op<F>(
-    args: &[Box<Node>],
-    env: &mut Environment,
-    op: F,
-    op_name: &str,
-) -> Result<Value, EvalError>
-where
-    F: Fn(isize, isize) -> isize,
-{
-    if args.len() < 2 {
-        return Err(EvalError::ArityError(op_name.to_string(), 2, args.len()));
-    }
-
-    let first = eval_with_env(&args[0], env)?;
-    let first_num = match first {
-        Value::Number(n) => n,
-        _ => {
-            return Err(EvalError::TypeError(format!(
-                "{} requires numbers",
-                op_name
-            )))
-        }
-    };
-
-    args[1..]
-        .iter()
-        .try_fold(first_num, |acc, arg| {
-            let val = eval_with_env(arg, env)?;
-            match val {
-                Value::Number(n) => Ok(op(acc, n)),
-                _ => Err(EvalError::TypeError(format!(
-                    "{} requires numbers",
-                    op_name
-                ))),
-            }
-        })
-        .map(Value::Number)
-}
-
-fn eval_comparison_op<F>(
-    args: &[Box<Node>],
-    env: &mut Environment,
-    op: F,
-    op_name: &str,
-) -> Result<Value, EvalError>
-where
-    F: Fn(isize, isize) -> bool,
-{
-    if args.len() != 2 {
-        return Err(EvalError::ArityError(op_name.to_string(), 2, args.len()));
-    }
-
-    let left = eval_with_env(&args[0], env)?;
-    let right = eval_with_env(&args[1], env)?;
-
-    match (left, right) {
-        (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(op(a, b))),
-        _ => Err(EvalError::TypeError(format!(
-            "{} requires numbers",
-            op_name
-        ))),
-    }
-}
-
-fn eval_if(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
-    if args.len() != 3 {
-        return Err(EvalError::ArityError("if".to_string(), 3, args.len()));
-    }
-
-    let condition = eval_with_env(&args[0], env)?;
-    let is_truthy = match condition {
-        Value::Boolean(b) => b,
-        Value::Number(n) => n != 0,
-        Value::Nil => false,
-        Value::Function { .. } => true, // Functions are always truthy
-    };
-
-    if is_truthy {
-        eval_with_env(&args[1], env)
-    } else {
-        eval_with_env(&args[2], env)
-    }
-}
-
-fn eval_logical_and(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
-    if args.is_empty() {
-        return Ok(Value::Boolean(true));
-    }
-
-    for arg in args {
-        let val = eval_with_env(arg, env)?;
-        let is_truthy = match val {
-            Value::Boolean(b) => b,
-            Value::Number(n) => n != 0,
-            Value::Nil => false,
-            Value::Function { .. } => true, // Functions are always truthy
-        };
-
-        if !is_truthy {
-            return Ok(Value::Boolean(false));
-        }
-    }
-
-    Ok(Value::Boolean(true))
-}
-
-fn eval_logical_or(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
-    if args.is_empty() {
-        return Ok(Value::Boolean(false));
-    }
-
-    for arg in args {
-        let val = eval_with_env(arg, env)?;
-        let is_truthy = match val {
-            Value::Boolean(b) => b,
-            Value::Number(n) => n != 0,
-            Value::Nil => false,
-            Value::Function { .. } => true, // Functions are always truthy
-        };
-
-        if is_truthy {
-            return Ok(Value::Boolean(true));
-        }
-    }
-
-    Ok(Value::Boolean(false))
-}
-
-fn eval_logical_not(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
-    if args.len() != 1 {
-        return Err(EvalError::ArityError("not".to_string(), 1, args.len()));
-    }
-
-    let val = eval_with_env(&args[0], env)?;
-    let is_truthy = match val {
-        Value::Boolean(b) => b,
-        Value::Number(n) => n != 0,
-        Value::Nil => false,
-        Value::Function { .. } => true, // Functions are always truthy
-    };
-
-    Ok(Value::Boolean(!is_truthy))
 }
 
 fn eval_vector(_nodes: &[Box<Node>], _env: &Environment) -> Result<Value, EvalError> {
     // For now, vectors just evaluate to Nil - they're used as data structures in let
     Ok(Value::Nil)
-}
-
-fn eval_let(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
-    if args.len() != 2 {
-        return Err(EvalError::ArityError("let".to_string(), 2, args.len()));
-    }
-
-    // First argument should be a vector of bindings [var1 val1 var2 val2 ...]
-    let bindings = match args[0].as_ref() {
-        Node::Vector { root } => root,
-        _ => {
-            return Err(EvalError::TypeError(
-                "let requires a vector of bindings".to_string(),
-            ))
-        }
-    };
-
-    // Check that we have an even number of binding elements
-    if bindings.len() % 2 != 0 {
-        return Err(EvalError::TypeError(
-            "let bindings must have even number of elements".to_string(),
-        ));
-    }
-
-    // Create new environment with bindings
-    let mut new_env = env.clone();
-
-    // Process bindings in pairs [var val var val ...]
-    for chunk in bindings.chunks(2) {
-        let var_node = &chunk[0];
-        let val_node = &chunk[1];
-
-        // Variable must be a symbol
-        let var_name = match var_node.as_ref() {
-            Node::Symbol { value } => value,
-            _ => {
-                return Err(EvalError::TypeError(
-                    "let binding variables must be symbols".to_string(),
-                ))
-            }
-        };
-
-        // Evaluate the value in the current environment (not new_env)
-        // This allows for sequential binding where later bindings can reference earlier ones
-        let val = eval_with_env(val_node, &mut new_env)?;
-        new_env.insert(var_name.clone(), val);
-    }
-
-    // Evaluate body in the new environment
-    eval_with_env(&args[1], &mut new_env)
-}
-
-fn eval_fn(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
-    if args.len() != 2 {
-        return Err(EvalError::ArityError("fn".to_string(), 2, args.len()));
-    }
-
-    // First argument should be a vector of parameters [param1 param2 ...]
-    let params = match args[0].as_ref() {
-        Node::Vector { root } => {
-            let mut param_names = Vec::new();
-            for param_node in root {
-                match param_node.as_ref() {
-                    Node::Symbol { value } => param_names.push(value.clone()),
-                    _ => {
-                        return Err(EvalError::TypeError(
-                            "fn parameters must be symbols".to_string(),
-                        ))
-                    }
-                }
-            }
-            param_names
-        }
-        _ => {
-            return Err(EvalError::TypeError(
-                "fn requires a vector of parameters".to_string(),
-            ))
-        }
-    };
-
-    // Second argument is the function body
-    let body = args[1].clone();
-
-    // Create function value with captured environment (closure)
-    Ok(Value::Function {
-        params,
-        body,
-        closure: env.clone(),
-    })
-}
-
-fn eval_function_call(
-    func_value: Value,
-    args: &[Box<Node>],
-    env: &mut Environment,
-) -> Result<Value, EvalError> {
-    match func_value {
-        Value::Function {
-            params,
-            body,
-            closure,
-        } => {
-            // Check arity
-            if args.len() != params.len() {
-                return Err(EvalError::ArityError(
-                    "function call".to_string(),
-                    params.len(),
-                    args.len(),
-                ));
-            }
-
-            // Create new environment from closure + parameter bindings
-            let mut func_env = closure;
-            for (param, arg) in params.iter().zip(args.iter()) {
-                let arg_value = eval_with_env(arg, env)?;
-                func_env.insert(param.clone(), arg_value);
-            }
-
-            // Evaluate function body in the new environment
-            eval_with_env(&body, &mut func_env)
-        }
-        _ => Err(EvalError::TypeError(
-            "Cannot call non-function value".to_string(),
-        )),
-    }
-}
-
-fn eval_def(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
-    if args.len() != 2 {
-        return Err(EvalError::ArityError("def".to_string(), 2, args.len()));
-    }
-
-    // First argument must be a symbol (the name)
-    let _name = match args[0].as_ref() {
-        Node::Symbol { value } => value,
-        _ => {
-            return Err(EvalError::TypeError(
-                "def requires a symbol as first argument".to_string(),
-            ))
-        }
-    };
-
-    // Second argument is the value
-    let value = eval_with_env(&args[1], env)?;
-
-    // Store the binding in the environment
-    if let Node::Symbol { value: name } = args[0].as_ref() {
-        env.insert(name.clone(), value.clone());
-    }
-
-    Ok(value)
-}
-
-fn eval_defn(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
-    if args.len() < 3 {
-        return Err(EvalError::ArityError("defn".to_string(), 3, args.len()));
-    }
-
-    // First argument must be a symbol (the function name)
-    let _name = match args[0].as_ref() {
-        Node::Symbol { value } => value,
-        _ => {
-            return Err(EvalError::TypeError(
-                "defn requires a symbol as first argument".to_string(),
-            ))
-        }
-    };
-
-    // Second argument should be a vector of parameters
-    let params = match args[1].as_ref() {
-        Node::Vector { root } => {
-            let mut param_names = Vec::new();
-            for param_node in root {
-                match param_node.as_ref() {
-                    Node::Symbol { value } => param_names.push(value.clone()),
-                    _ => {
-                        return Err(EvalError::TypeError(
-                            "defn parameters must be symbols".to_string(),
-                        ))
-                    }
-                }
-            }
-            param_names
-        }
-        _ => {
-            return Err(EvalError::TypeError(
-                "defn requires a vector of parameters".to_string(),
-            ))
-        }
-    };
-
-    // Rest of arguments form the function body (for now, just take the first one)
-    let body = if args.len() == 3 {
-        args[2].clone()
-    } else {
-        // Multiple body expressions - wrap in an implicit do (not implemented yet)
-        return Err(EvalError::InvalidOperation(
-            "Multiple body expressions not supported yet".to_string(),
-        ));
-    };
-
-    // Create function value
-    let func_value = Value::Function {
-        params,
-        body,
-        closure: env.clone(),
-    };
-
-    // Store the function in the environment
-    if let Node::Symbol { value: name } = args[0].as_ref() {
-        env.insert(name.clone(), func_value.clone());
-    }
-
-    Ok(func_value)
 }
 
 #[cfg(test)]
