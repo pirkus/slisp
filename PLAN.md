@@ -7,16 +7,15 @@
 - ✅ **Tree-walking evaluator** - Full implementation with comprehensive operations
 - ✅ **REPL interface** - Interactive shell with Ctrl+D exit and error handling
 - ✅ **ELF executable generation** - Compiles SLisp expressions to standalone native executables
+- ✅ **Modular architecture** - Refactored codebase with well-organized modules (codegen, compiler, evaluator, repl, cli)
 
 ## Architecture Overview
 ```
 Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine Code → JIT Execution
                            ↓                    ↓                    ↓
                     ✅ INTERPRETER       ✅ COMPILER         ✅ ELF EXECUTABLE
-                      (Full Functions)    (Expressions Only)    (Single Expression)
+                      (Full Functions)    (Full Functions)    (Multi-function programs)
 ```
-
-**Current Compiler Scope:** Expression compilation with multi-function file support - perfect for mathematical expressions, conditionals, data processing, and multi-function programs. Function call compilation in progress.
 
 ## Current Implementation Status
 
@@ -237,12 +236,110 @@ slisp --compile -o test test.slisp
 - System V ABI compliant parameter passing via registers (RDI, RSI, RDX, RCX, R8, R9)
 - Two-pass code generation for correct function address resolution
 
-### **Phase 5: Advanced Features** (After Function Compilation)
-- [ ] **Closures** and lexical scoping in compiled code
-- [ ] **Garbage collection** for compiled programs
-- [ ] **Standard library** functions
-- [ ] **Optimization passes** (constant folding, dead code elimination)
-- [ ] **Register allocation** optimization
+### **Phase 5: Code Quality & Refactoring - COMPLETED!**
+- ✅ **Modular architecture** - Split large files into focused modules
+  - ✅ `codegen/` module (702 → 611 lines across 4 files): ABI, instructions, sizing
+  - ✅ `compiler/` module (920 → 975 lines across 5 files): context, expressions, functions, bindings
+  - ✅ `evaluator/` module (844 → 874 lines across 3 files): primitives, special forms
+  - ✅ `main` refactor (458 → 365 lines across 3 files): main, repl, cli
+- ✅ **All 70 tests passing** after refactoring
+- ✅ **No functional changes** - Pure code organization improvement
+
+### **Phase 6: Runtime Data Types & Memory Management** (NEXT PRIORITY)
+
+**Goal:** Support rich data types beyond numbers with proper memory management.
+
+#### **Phase 6.1: String Support**
+- [ ] **String literals** in parser (`"hello world"`)
+- [ ] **String IR type** - Add `String` variant to IR values
+- [ ] **Heap allocation** - Allocate strings on heap with length prefix
+- [ ] **String operations** - `str-concat`, `str-length`, `str-get` (indexing)
+- [ ] **Memory management** - Reference counting or simple GC for strings
+- [ ] **Escape sequences** - Support `\n`, `\t`, `\"`, `\\` in string literals
+
+#### **Phase 6.2: Data Structure Support**
+- [ ] **Vectors/Lists** - Mutable/immutable sequences `[1 2 3]`
+  - [ ] Heap allocation with reference counting
+  - [ ] Operations: `vec`, `conj`, `get`, `count`, `first`, `rest`
+- [ ] **Hash maps** - Key-value pairs `{:key "value"}`
+  - [ ] Heap allocation with hash table implementation
+  - [ ] Operations: `hash-map`, `assoc`, `get`, `dissoc`, `keys`, `vals`
+- [ ] **Sets** - Unique value collections `#{1 2 3}`
+  - [ ] Heap allocation with hash set implementation
+  - [ ] Operations: `hash-set`, `conj`, `disj`, `contains?`
+
+#### **Phase 6.3: Memory Management Strategy**
+- [ ] **Reference counting GC** - Simple automatic memory management
+  - [ ] Reference count field in heap-allocated objects
+  - [ ] Increment on copy, decrement on drop
+  - [ ] Free when count reaches zero
+- [ ] **Alternative: Mark & Sweep GC** - More robust but complex
+  - [ ] Root set identification (stack, globals)
+  - [ ] Marking phase - trace reachable objects
+  - [ ] Sweep phase - free unreachable objects
+  - [ ] GC trigger on allocation threshold
+
+**Recommended Approach:** Start with reference counting for simplicity, migrate to mark-and-sweep if cyclic references become an issue.
+
+### **Phase 7: I/O and System Interaction**
+
+#### **Phase 7.1: Terminal Output**
+- [ ] **Print functions** - `print`, `println` for output
+  - [ ] Compiler mode: System calls (write syscall)
+  - [ ] Interpreter mode: Rust print! macro
+- [ ] **Format strings** - Basic string formatting
+- [ ] **Error output** - `prn-err` for stderr
+
+#### **Phase 7.2: File I/O**
+- [ ] **File reading** - `slurp` to read entire file as string
+- [ ] **File writing** - `spit` to write string to file
+- [ ] **File operations** - `file-exists?`, `delete-file`, `file-size`
+
+#### **Phase 7.3: Module System**
+- [ ] **File importing** - `(require "path/to/file.slisp")`
+  - [ ] Load and parse external files
+  - [ ] Compile dependencies before main program
+  - [ ] Namespace isolation (optional)
+- [ ] **Standard library** - Core functions in separate files
+  - [ ] Math functions (`abs`, `max`, `min`, `mod`)
+  - [ ] List functions (`map`, `filter`, `reduce`)
+  - [ ] String functions (`split`, `join`, `trim`)
+
+### **Phase 8: Advanced Language Features**
+
+#### **Phase 8.1: Closures in Compiled Code**
+- [ ] **Closure representation** - Heap-allocated environment + function pointer
+- [ ] **Free variable capture** - Identify and capture variables from outer scopes
+- [ ] **Closure calling convention** - Pass environment pointer as hidden parameter
+
+#### **Phase 8.2: Advanced Control Flow**
+- [ ] **Loops** - `loop`/`recur` for tail recursion
+- [ ] **Pattern matching** - `case` or `match` expressions
+- [ ] **Exception handling** - `try`/`catch` for error handling
+
+#### **Phase 8.3: Optimization**
+- [ ] **Constant folding** - Evaluate constant expressions at compile time
+- [ ] **Dead code elimination** - Remove unused code paths
+- [ ] **Tail call optimization** - Convert tail recursion to loops
+- [ ] **Register allocation** - Better use of x86-64 registers
+- [ ] **Inline small functions** - Eliminate call overhead
+
+### **Phase 9: Tooling & Developer Experience**
+
+#### **Phase 9.1: Debugging Support**
+- [ ] **Stack traces** - Show call stack on errors
+- [ ] **Breakpoints** - Interactive debugging (interpreter mode)
+- [ ] **Variable inspection** - Print environment state
+
+#### **Phase 9.2: Error Messages**
+- [ ] **Line numbers** - Track source locations in AST
+- [ ] **Syntax highlighting** - Color error messages
+- [ ] **Suggestions** - "Did you mean...?" for typos
+
+#### **Phase 9.3: Build System**
+- [ ] **Multi-file projects** - Project structure and dependencies
+- [ ] **Compilation cache** - Incremental compilation
+- [ ] **Release builds** - Optimization flags
 
 ## Code Generation Strategy
 
@@ -264,8 +361,9 @@ slisp --compile -o test test.slisp
 
 ## Instructions for agents
 - Test each phase thoroughly before moving to next
-- Functional programming principles for clarity and maintainability (immutability, pure functions where possible)
+- Functional programming principles for clarity and maintainability (immutability, pure functions where possible, higher-order functions prefered to for loops)
 - Consider debugging/profiling hooks early
 - Always update documentation and tests and PLAN.md with current status so that it is next session ready
 - if you fail to rewrite a file, try the diff again, do not try simpler solutions or complete rewrites
 - feel free to add/expand the plan as you see fit
+- When implementing new features, start with interpreter mode first (easier), then add compiler support
