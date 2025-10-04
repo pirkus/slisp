@@ -103,9 +103,14 @@ mod tests {
 
     #[test]
     fn test_elf_generation() {
-        // Simple program that returns 42
+        // Simple function that returns 42
         let machine_code = vec![
+            0x55,                                   // push rbp
+            0x48, 0x89, 0xe5,                       // mov rbp, rsp
             0x48, 0xc7, 0xc0, 42, 0x00, 0x00, 0x00, // mov rax, 42
+            0x48, 0x89, 0xec,                       // mov rsp, rbp
+            0x5d,                                   // pop rbp
+            0xc3,                                   // ret
         ];
 
         let output_path = "/tmp/test_slisp_executable";
@@ -137,8 +142,13 @@ mod tests {
     fn test_different_values() {
         // Test with different return values
         for test_val in [0, 1, 5, 100, 255] {
-            let machine_code = vec![
+            let mut machine_code = vec![
+                0x55,             // push rbp
+                0x48, 0x89, 0xe5, // mov rbp, rsp
                 0x48, 0xc7, 0xc0, test_val, 0x00, 0x00, 0x00, // mov rax, test_val
+                0x48, 0x89, 0xec, // mov rsp, rbp
+                0x5d,             // pop rbp
+                0xc3,             // ret
             ];
 
             let output_path = format!("/tmp/test_slisp_executable_{}", test_val);
