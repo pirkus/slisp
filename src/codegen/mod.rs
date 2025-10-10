@@ -272,15 +272,6 @@ mod tests {
         program.add_instruction(IRInstruction::Return);
 
         let machine_code = compile_to_executable(&program);
-        
-        eprintln!("Generated {} bytes:", machine_code.len());
-        for (i, byte) in machine_code.iter().enumerate() {
-            eprint!("{:02x} ", byte);
-            if (i + 1) % 16 == 0 {
-                eprintln!();
-            }
-        }
-        eprintln!();
 
         let mut jit_code = machine_code;
         jit_code.push(0xc3); // ret
