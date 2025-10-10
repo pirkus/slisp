@@ -1,0 +1,3 @@
+(defn multiply [x y] (* x y))
+
+(defn -main [] (multiply 6 7))
