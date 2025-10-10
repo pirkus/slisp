@@ -77,8 +77,7 @@ pub fn generate_load_param(slot: usize) -> Vec<u8> {
 pub fn generate_store_local(slot: usize, func_info: &FunctionInfo) -> Vec<u8> {
     let mut code = vec![0x58]; // pop rax
 
-    // Store at [rbp - 8*(func_info.param_count + slot + 1)]
-    // Locals come after parameters
+    // Locals stored at [rbp - 8*(param_count + slot + 1)]
     let offset = 8 * (func_info.param_count + slot + 1);
     if offset <= 127 {
         code.extend_from_slice(&[0x48, 0x89, 0x45]);
@@ -93,7 +92,6 @@ pub fn generate_store_local(slot: usize, func_info: &FunctionInfo) -> Vec<u8> {
 
 /// Generate machine code for loading a local variable
 pub fn generate_load_local(slot: usize, func_info: &FunctionInfo) -> Vec<u8> {
-    // Load from [rbp - 8*(func_info.param_count + slot + 1)]
     let offset = 8 * (func_info.param_count + slot + 1);
     if offset <= 127 {
         vec![
@@ -120,11 +118,9 @@ pub fn generate_call(
         code.push(0xe8); // call
         code.extend_from_slice(&call_offset.to_le_bytes());
     } else {
-        // Function not yet generated, emit placeholder
-        code.extend_from_slice(&[0xe8, 0x00, 0x00, 0x00, 0x00]); // call 0 (placeholder)
+        code.extend_from_slice(&[0xe8, 0x00, 0x00, 0x00, 0x00]); // call 0
     }
 
-    // Result is in RAX, push it onto stack
     code.push(0x50); // push rax
 
     code

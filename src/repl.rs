@@ -67,7 +67,6 @@ fn parse_and_eval(input: &str) -> Result<Value, EvalError> {
 }
 
 fn parse_compile_and_execute(input: &str) -> Result<i64, String> {
-    // Parse the expression
     let ast = match std::panic::catch_unwind(|| {
         AstParser::parse_sexp_new_domain(input.as_bytes(), &mut 0)
     }) {
@@ -75,16 +74,13 @@ fn parse_compile_and_execute(input: &str) -> Result<i64, String> {
         Err(_) => return Err("Parse error: malformed expression".to_string()),
     };
 
-    // Compile to IR
     let ir_program = match compile_to_ir(&ast) {
         Ok(program) => program,
         Err(error) => return Err(format_compile_error(&error)),
     };
 
-    // Generate machine code
     let machine_code = compile_to_executable(&ir_program);
 
-    // Execute using JIT
     let result = JitRunner::exec(&machine_code);
     Ok(result as i64)
 }

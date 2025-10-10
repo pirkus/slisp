@@ -11,7 +11,6 @@ use crate::ir::FunctionInfo;
 pub fn generate_prologue(func_info: &FunctionInfo) -> Vec<u8> {
     let mut code = Vec::new();
 
-    // Standard prologue
     code.push(0x55); // push rbp
     code.extend_from_slice(&[0x48, 0x89, 0xe5]); // mov rbp, rsp
 
@@ -45,7 +44,6 @@ pub fn generate_prologue(func_info: &FunctionInfo) -> Vec<u8> {
     ];
 
     for (i, &reg_code) in param_reg_codes.iter().enumerate().take(func_info.param_count.min(6)) {
-        // Store param at [rbp - 8*(i+1)]
         let offset = 8 * (i + 1);
         code.extend_from_slice(reg_code);
         code.push((-(offset as i8)) as u8);

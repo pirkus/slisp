@@ -101,7 +101,6 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
             "def" => special_forms::eval_def(args, env),
             "defn" => special_forms::eval_defn(args, env),
             op => {
-                // Try to look up the operator as a function in the environment
                 if let Some(func_value) = env.get(op) {
                     special_forms::eval_function_call(func_value.clone(), args, env)
                 } else {
@@ -110,7 +109,6 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
             }
         },
         _ => {
-            // First element is not a symbol, might be a function expression
             let func_expr = eval_with_env(operator, env)?;
             special_forms::eval_function_call(func_expr, args, env)
         }
@@ -118,7 +116,6 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
 }
 
 fn eval_vector(_nodes: &[Node], _env: &Environment) -> Result<Value, EvalError> {
-    // For now, vectors just evaluate to Nil - they're used as data structures in let
     Ok(Value::Nil)
 }
 

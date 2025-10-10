@@ -32,12 +32,10 @@ impl X86CodeGen {
 
     /// Generate x86-64 machine code from IR program
     pub fn generate(&mut self, program: &IRProgram) -> Vec<u8> {
-        // For programs with functions, use multi-function code generation
         if !program.functions.is_empty() && program.entry_point.is_some() {
             return self.generate_multi_function(program);
         }
 
-        // Check if we need a stack frame (if there are local variables)
         let has_locals = program.instructions.iter().any(|inst| {
             matches!(
                 inst,
@@ -45,10 +43,8 @@ impl X86CodeGen {
             )
         });
 
-        // Pre-calculate instruction positions
         self.calculate_positions(program);
 
-        // Generate code
         self.code.clear();
         self.generate_code(program, has_locals);
 
@@ -64,7 +60,6 @@ impl X86CodeGen {
         // Pass 1: Calculate addresses by generating functions in order
         // Pass 2: Generate all functions with correct addresses now available
 
-        // Determine generation order: entry point first, then others
         let mut ordered_functions = Vec::new();
 
         if let Some(entry_name) = &program.entry_point {
@@ -84,7 +79,6 @@ impl X86CodeGen {
         for func_info in &ordered_functions {
             self.function_addresses.insert(func_info.name.clone(), current_address);
 
-            // Calculate size by generating to temporary buffer
             let saved_code = self.code.clone();
             self.code.clear();
             self.generate_function(program, func_info);
@@ -105,11 +99,9 @@ impl X86CodeGen {
 
     /// Generate code for a single function
     fn generate_function(&mut self, program: &IRProgram, func_info: &FunctionInfo) {
-        // Generate function prologue using ABI module
         let prologue = abi::generate_prologue(func_info);
         self.code.extend(prologue);
 
-        // Find the instructions for this function
         let mut in_function = false;
         let mut function_instructions = Vec::new();
 
@@ -129,7 +121,6 @@ impl X86CodeGen {
             }
         }
 
-        // Generate code for function body
         for inst in &function_instructions {
             self.generate_instruction(inst, func_info);
         }
@@ -148,9 +139,7 @@ impl X86CodeGen {
             IRInstruction::LoadLocal(slot) => instructions::generate_load_local(*slot, func_info),
 
             IRInstruction::Call(func_name, arg_count) => {
-                // Setup call arguments
                 let mut code = abi::generate_call_setup(*arg_count);
-                // Generate call instruction
                 let call_code = instructions::generate_call(
                     func_name,
                     &self.function_addresses,
@@ -166,9 +155,8 @@ impl X86CodeGen {
                 code
             }
 
-            IRInstruction::DefineFunction(_, _, _) => Vec::new(), // Metadata only
+            IRInstruction::DefineFunction(_, _, _) => Vec::new(),
 
-            // Placeholder for other instructions - will be implemented as needed
             _ => Vec::new(),
         };
 
@@ -199,15 +187,12 @@ impl X86CodeGen {
 
     /// Generate code for old single-function path
     fn generate_code(&mut self, program: &IRProgram, has_locals: bool) {
-        // Add prologue if we have local variables
         if has_locals {
             self.code.push(0x55); // push rbp
             self.code.extend_from_slice(&[0x48, 0x89, 0xe5]); // mov rbp, rsp
             self.code.extend_from_slice(&[0x48, 0x83, 0xec, 0x80]); // sub rsp, 128
         }
 
-        // Generate instructions (simplified version for old path)
-        // This is kept for backward compatibility with single-expression compilation
         for inst in &program.instructions {
             match inst {
                 IRInstruction::Push(value) => {
