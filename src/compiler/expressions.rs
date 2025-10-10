@@ -19,7 +19,7 @@ pub fn compile_primitive(primitive: &Primitive, program: &mut IRProgram) -> Resu
 
 /// Compile arithmetic operations (+, -, *, /)
 pub fn compile_arithmetic_op(
-    args: &[Box<Node>],
+    args: &[Node],
     program: &mut IRProgram,
     context: &mut CompileContext,
     instruction: IRInstruction,
@@ -43,7 +43,7 @@ pub fn compile_arithmetic_op(
 
 /// Compile comparison operations (=, <, >, <=, >=)
 pub fn compile_comparison_op(
-    args: &[Box<Node>],
+    args: &[Node],
     program: &mut IRProgram,
     context: &mut CompileContext,
     instruction: IRInstruction,
@@ -62,7 +62,7 @@ pub fn compile_comparison_op(
 
 /// Compile if expression
 pub fn compile_if(
-    args: &[Box<Node>],
+    args: &[Node],
     program: &mut IRProgram,
     context: &mut CompileContext,
 ) -> Result<(), CompileError> {
@@ -104,7 +104,7 @@ pub fn compile_if(
 
 /// Compile logical AND operation with short-circuit evaluation
 pub fn compile_logical_and(
-    args: &[Box<Node>],
+    args: &[Node],
     program: &mut IRProgram,
     context: &mut CompileContext,
 ) -> Result<(), CompileError> {
@@ -176,7 +176,7 @@ pub fn compile_logical_and(
 
 /// Compile logical OR operation with short-circuit evaluation
 pub fn compile_logical_or(
-    args: &[Box<Node>],
+    args: &[Node],
     program: &mut IRProgram,
     context: &mut CompileContext,
 ) -> Result<(), CompileError> {
@@ -246,7 +246,7 @@ pub fn compile_logical_or(
 
 /// Compile logical NOT operation
 pub fn compile_logical_not(
-    args: &[Box<Node>],
+    args: &[Node],
     program: &mut IRProgram,
     context: &mut CompileContext,
 ) -> Result<(), CompileError> {

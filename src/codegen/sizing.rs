@@ -39,10 +39,6 @@ pub fn instruction_size(instruction: &IRInstruction, has_locals: bool) -> usize 
         // Function operations
         IRInstruction::DefineFunction(_, _, _) => 0, // No code generated, just metadata
         IRInstruction::Call(_, _) => 6,              // call + push rax (varies with offset)
-        IRInstruction::CallIndirect(_) => 5,
-        IRInstruction::PushFrame(_) => 8,
-        IRInstruction::PopFrame => 4,
-        IRInstruction::StoreParam(_) => 8,
     }
 }
 

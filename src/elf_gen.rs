@@ -142,7 +142,7 @@ mod tests {
     fn test_different_values() {
         // Test with different return values
         for test_val in [0, 1, 5, 100, 255] {
-            let mut machine_code = vec![
+            let machine_code = vec![
                 0x55,             // push rbp
                 0x48, 0x89, 0xe5, // mov rbp, rsp
                 0x48, 0xc7, 0xc0, test_val, 0x00, 0x00, 0x00, // mov rax, test_val

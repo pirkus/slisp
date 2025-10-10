@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 /// Generate machine code for a push immediate instruction
 pub fn generate_push(value: i64) -> Vec<u8> {
-    if value <= 127 && value >= -128 {
+    if (-128..=127).contains(&value) {
         vec![0x6a, value as u8] // push imm8
     } else {
         let mut code = vec![0x68]; // push imm32

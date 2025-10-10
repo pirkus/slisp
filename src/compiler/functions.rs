@@ -6,7 +6,7 @@ use super::{CompileContext, CompileError};
 
 /// Compile a function definition (defn)
 pub fn compile_defn(
-    args: &[Box<Node>],
+    args: &[Node],
     program: &mut IRProgram,
     context: &mut CompileContext,
 ) -> Result<(), CompileError> {
@@ -15,7 +15,7 @@ pub fn compile_defn(
     }
 
     // Function name
-    let func_name = match args[0].as_ref() {
+    let func_name = match &args[0] {
         Node::Symbol { value } => value.clone(),
         _ => {
             return Err(CompileError::InvalidExpression(
@@ -25,7 +25,7 @@ pub fn compile_defn(
     };
 
     // Parameters vector
-    let params = match args[1].as_ref() {
+    let params = match &args[1] {
         Node::Vector { root } => root,
         _ => {
             return Err(CompileError::InvalidExpression(
@@ -37,7 +37,7 @@ pub fn compile_defn(
     // Extract parameter names
     let mut param_names = Vec::new();
     for param in params {
-        match param.as_ref() {
+        match param {
             Node::Symbol { value } => param_names.push(value.clone()),
             _ => {
                 return Err(CompileError::InvalidExpression(
@@ -100,7 +100,7 @@ pub fn compile_defn(
 /// Compile a function call
 pub fn compile_function_call(
     func_name: &str,
-    args: &[Box<Node>],
+    args: &[Node],
     program: &mut IRProgram,
     context: &mut CompileContext,
     expected_param_count: usize,

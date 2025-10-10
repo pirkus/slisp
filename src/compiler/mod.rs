@@ -22,7 +22,6 @@ pub enum CompileError {
     InvalidExpression(String),
     ArityError(String, usize, usize),
     UndefinedVariable(String),
-    UndefinedFunction(String),
     DuplicateFunction(String),
 }
 
@@ -44,7 +43,7 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
     for expr in expressions {
         if let Node::List { root } = expr {
             if !root.is_empty() {
-                if let Node::Symbol { value } = root[0].as_ref() {
+                if let Node::Symbol { value } = &root[0] {
                     if value == "defn" {
                         // Register function in context but don't compile yet
                         if root.len() != 4 {
@@ -55,7 +54,7 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
                             ));
                         }
 
-                        let func_name = match root[1].as_ref() {
+                        let func_name = match &root[1] {
                             Node::Symbol { value } => value.clone(),
                             _ => {
                                 return Err(CompileError::InvalidExpression(
@@ -64,7 +63,7 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
                             }
                         };
 
-                        let params = match root[2].as_ref() {
+                        let params = match &root[2] {
                             Node::Vector { root } => root,
                             _ => {
                                 return Err(CompileError::InvalidExpression(
@@ -128,7 +127,7 @@ pub(crate) fn compile_node(
 
 /// Compile a list (function call or special form) to IR
 fn compile_list(
-    nodes: &[Box<Node>],
+    nodes: &[Node],
     program: &mut IRProgram,
     context: &mut CompileContext,
 ) -> Result<(), CompileError> {
@@ -140,7 +139,7 @@ fn compile_list(
     let operator = &nodes[0];
     let args = &nodes[1..];
 
-    match operator.as_ref() {
+    match operator {
         Node::Symbol { value } => match value.as_str() {
             "+" => expressions::compile_arithmetic_op(args, program, context, IRInstruction::Add, "+"),
             "-" => expressions::compile_arithmetic_op(args, program, context, IRInstruction::Sub, "-"),

@@ -62,7 +62,7 @@ fn eval_symbol(symbol: &str, env: &Environment) -> Result<Value, EvalError> {
         .ok_or_else(|| EvalError::UndefinedSymbol(symbol.to_string()))
 }
 
-fn eval_list(nodes: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
+fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
     if nodes.is_empty() {
         return Ok(Value::Nil);
     }
@@ -70,7 +70,7 @@ fn eval_list(nodes: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalEr
     let operator = &nodes[0];
     let args = &nodes[1..];
 
-    match operator.as_ref() {
+    match operator {
         Node::Symbol { value } => match value.as_str() {
             "+" => primitives::eval_arithmetic_op(args, env, |a, b| a + b, "+"),
             "-" => primitives::eval_arithmetic_op(args, env, |a, b| a - b, "-"),
@@ -117,7 +117,7 @@ fn eval_list(nodes: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalEr
     }
 }
 
-fn eval_vector(_nodes: &[Box<Node>], _env: &Environment) -> Result<Value, EvalError> {
+fn eval_vector(_nodes: &[Node], _env: &Environment) -> Result<Value, EvalError> {
     // For now, vectors just evaluate to Nil - they're used as data structures in let
     Ok(Value::Nil)
 }

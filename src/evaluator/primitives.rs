@@ -5,7 +5,7 @@ use super::{Value, EvalError, Environment};
 
 /// Evaluate arithmetic operations (+, -, *, /)
 pub fn eval_arithmetic_op<F>(
-    args: &[Box<Node>],
+    args: &[Node],
     env: &mut Environment,
     op: F,
     op_name: &str,
@@ -45,7 +45,7 @@ where
 
 /// Evaluate comparison operations (=, <, >, <=, >=)
 pub fn eval_comparison_op<F>(
-    args: &[Box<Node>],
+    args: &[Node],
     env: &mut Environment,
     op: F,
     op_name: &str,
@@ -70,7 +70,7 @@ where
 }
 
 /// Evaluate logical AND with short-circuit evaluation
-pub fn eval_logical_and(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
+pub fn eval_logical_and(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
     if args.is_empty() {
         return Ok(Value::Boolean(true));
     }
@@ -93,7 +93,7 @@ pub fn eval_logical_and(args: &[Box<Node>], env: &mut Environment) -> Result<Val
 }
 
 /// Evaluate logical OR with short-circuit evaluation
-pub fn eval_logical_or(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
+pub fn eval_logical_or(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
     if args.is_empty() {
         return Ok(Value::Boolean(false));
     }
@@ -116,7 +116,7 @@ pub fn eval_logical_or(args: &[Box<Node>], env: &mut Environment) -> Result<Valu
 }
 
 /// Evaluate logical NOT
-pub fn eval_logical_not(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
+pub fn eval_logical_not(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
     if args.len() != 1 {
         return Err(EvalError::ArityError("not".to_string(), 1, args.len()));
     }

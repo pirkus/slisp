@@ -4,7 +4,7 @@ use crate::domain::Node;
 use super::{Value, EvalError, Environment};
 
 /// Evaluate if conditional
-pub fn eval_if(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
+pub fn eval_if(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
     if args.len() != 3 {
         return Err(EvalError::ArityError("if".to_string(), 3, args.len()));
     }
@@ -25,13 +25,13 @@ pub fn eval_if(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalE
 }
 
 /// Evaluate let binding expression
-pub fn eval_let(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
+pub fn eval_let(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
     if args.len() != 2 {
         return Err(EvalError::ArityError("let".to_string(), 2, args.len()));
     }
 
     // First argument should be a vector of bindings [var1 val1 var2 val2 ...]
-    let bindings = match args[0].as_ref() {
+    let bindings = match &args[0] {
         Node::Vector { root } => root,
         _ => {
             return Err(EvalError::TypeError(
@@ -56,7 +56,7 @@ pub fn eval_let(args: &[Box<Node>], env: &mut Environment) -> Result<Value, Eval
         let val_node = &chunk[1];
 
         // Variable must be a symbol
-        let var_name = match var_node.as_ref() {
+        let var_name = match var_node {
             Node::Symbol { value } => value,
             _ => {
                 return Err(EvalError::TypeError(
@@ -76,17 +76,17 @@ pub fn eval_let(args: &[Box<Node>], env: &mut Environment) -> Result<Value, Eval
 }
 
 /// Evaluate fn (anonymous function) creation
-pub fn eval_fn(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError> {
+pub fn eval_fn(args: &[Node], env: &Environment) -> Result<Value, EvalError> {
     if args.len() != 2 {
         return Err(EvalError::ArityError("fn".to_string(), 2, args.len()));
     }
 
     // First argument should be a vector of parameters [param1 param2 ...]
-    let params = match args[0].as_ref() {
+    let params = match &args[0] {
         Node::Vector { root } => {
             let mut param_names = Vec::new();
             for param_node in root {
-                match param_node.as_ref() {
+                match param_node {
                     Node::Symbol { value } => param_names.push(value.clone()),
                     _ => {
                         return Err(EvalError::TypeError(
@@ -105,7 +105,7 @@ pub fn eval_fn(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError
     };
 
     // Second argument is the function body
-    let body = args[1].clone();
+    let body = Box::new(args[1].clone());
 
     // Create function value with captured environment (closure)
     Ok(Value::Function {
@@ -118,7 +118,7 @@ pub fn eval_fn(args: &[Box<Node>], env: &Environment) -> Result<Value, EvalError
 /// Evaluate function call
 pub fn eval_function_call(
     func_value: Value,
-    args: &[Box<Node>],
+    args: &[Node],
     env: &mut Environment,
 ) -> Result<Value, EvalError> {
     match func_value {
@@ -153,13 +153,13 @@ pub fn eval_function_call(
 }
 
 /// Evaluate def (variable definition)
-pub fn eval_def(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
+pub fn eval_def(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
     if args.len() != 2 {
         return Err(EvalError::ArityError("def".to_string(), 2, args.len()));
     }
 
     // First argument must be a symbol (the name)
-    let _name = match args[0].as_ref() {
+    let _name = match &args[0] {
         Node::Symbol { value } => value,
         _ => {
             return Err(EvalError::TypeError(
@@ -172,7 +172,7 @@ pub fn eval_def(args: &[Box<Node>], env: &mut Environment) -> Result<Value, Eval
     let value = crate::evaluator::eval_with_env(&args[1], env)?;
 
     // Store the binding in the environment
-    if let Node::Symbol { value: name } = args[0].as_ref() {
+    if let Node::Symbol { value: name } = &args[0] {
         env.insert(name.clone(), value.clone());
     }
 
@@ -180,13 +180,13 @@ pub fn eval_def(args: &[Box<Node>], env: &mut Environment) -> Result<Value, Eval
 }
 
 /// Evaluate defn (named function definition)
-pub fn eval_defn(args: &[Box<Node>], env: &mut Environment) -> Result<Value, EvalError> {
+pub fn eval_defn(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
     if args.len() < 3 {
         return Err(EvalError::ArityError("defn".to_string(), 3, args.len()));
     }
 
     // First argument must be a symbol (the function name)
-    let _name = match args[0].as_ref() {
+    let _name = match &args[0] {
         Node::Symbol { value } => value,
         _ => {
             return Err(EvalError::TypeError(
@@ -196,11 +196,11 @@ pub fn eval_defn(args: &[Box<Node>], env: &mut Environment) -> Result<Value, Eva
     };
 
     // Second argument should be a vector of parameters
-    let params = match args[1].as_ref() {
+    let params = match &args[1] {
         Node::Vector { root } => {
             let mut param_names = Vec::new();
             for param_node in root {
-                match param_node.as_ref() {
+                match param_node {
                     Node::Symbol { value } => param_names.push(value.clone()),
                     _ => {
                         return Err(EvalError::TypeError(
@@ -220,7 +220,7 @@ pub fn eval_defn(args: &[Box<Node>], env: &mut Environment) -> Result<Value, Eva
 
     // Rest of arguments form the function body (for now, just take the first one)
     let body = if args.len() == 3 {
-        args[2].clone()
+        Box::new(args[2].clone())
     } else {
         // Multiple body expressions - wrap in an implicit do (not implemented yet)
         return Err(EvalError::InvalidOperation(
@@ -236,7 +236,7 @@ pub fn eval_defn(args: &[Box<Node>], env: &mut Environment) -> Result<Value, Eva
     };
 
     // Store the function in the environment
-    if let Node::Symbol { value: name } = args[0].as_ref() {
+    if let Node::Symbol { value: name } = &args[0] {
         env.insert(name.clone(), func_value.clone());
     }
 

@@ -6,7 +6,7 @@ use super::{CompileContext, CompileError};
 
 /// Compile a let binding expression
 pub fn compile_let(
-    args: &[Box<Node>],
+    args: &[Node],
     program: &mut IRProgram,
     context: &mut CompileContext,
 ) -> Result<(), CompileError> {
@@ -15,7 +15,7 @@ pub fn compile_let(
     }
 
     // First argument should be a vector of bindings [var1 val1 var2 val2 ...]
-    let bindings = match args[0].as_ref() {
+    let bindings = match &args[0] {
         Node::Vector { root } => root,
         _ => {
             return Err(CompileError::InvalidExpression(
@@ -40,7 +40,7 @@ pub fn compile_let(
         let val_node = &chunk[1];
 
         // Variable must be a symbol
-        let var_name = match var_node.as_ref() {
+        let var_name = match var_node {
             Node::Symbol { value } => value,
             _ => {
                 return Err(CompileError::InvalidExpression(

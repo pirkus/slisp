@@ -30,10 +30,6 @@ pub enum IRInstruction {
     // Function operations
     DefineFunction(String, usize, usize), // (name, param_count, start_address)
     Call(String, usize),                  // (function_name, arg_count)
-    CallIndirect(usize),                  // Call function at address (arg_count on stack)
-    PushFrame(usize),                     // Create new stack frame with N local slots
-    PopFrame,                             // Restore previous stack frame
-    StoreParam(usize),                    // Store parameter in current frame
     LoadParam(usize),                     // Load parameter from current frame
 
     // Program flow
@@ -74,10 +70,6 @@ impl IRProgram {
 
     pub fn set_entry_point(&mut self, name: String) {
         self.entry_point = Some(name);
-    }
-
-    pub fn get_function(&self, name: &str) -> Option<&FunctionInfo> {
-        self.functions.iter().find(|f| f.name == name)
     }
 
     pub fn len(&self) -> usize {

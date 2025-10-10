@@ -3,9 +3,6 @@
 
 use crate::ir::FunctionInfo;
 
-/// System V ABI parameter registers (in order)
-pub const PARAM_REGISTERS: [&str; 6] = ["RDI", "RSI", "RDX", "RCX", "R8", "R9"];
-
 /// Generate function prologue following System V ABI
 /// - Save old base pointer
 /// - Set up new stack frame
@@ -47,10 +44,10 @@ pub fn generate_prologue(func_info: &FunctionInfo) -> Vec<u8> {
         &[0x4c, 0x89, 0x4d], // mov [rbp+offset], r9
     ];
 
-    for i in 0..func_info.param_count.min(6) {
+    for (i, &reg_code) in param_reg_codes.iter().enumerate().take(func_info.param_count.min(6)) {
         // Store param at [rbp - 8*(i+1)]
         let offset = 8 * (i + 1);
-        code.extend_from_slice(param_reg_codes[i]);
+        code.extend_from_slice(reg_code);
         code.push((-(offset as i8)) as u8);
     }
 
