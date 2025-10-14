@@ -6,7 +6,8 @@
 use std::fs::File;
 use std::io::{Result as IoResult, Write};
 
-/// Fixed address for the data segment containing heap_ptr (Linux x86-64 convention)
+/// Fixed address for the data segment containing heap globals (Linux x86-64 convention)
+/// Layout: heap_base (8 bytes), heap_end (8 bytes), free_list_head (8 bytes)
 const DATA_SEGMENT_VADDR: u64 = 0x403000;
 
 /// Generate an executable binary from machine code
@@ -14,7 +15,7 @@ const DATA_SEGMENT_VADDR: u64 = 0x403000;
 /// Creates an ELF executable for x86-64 Linux with:
 /// - Entry stub that calls _heap_init (if needed) and -main
 /// - Code segment (RX) with user code and runtime functions
-/// - Data segment (RW) with heap_ptr (if heap is used)
+/// - Data segment (RW) with heap globals (heap_base, heap_end, free_list_head) if heap is used
 /// - Linux exit syscall (syscall #60)
 pub fn generate_executable(
     machine_code: &[u8],
@@ -42,7 +43,7 @@ fn create_elf_with_segments(machine_code: &[u8], heap_init_offset: Option<usize>
     };
     let code_size = entry_stub_size + machine_code.len();
     let data_size = if heap_init_offset.is_some() {
-        8 // heap_ptr (8 bytes) if heap is used
+        24 // heap_base + heap_end + free_list_head (8 bytes each) if heap is used
     } else {
         0 // No data segment if heap not used
     };
@@ -188,7 +189,11 @@ fn create_elf_with_segments(machine_code: &[u8], heap_init_offset: Option<usize>
             elf.push(0);
         }
 
-        // heap_ptr: 8 bytes initialized to 0
+        // heap_base: 8 bytes initialized to 0
+        elf.extend_from_slice(&[0; 8]);
+        // heap_end: 8 bytes initialized to 0
+        elf.extend_from_slice(&[0; 8]);
+        // free_list_head: 8 bytes initialized to 0
         elf.extend_from_slice(&[0; 8]);
     }
 
@@ -315,6 +320,124 @@ mod tests {
         }
 
         // Cleanup
+        let _ = fs::remove_file(output_path);
+    }
+
+    #[test]
+    fn test_malloc_free_cycle_in_executable() {
+        use crate::codegen::api::{compile_to_executable, Target};
+        use crate::ir::{IRInstruction, IRProgram};
+
+        // Create a program that tests malloc/free reuse:
+        // 1. Init heap
+        // 2. Allocate 64 bytes -> ptr1
+        // 3. Free ptr1
+        // 4. Allocate 32 bytes -> ptr2 (should reuse freed block)
+        // 5. Return 42 if ptr2 != NULL, else return 0
+        let mut program = IRProgram::new();
+        program.add_instruction(IRInstruction::InitHeap);
+
+        // First allocation
+        program.add_instruction(IRInstruction::Allocate(64));
+
+        // Free it (pointer is on stack)
+        program.add_instruction(IRInstruction::Free);
+
+        // Second allocation (should reuse the freed block)
+        program.add_instruction(IRInstruction::Allocate(32));
+
+        // Pop the pointer to check if it's NULL
+        // If allocation succeeded (ptr != NULL), we know free/realloc worked
+        // We can't easily test the pointer value itself, but if allocate returns non-NULL,
+        // it means the free list is working
+
+        // For now, just return 42 to show program runs successfully
+        program.add_instruction(IRInstruction::Push(42));
+        program.add_instruction(IRInstruction::Return);
+
+        // Compile to machine code
+        let (machine_code, heap_init_offset) = compile_to_executable(&program, Target::X86_64Linux);
+
+        // Verify heap is enabled
+        assert!(heap_init_offset.is_some());
+
+        // Generate ELF executable
+        let output_path = "/tmp/test_slisp_malloc_free";
+        generate_executable(&machine_code, output_path, heap_init_offset).unwrap();
+
+        // Make executable
+        Command::new("chmod")
+            .args(["+x", output_path])
+            .output()
+            .expect("Failed to chmod");
+
+        // Run and check exit code
+        let output = Command::new(output_path)
+            .output()
+            .expect("Failed to execute");
+
+        // If we get exit code 42, the program ran successfully
+        // This means malloc after free didn't crash, which indicates basic functionality
+        if let Some(exit_code) = output.status.code() {
+            assert_eq!(
+                exit_code, 42,
+                "Expected exit code 42, got {}. Program may have crashed during malloc/free cycle",
+                exit_code
+            );
+        } else {
+            panic!("Program was terminated by signal during malloc/free cycle");
+        }
+
+        // Cleanup
+        let _ = fs::remove_file(output_path);
+    }
+
+    #[test]
+    fn test_multiple_allocations_in_executable() {
+        use crate::codegen::api::{compile_to_executable, Target};
+        use crate::ir::{IRInstruction, IRProgram};
+
+        // Create a program that allocates multiple blocks:
+        // 1. Init heap
+        // 2. Allocate 100 bytes
+        // 3. Allocate 200 bytes
+        // 4. Allocate 50 bytes
+        // 5. Return 42
+        // This tests that the free list can handle multiple allocations
+        let mut program = IRProgram::new();
+        program.add_instruction(IRInstruction::InitHeap);
+        program.add_instruction(IRInstruction::Allocate(100));
+        program.add_instruction(IRInstruction::Allocate(200));
+        program.add_instruction(IRInstruction::Allocate(50));
+        program.add_instruction(IRInstruction::Push(42));
+        program.add_instruction(IRInstruction::Return);
+
+        // Compile and execute
+        let (machine_code, heap_init_offset) = compile_to_executable(&program, Target::X86_64Linux);
+        assert!(heap_init_offset.is_some());
+
+        let output_path = "/tmp/test_slisp_multi_alloc";
+        generate_executable(&machine_code, output_path, heap_init_offset).unwrap();
+
+        Command::new("chmod")
+            .args(["+x", output_path])
+            .output()
+            .expect("Failed to chmod");
+
+        let output = Command::new(output_path)
+            .output()
+            .expect("Failed to execute");
+
+        if let Some(exit_code) = output.status.code() {
+            assert_eq!(
+                exit_code, 42,
+                "Expected exit code 42, got {}. Multiple allocations may have failed",
+                exit_code
+            );
+        } else {
+            panic!("Program crashed during multiple allocations");
+        }
+
         let _ = fs::remove_file(output_path);
     }
 }

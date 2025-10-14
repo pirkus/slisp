@@ -1,4 +1,4 @@
-use crate::domain::{Node, Primitive};
+use super::{Node, Primitive};
 
 pub struct AstParser;
 
@@ -444,5 +444,211 @@ mod tests {
     #[should_panic]
     fn parse_unterminated_string() {
         AstParser::parse_sexp_new_domain(b"\"hello", &mut 0);
+    }
+}
+
+// ============================================================================
+// Multi-expression file parsing
+// ============================================================================
+
+/// Parse all top-level expressions from file content
+///
+/// This handles:
+/// - Multiple top-level expressions
+/// - Comments (lines starting with ';')
+/// - Whitespace between expressions
+/// - Proper nesting of parentheses
+/// - String literals with escapes
+pub fn parse_file(file_content: &str) -> Result<Vec<Node>, String> {
+    let bytes = file_content.as_bytes();
+    let mut expressions = Vec::new();
+    let mut offset = 0;
+
+    while offset < bytes.len() {
+        offset = skip_whitespace(bytes, offset);
+
+        if offset >= bytes.len() {
+            break;
+        }
+
+        let start = offset;
+        offset = find_expression_end(bytes, offset)?;
+
+        let expression_text = &file_content[start..offset];
+        let mut parse_offset = 0;
+        let ast = AstParser::parse_sexp_new_domain(expression_text.as_bytes(), &mut parse_offset);
+        expressions.push(ast);
+    }
+
+    if expressions.is_empty() {
+        Err("No expressions found in file".to_string())
+    } else {
+        Ok(expressions)
+    }
+}
+
+/// Skip whitespace characters and return the next non-whitespace position
+fn skip_whitespace(bytes: &[u8], mut offset: usize) -> usize {
+    while offset < bytes.len() && is_whitespace(bytes[offset]) {
+        offset += 1;
+    }
+    offset
+}
+
+/// Find the end of a single top-level expression
+fn find_expression_end(bytes: &[u8], offset: usize) -> Result<usize, String> {
+    match bytes[offset] {
+        b'(' => find_list_end(bytes, offset),
+        b';' => {
+            // Skip comments at top level
+            let next_offset = skip_comment(bytes, offset);
+            // Recursively find the next expression after the comment
+            if next_offset < bytes.len() {
+                let next_offset = skip_whitespace(bytes, next_offset);
+                if next_offset < bytes.len() {
+                    return find_expression_end(bytes, next_offset);
+                }
+            }
+            Ok(next_offset)
+        }
+        _ => find_atom_end(bytes, offset),
+    }
+}
+
+/// Find the end of a list expression (parenthesized form)
+fn find_list_end(bytes: &[u8], mut offset: usize) -> Result<usize, String> {
+    let mut depth = 0;
+
+    while offset < bytes.len() {
+        match bytes[offset] {
+            b'(' => {
+                depth += 1;
+                offset += 1;
+            }
+            b')' => {
+                depth -= 1;
+                offset += 1;
+                if depth == 0 {
+                    return Ok(offset);
+                }
+                if depth < 0 {
+                    return Err(format!("Unmatched closing parenthesis at byte {}", offset));
+                }
+            }
+            b'"' => {
+                offset = skip_string_literal_boundary(bytes, offset)?;
+            }
+            b';' => {
+                offset = skip_comment(bytes, offset);
+            }
+            _ => {
+                offset += 1;
+            }
+        }
+    }
+
+    if depth > 0 {
+        Err(format!("Unclosed parenthesis: expected {} more ')'", depth))
+    } else {
+        Ok(offset)
+    }
+}
+
+/// Find the end of an atom (number, symbol, or other non-list token)
+fn find_atom_end(bytes: &[u8], mut offset: usize) -> Result<usize, String> {
+    while offset < bytes.len() {
+        let b = bytes[offset];
+        if is_whitespace(b) || b == b'(' || b == b')' || b == b';' {
+            break;
+        }
+        offset += 1;
+    }
+    Ok(offset)
+}
+
+/// Skip a string literal boundary (for finding expression ends)
+/// This is different from parse_string_literal - it just skips past the string
+fn skip_string_literal_boundary(bytes: &[u8], mut offset: usize) -> Result<usize, String> {
+    // Skip opening quote
+    offset += 1;
+
+    while offset < bytes.len() {
+        match bytes[offset] {
+            b'\\' => {
+                // Skip escape sequence (backslash + next character)
+                offset += 2;
+                if offset > bytes.len() {
+                    return Err("Unterminated string: escape sequence at end of input".to_string());
+                }
+            }
+            b'"' => {
+                // Found closing quote
+                offset += 1;
+                return Ok(offset);
+            }
+            _ => {
+                offset += 1;
+            }
+        }
+    }
+
+    Err("Unterminated string literal".to_string())
+}
+
+/// Skip a comment (from ';' to end of line)
+fn skip_comment(bytes: &[u8], mut offset: usize) -> usize {
+    while offset < bytes.len() && bytes[offset] != b'\n' {
+        offset += 1;
+    }
+    offset
+}
+
+/// Check if a byte is ASCII whitespace
+#[inline]
+fn is_whitespace(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r')
+}
+
+#[cfg(test)]
+mod file_parser_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_multiple_expressions() {
+        let input = "(defn add [x y] (+ x y))\n(defn -main [] (add 3 4))";
+        let result = parse_file(input);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_parse_with_comments() {
+        let input = "; This is a comment\n(+ 1 2)\n; Another comment\n(* 3 4)";
+        let result = parse_file(input);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_parse_empty_file() {
+        let input = "";
+        let result = parse_file(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "No expressions found in file");
+    }
+
+    #[test]
+    fn test_parse_only_whitespace() {
+        let input = "   \n\t  \n  ";
+        let result = parse_file(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_with_inline_comments() {
+        let input = "(+ 1 2) ; inline comment\n(* 3 4)";
+        let result = parse_file(input);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
     }
 }

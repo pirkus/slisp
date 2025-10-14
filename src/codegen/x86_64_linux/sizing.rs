@@ -43,6 +43,7 @@ pub fn instruction_size(instruction: &IRInstruction, has_locals: bool) -> usize 
         // Memory allocation
         IRInstruction::InitHeap => 0, // Generated as runtime function, not inline
         IRInstruction::Allocate(_) => 10, // mov rdi, size + call _allocate + push rax
+        IRInstruction::Free => 6,     // pop rdi + call _free
     }
 }
 

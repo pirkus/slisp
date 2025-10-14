@@ -37,6 +37,7 @@ impl X86CodeGen {
             runtime_addresses: RuntimeAddresses {
                 heap_init: None,
                 allocate: None,
+                free: None,
             },
         }
     }
@@ -61,6 +62,18 @@ impl X86CodeGen {
         } else {
             // Placeholder if allocate address not yet known
             instructions::generate_allocate_inline(size, 0)
+        }
+    }
+
+    /// Generate code to call _free runtime function
+    fn generate_free_code(&self, current_pos: usize) -> Vec<u8> {
+        if let Some(free_addr) = self.runtime_addresses.free {
+            // Account for the size of the pop instruction (1 byte)
+            let offset = (free_addr as i32) - ((current_pos + 1 + 5) as i32);
+            instructions::generate_free_inline(offset)
+        } else {
+            // Placeholder if free address not yet known
+            instructions::generate_free_inline(0)
         }
     }
 
@@ -199,6 +212,11 @@ impl X86CodeGen {
                 self.generate_allocate_code(*size, current_pos)
             }
 
+            IRInstruction::Free => {
+                let current_pos = self.code.len();
+                self.generate_free_code(current_pos)
+            }
+
             IRInstruction::Return => {
                 let mut code = instructions::generate_return();
                 code.extend(abi::generate_epilogue());
@@ -292,6 +310,18 @@ impl X86CodeGen {
                             .extend(instructions::generate_allocate_inline(*size, 0));
                     }
                 }
+                IRInstruction::Free => {
+                    // Call _free runtime function
+                    if let Some(free_addr) = self.runtime_addresses.free {
+                        let current_pos = self.code.len();
+                        // Account for the size of the pop instruction (1 byte)
+                        let offset = (free_addr as i32) - ((current_pos + 1 + 5) as i32);
+                        self.code.extend(instructions::generate_free_inline(offset));
+                    } else {
+                        // Placeholder if free address not yet known
+                        self.code.extend(instructions::generate_free_inline(0));
+                    }
+                }
                 IRInstruction::Return => {
                     self.code.extend(instructions::generate_return());
                     // Always add epilogue since we always add prologue
@@ -336,19 +366,23 @@ pub fn compile_to_executable(program: &IRProgram) -> (Vec<u8>, Option<usize>) {
         let heap_init_offset = code_pass1.len();
         let heap_init_code = runtime::generate_heap_init();
         let allocate_offset = heap_init_offset + heap_init_code.len();
+        let allocate_code = runtime::generate_allocate();
+        let free_offset = allocate_offset + allocate_code.len();
 
         // Pass 2: Generate code with correct runtime addresses
         let mut codegen_pass2 = X86CodeGen::new();
         codegen_pass2.runtime_addresses.heap_init = Some(heap_init_offset);
         codegen_pass2.runtime_addresses.allocate = Some(allocate_offset);
+        codegen_pass2.runtime_addresses.free = Some(free_offset);
 
         let mut code = codegen_pass2.generate(program);
 
         // Append runtime support functions at the end
         code.extend(heap_init_code);
-        code.extend(runtime::generate_allocate());
+        code.extend(allocate_code);
+        code.extend(runtime::generate_free());
 
-        // Note: heap_ptr lives in data segment (0x403000), handled by ELF generator
+        // Note: heap globals (heap_base, heap_end, free_list_head) live in data segment (0x403000-0x403018), handled by ELF generator
 
         (code, Some(heap_init_offset))
     } else {
@@ -428,5 +462,36 @@ mod tests {
         // Verify heap_offset is None when heap instructions are not used
         assert!(heap_offset.is_none());
         assert!(!machine_code.is_empty());
+    }
+
+    #[test]
+    fn test_free_instruction_included() {
+        // Test that Free instruction generates code
+        let mut program = IRProgram::new();
+        program.add_instruction(IRInstruction::InitHeap);
+        program.add_instruction(IRInstruction::Allocate(64));
+        program.add_instruction(IRInstruction::Free); // Free the allocated block
+        program.add_instruction(IRInstruction::Push(42));
+        program.add_instruction(IRInstruction::Return);
+
+        let (machine_code, heap_offset) = compile_to_executable(&program);
+
+        // Verify heap_offset is set
+        assert!(heap_offset.is_some());
+
+        // Verify machine code is generated and includes all three runtime functions
+        assert!(!machine_code.is_empty());
+
+        // The code should be longer than without Free instruction
+        let mut program_without_free = IRProgram::new();
+        program_without_free.add_instruction(IRInstruction::InitHeap);
+        program_without_free.add_instruction(IRInstruction::Allocate(64));
+        program_without_free.add_instruction(IRInstruction::Push(42));
+        program_without_free.add_instruction(IRInstruction::Return);
+
+        let (code_without_free, _) = compile_to_executable(&program_without_free);
+
+        // Code with Free should be longer (includes free instruction + _free runtime function)
+        assert!(machine_code.len() > code_without_free.len());
     }
 }

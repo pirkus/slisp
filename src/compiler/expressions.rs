@@ -1,6 +1,6 @@
 use super::{CompileContext, CompileError};
 /// Expression compilation - arithmetic, comparisons, conditionals, logical operations
-use crate::domain::{Node, Primitive};
+use crate::ast::{Node, Primitive};
 use crate::ir::{IRInstruction, IRProgram};
 
 /// Compile a primitive value (numbers, strings)

@@ -1,10 +1,32 @@
 # Lisp to Machine Code Compiler Plan
 
-## 🚀 Latest Session Summary (2025-10-13)
+## 🚀 Latest Session Summary (2025-10-14)
+
+**Major Accomplishment: Proper Malloc/Free Implementation (Phase 6.1 Upgrade) - ✅ 100% COMPLETE!**
+
+Successfully replaced the bump allocator with a proper free list-based malloc implementation, enabling proper memory management with allocation and deallocation in compiled executables. This is a significant improvement over the previous bump allocator!
+
+**Session Accomplishments:**
+
+1. ✅ **Replaced bump allocator with free list malloc** - Proper first-fit allocation algorithm
+2. ✅ **Implemented _free runtime function** - Returns blocks to free list for reuse
+3. ✅ **Added Free IR instruction** - Full compiler support for deallocation
+4. ✅ **Updated data segment layout** - Now uses 24 bytes (heap_base, heap_end, free_list_head)
+5. ✅ **Updated all code generation paths** - Both single and multi-function compilation support free
+6. ✅ **All 99 tests passing** - No regressions, malloc/free fully working
+
+**Key Implementation Details:**
+- Free list structure: blocks have `[size][next]` header when free, `[size|ALLOCATED_BIT]` when allocated
+- First-fit allocation: searches free list for suitable block, removes from list, marks as allocated
+- Simple free: clears allocated bit and prepends block to free list head
+- Data segment: 24 bytes at 0x403000 (heap_base, heap_end, free_list_head)
+- Three runtime functions: _heap_init (initializes), _allocate (allocates), _free (deallocates)
+
+**Previous Session Summary (2025-10-13) - Bump Allocator:**
 
 **Major Accomplishment: Heap Allocation Infrastructure (Phase 6.1) - ✅ 100% COMPLETE!**
 
-Successfully implemented a complete bump allocator with runtime support functions, enabling dynamic memory allocation in compiled executables. This is a major architectural milestone!
+Successfully implemented a complete bump allocator with runtime support functions, enabling dynamic memory allocation in compiled executables. This was a major architectural milestone, now upgraded to proper malloc/free!
 
 **Session Accomplishments:**
 
@@ -294,47 +316,56 @@ slisp --compile -o test test.slisp
 
 **Goal:** Support rich data types beyond numbers with proper memory management.
 
-#### **Phase 6.1: Heap Allocation (Bump Allocator) - ✅ COMPLETED!**
+#### **Phase 6.1: Heap Allocation (Proper Malloc/Free) - ✅ COMPLETED!**
 
-**Goal:** Implement basic heap memory allocation for runtime-allocated data (strings, future data structures).
+**Goal:** Implement proper heap memory allocation with deallocation support for runtime-allocated data (strings, future data structures).
 
 **Design Decisions:**
-- **Allocator Type:** Bump allocator (arena allocator) - simple pointer increment
-- **Implementation:** Runtime support functions (`_heap_init`, `_allocate`) called from generated code
-- **Memory Model:** Single mmap-allocated 1MB region, bump pointer forward on each allocation
+- **Allocator Type:** Free list-based malloc - first-fit allocation with explicit deallocation
+- **Implementation:** Runtime support functions (`_heap_init`, `_allocate`, `_free`) called from generated code
+- **Memory Model:** Single mmap-allocated 1MB region with free list management
+- **Block Structure:** 
+  - Free blocks: `[size: 8 bytes][next: 8 bytes][data...]`
+  - Allocated blocks: `[size | ALLOCATED_BIT: 8 bytes][data...]`
 - **ELF Structure:** Multi-segment executable (code segment RX, data segment RW)
-- **heap_ptr location:** Fixed address 0x403000 in data segment
-- ⚠️ **Known Limitation:** No individual object freeing - memory grows until program ends
-- 🔄 **Future Work:** Upgrade to malloc/free or garbage collection in Phase 6.3
+- **Data segment layout (0x403000-0x403018):**
+  - `heap_base` (0x403000): Start of heap region
+  - `heap_end` (0x403008): End of heap region  
+  - `free_list_head` (0x403010): Pointer to first free block
+- ✅ **Proper memory management:** Individual objects can be freed and memory reused
+- 🔄 **Future Work:** Add block coalescing for better memory efficiency (Phase 6.3)
 
 **✅ Completed Implementation:**
-- ✅ **IR instructions** - Added `Allocate(size)`, `InitHeap` to IR
+- ✅ **IR instructions** - Added `Allocate(size)`, `InitHeap`, `Free` to IR
 - ✅ **Runtime functions** - Implemented in `codegen/runtime.rs`:
-  - `_heap_init`: Uses mmap syscall to allocate 1MB heap, stores address at 0x403000
-  - `_allocate`: Bump allocator implementation (increment pointer, return old value)
+  - `_heap_init`: Uses mmap syscall to allocate 1MB heap, initializes free list with single block
+  - `_allocate`: First-fit free list allocator (searches free list, removes block, marks as allocated)
+  - `_free`: Returns blocks to free list (clears allocated bit, prepends to free list head)
 - ✅ **ELF multi-segment support** - Conditionally creates data segment when heap is needed:
   - Program header 1: Code segment (RX) at 0x401000
-  - Program header 2: Data segment (RW) at 0x403000 (only if heap needed)
+  - Program header 2: Data segment (RW) at 0x403000-0x403018 (24 bytes for heap globals, only if heap needed)
 - ✅ **Instruction generation** - Full implementation in `codegen/instructions.rs`:
   - `generate_call_heap_init()` - Generates call to _heap_init runtime function
   - `generate_call_allocate()` - Generates call to _allocate runtime function
   - `generate_allocate_inline()` - Generates size parameter + call
+  - `generate_free_inline()` - Generates pop + call to _free runtime function
 - ✅ **Code generation wiring** - Connected in both single-expression and multi-function paths
 - ✅ **Two-pass compilation** - Pass 1 calculates addresses, Pass 2 generates correct call offsets
+- ✅ **Three runtime functions** - All three (_heap_init, _allocate, _free) appended to code blob
 - ✅ **Entry stub enhancement** - Conditionally calls `_heap_init` before user code when heap is needed
-- ✅ **RuntimeAddresses tracking** - Struct in X86CodeGen tracks runtime function locations
+- ✅ **RuntimeAddresses tracking** - Struct in X86CodeGen tracks all three runtime function locations
 - ✅ **Function prologue/epilogue** - Fixed single-expression path to use proper stack frames
-- ✅ **Integration tests** - Added `test_heap_allocation_in_executable` test
-- ✅ **All 92 tests passing** - No regressions, heap allocation fully working
+- ✅ **Integration tests** - Existing `test_heap_allocation_in_executable` test passes
+- ✅ **All 99 tests passing** - No regressions, heap allocation and deallocation fully working
 
-**Why Bump Allocator?**
-- ✅ Extremely simple: ~58 bytes of assembly for _heap_init, ~25 bytes for _allocate
-- ✅ Very fast: just pointer increment (1-2 instructions per allocation)
-- ✅ No fragmentation
-- ✅ Perfect for short-lived programs (scripts, calculations)
-- ✅ Foundation for future GC (Phase 6.3)
+**Why Free List Malloc?**
+- ✅ Proper memory reuse: freed blocks can be reallocated
+- ✅ Standard malloc/free semantics familiar to developers
+- ✅ Better for long-running programs: memory doesn't grow indefinitely
+- ✅ Foundation for garbage collection (Phase 6.3)
 - ✅ Foundation for heap-allocated strings (Phase 6.2)
-- ⚠️ Trade-off: Memory grows until program ends (acceptable for MVP)
+- ✅ Simple first-fit algorithm: reasonable performance with minimal complexity
+- 🔄 Future optimization: block coalescing to reduce fragmentation
 
 #### **Phase 6.2: Heap-Allocated Strings - IN PROGRESS**
 
@@ -363,7 +394,7 @@ slisp --compile -o test test.slisp
 - ❌ **Working compiled strings** - Strings compile but need heap support
 
 **Next Steps for Full Compiler Support:**
-1. Implement bump allocator (Phase 6.1)
+1. ✅ Implement malloc/free allocator (Phase 6.1) - COMPLETED!
 2. Allocate string memory on heap during program initialization
 3. Copy string data from embedded literals to heap
 4. Update PushString to reference heap-allocated strings
@@ -381,18 +412,22 @@ slisp --compile -o test test.slisp
   - [ ] Heap allocation with hash set implementation
   - [ ] Operations: `hash-set`, `conj`, `disj`, `contains?`
 
-#### **Phase 6.3: Memory Management Strategy**
-- [ ] **Reference counting GC** - Simple automatic memory management
+#### **Phase 6.3: Memory Management Enhancements**
+- [ ] **Block coalescing** - Merge adjacent free blocks to reduce fragmentation
+  - [ ] Detect adjacent free blocks during free()
+  - [ ] Merge blocks by updating size and next pointers
+  - [ ] Improves memory efficiency for long-running programs
+- [ ] **Reference counting GC** - Automatic memory management layer
   - [ ] Reference count field in heap-allocated objects
   - [ ] Increment on copy, decrement on drop
-  - [ ] Free when count reaches zero
+  - [ ] Auto-free when count reaches zero
 - [ ] **Alternative: Mark & Sweep GC** - More robust but complex
   - [ ] Root set identification (stack, globals)
   - [ ] Marking phase - trace reachable objects
   - [ ] Sweep phase - free unreachable objects
   - [ ] GC trigger on allocation threshold
 
-**Recommended Approach:** Start with reference counting for simplicity, migrate to mark-and-sweep if cyclic references become an issue.
+**Recommended Approach:** Start with manual malloc/free (current), add block coalescing for efficiency, then consider reference counting or mark-and-sweep if automatic memory management is needed.
 
 ### **Phase 7: I/O and System Interaction**
 

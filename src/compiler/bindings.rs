@@ -1,6 +1,6 @@
 use super::{CompileContext, CompileError};
 /// Variable binding compilation (let expressions)
-use crate::domain::Node;
+use crate::ast::Node;
 use crate::ir::{IRInstruction, IRProgram};
 
 /// Compile a let binding expression

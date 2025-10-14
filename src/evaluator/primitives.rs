@@ -1,6 +1,6 @@
 use super::{Environment, EvalError, Value};
 /// Primitive operations - arithmetic and comparisons
-use crate::domain::Node;
+use crate::ast::Node;
 
 /// Evaluate arithmetic operations (+, -, *, /)
 pub fn eval_arithmetic_op<F>(

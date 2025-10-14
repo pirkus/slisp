@@ -1,5 +1,5 @@
 /// REPL (Read-Eval-Print-Loop) for both interpreter and compiler modes
-use crate::ast_parser::{AstParser, AstParserTrt};
+use crate::ast::{AstParser, AstParserTrt};
 use crate::codegen::{compile_to_executable, detect_host_target};
 use crate::compiler::{compile_to_ir, CompileError};
 use crate::evaluator::{eval_node, EvalError, Value};

@@ -6,7 +6,7 @@
 mod primitives;
 mod special_forms;
 
-use crate::domain::{Node, Primitive};
+use crate::ast::{Node, Primitive};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -124,7 +124,7 @@ fn eval_vector(_nodes: &[Node], _env: &Environment) -> Result<Value, EvalError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast_parser::{AstParser, AstParserTrt};
+    use crate::ast::{AstParser, AstParserTrt};
 
     fn parse_and_eval(input: &str) -> Result<Value, EvalError> {
         let ast = AstParser::parse_sexp_new_domain(input.as_bytes(), &mut 0);

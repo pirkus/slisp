@@ -1,3 +1,13 @@
+/// AST (Abstract Syntax Tree) module
+///
+/// This module defines the AST data structures and parser for SLisp.
+/// - AST node types (Node, Primitive)
+/// - Parser to convert source text to AST
+pub mod parser;
+
+// Re-export the main types for convenience
+pub use parser::{parse_file, AstParser, AstParserTrt};
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum Primitive {
     Number(usize),

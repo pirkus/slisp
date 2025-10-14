@@ -1,6 +1,6 @@
 use super::{Environment, EvalError, Value};
 /// Special forms - if, let, fn, def, defn
-use crate::domain::Node;
+use crate::ast::Node;
 
 /// Evaluate if conditional
 pub fn eval_if(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {

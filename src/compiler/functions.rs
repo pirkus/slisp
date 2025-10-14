@@ -1,6 +1,6 @@
 use super::{CompileContext, CompileError};
 /// Function definition and call compilation
-use crate::domain::Node;
+use crate::ast::Node;
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
 
 /// Compile a function definition (defn)

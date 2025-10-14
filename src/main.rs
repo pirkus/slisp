@@ -1,8 +1,7 @@
-mod ast_parser;
+mod ast;
 mod cli;
 mod codegen;
 mod compiler;
-mod domain;
 mod evaluator;
 mod ir;
 mod jit_runner;

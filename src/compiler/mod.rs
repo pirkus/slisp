@@ -12,7 +12,7 @@ mod functions;
 
 pub use context::CompileContext;
 
-use crate::domain::Node;
+use crate::ast::Node;
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
 
 #[derive(Debug, PartialEq)]
@@ -245,7 +245,7 @@ fn compile_list(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast_parser::{AstParser, AstParserTrt};
+    use crate::ast::{AstParser, AstParserTrt};
 
     fn compile_expression(input: &str) -> Result<IRProgram, CompileError> {
         let ast = AstParser::parse_sexp_new_domain(input.as_bytes(), &mut 0);

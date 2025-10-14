@@ -37,6 +37,7 @@ pub enum IRInstruction {
     // Memory allocation
     InitHeap,        // Initialize heap (mmap syscall to get memory region)
     Allocate(usize), // Allocate N bytes, push address onto stack
+    Free,            // Pop address from stack and free it
 
     // Program flow
     Return, // Return top of stack as program result
@@ -82,7 +83,6 @@ impl IRProgram {
 
     /// Add a string literal and return its index
     pub fn add_string(&mut self, s: String) -> usize {
-        // Check if string already exists
         if let Some(index) = self
             .string_literals
             .iter()
@@ -90,7 +90,7 @@ impl IRProgram {
         {
             return index;
         }
-        // Add new string
+
         let index = self.string_literals.len();
         self.string_literals.push(s);
         index

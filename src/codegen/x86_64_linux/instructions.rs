@@ -183,6 +183,21 @@ pub fn generate_allocate_inline(size: usize, allocate_offset: i32) -> Vec<u8> {
     code
 }
 
+/// Generate machine code for Free instruction
+/// Pops address from stack, puts it in RDI, calls _free
+pub fn generate_free_inline(free_offset: i32) -> Vec<u8> {
+    let mut code = Vec::new();
+
+    // pop rdi (get address from stack into first argument register)
+    code.push(0x5f);
+
+    // call _free
+    code.push(0xe8); // call relative
+    code.extend_from_slice(&free_offset.to_le_bytes());
+
+    code
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
