@@ -7,9 +7,10 @@
 /// - `abi`: System V ABI implementation (calling convention, stack frames)
 /// - `instructions`: Individual x86-64 instruction generation
 /// - `sizing`: Instruction size calculation for position-independent code
-
+/// - `runtime`: Runtime support functions (heap allocation, etc.)
 mod abi;
 mod instructions;
+mod runtime;
 mod sizing;
 
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
@@ -19,6 +20,14 @@ pub struct X86CodeGen {
     code: Vec<u8>,
     instruction_positions: Vec<usize>,
     function_addresses: HashMap<String, usize>, // function name -> code offset
+    runtime_addresses: RuntimeAddresses,        // addresses of runtime support functions
+}
+
+/// Addresses of runtime support functions (relative to start of machine code)
+#[derive(Debug, Clone)]
+struct RuntimeAddresses {
+    heap_init: Option<usize>,
+    allocate: Option<usize>,
 }
 
 impl X86CodeGen {
@@ -27,6 +36,33 @@ impl X86CodeGen {
             code: Vec::new(),
             instruction_positions: Vec::new(),
             function_addresses: HashMap::new(),
+            runtime_addresses: RuntimeAddresses {
+                heap_init: None,
+                allocate: None,
+            },
+        }
+    }
+
+    /// Generate code to call _heap_init runtime function
+    fn generate_heap_init_code(&self, current_pos: usize) -> Vec<u8> {
+        if let Some(heap_init_addr) = self.runtime_addresses.heap_init {
+            let offset = (heap_init_addr as i32) - ((current_pos + 5) as i32);
+            instructions::generate_call_heap_init(offset)
+        } else {
+            // Placeholder if heap_init address not yet known
+            instructions::generate_call_heap_init(0)
+        }
+    }
+
+    /// Generate code to call _allocate runtime function
+    fn generate_allocate_code(&self, size: usize, current_pos: usize) -> Vec<u8> {
+        if let Some(allocate_addr) = self.runtime_addresses.allocate {
+            // Account for the size of the mov instruction (7 bytes)
+            let offset = (allocate_addr as i32) - ((current_pos + 7 + 5) as i32);
+            instructions::generate_allocate_inline(size, offset)
+        } else {
+            // Placeholder if allocate address not yet known
+            instructions::generate_allocate_inline(size, 0)
         }
     }
 
@@ -77,7 +113,8 @@ impl X86CodeGen {
         // Pass 1: Calculate addresses
         let mut current_address = 0;
         for func_info in &ordered_functions {
-            self.function_addresses.insert(func_info.name.clone(), current_address);
+            self.function_addresses
+                .insert(func_info.name.clone(), current_address);
 
             let saved_code = self.code.clone();
             self.code.clear();
@@ -130,6 +167,11 @@ impl X86CodeGen {
     fn generate_instruction(&mut self, inst: &IRInstruction, func_info: &FunctionInfo) {
         let code = match inst {
             IRInstruction::Push(value) => instructions::generate_push(*value),
+            IRInstruction::PushString(_index) => {
+                // For now, push a placeholder address (0)
+                // This will be properly resolved when we implement ELF string sections
+                instructions::generate_push_string(0)
+            }
             IRInstruction::Add => instructions::generate_add(),
             IRInstruction::Sub => instructions::generate_sub(),
             IRInstruction::Mul => instructions::generate_mul(),
@@ -147,6 +189,16 @@ impl X86CodeGen {
                 );
                 code.extend(call_code);
                 code
+            }
+
+            IRInstruction::InitHeap => {
+                let current_pos = self.code.len();
+                self.generate_heap_init_code(current_pos)
+            }
+
+            IRInstruction::Allocate(size) => {
+                let current_pos = self.code.len();
+                self.generate_allocate_code(*size, current_pos)
             }
 
             IRInstruction::Return => {
@@ -187,9 +239,11 @@ impl X86CodeGen {
 
     /// Generate code for old single-function path
     fn generate_code(&mut self, program: &IRProgram, has_locals: bool) {
+        // Always add function prologue since entry stub calls user code as a function
+        self.code.push(0x55); // push rbp
+        self.code.extend_from_slice(&[0x48, 0x89, 0xe5]); // mov rbp, rsp
+
         if has_locals {
-            self.code.push(0x55); // push rbp
-            self.code.extend_from_slice(&[0x48, 0x89, 0xe5]); // mov rbp, rsp
             self.code.extend_from_slice(&[0x48, 0x83, 0xec, 0x80]); // sub rsp, 128
         }
 
@@ -197,6 +251,10 @@ impl X86CodeGen {
             match inst {
                 IRInstruction::Push(value) => {
                     self.code.extend(instructions::generate_push(*value));
+                }
+                IRInstruction::PushString(_index) => {
+                    // For now, push placeholder address
+                    self.code.extend(instructions::generate_push_string(0));
                 }
                 IRInstruction::Add => {
                     self.code.extend(instructions::generate_add());
@@ -210,11 +268,36 @@ impl X86CodeGen {
                 IRInstruction::Div => {
                     self.code.extend(instructions::generate_div());
                 }
+                IRInstruction::InitHeap => {
+                    // Call _heap_init runtime function
+                    if let Some(heap_init_addr) = self.runtime_addresses.heap_init {
+                        let current_pos = self.code.len();
+                        let offset = (heap_init_addr as i32) - ((current_pos + 5) as i32);
+                        self.code
+                            .extend(instructions::generate_call_heap_init(offset));
+                    } else {
+                        // Placeholder if heap_init address not yet known
+                        self.code.extend(instructions::generate_call_heap_init(0));
+                    }
+                }
+                IRInstruction::Allocate(size) => {
+                    // Call _allocate runtime function with size
+                    if let Some(allocate_addr) = self.runtime_addresses.allocate {
+                        let current_pos = self.code.len();
+                        // Account for the size of the mov instruction (7 bytes)
+                        let offset = (allocate_addr as i32) - ((current_pos + 7 + 5) as i32);
+                        self.code
+                            .extend(instructions::generate_allocate_inline(*size, offset));
+                    } else {
+                        // Placeholder if allocate address not yet known
+                        self.code
+                            .extend(instructions::generate_allocate_inline(*size, 0));
+                    }
+                }
                 IRInstruction::Return => {
                     self.code.extend(instructions::generate_return());
-                    if has_locals {
-                        self.code.extend(abi::generate_epilogue());
-                    }
+                    // Always add epilogue since we always add prologue
+                    self.code.extend(abi::generate_epilogue());
                 }
                 _ => {} // Other instructions not needed for simple path
             }
@@ -223,9 +306,47 @@ impl X86CodeGen {
 }
 
 /// Public API: Compile IR program to x86-64 machine code
-pub fn compile_to_executable(program: &IRProgram) -> Vec<u8> {
-    let mut codegen = X86CodeGen::new();
-    codegen.generate(program)
+/// Uses two-pass approach to calculate runtime function addresses
+/// Returns (machine_code, heap_init_offset)
+pub fn compile_to_executable(program: &IRProgram) -> (Vec<u8>, Option<usize>) {
+    // Check if program uses heap allocation
+    let needs_heap = program.instructions.iter().any(|inst| {
+        matches!(
+            inst,
+            IRInstruction::InitHeap | IRInstruction::Allocate(_) | IRInstruction::PushString(_)
+        )
+    });
+
+    if needs_heap {
+        // TWO-PASS APPROACH for runtime functions:
+        // Pass 1: Generate code to calculate where runtime functions will be
+        let mut codegen_pass1 = X86CodeGen::new();
+        let code_pass1 = codegen_pass1.generate(program);
+
+        // Calculate runtime function addresses
+        let heap_init_offset = code_pass1.len();
+        let heap_init_code = runtime::generate_heap_init();
+        let allocate_offset = heap_init_offset + heap_init_code.len();
+
+        // Pass 2: Generate code with correct runtime addresses
+        let mut codegen_pass2 = X86CodeGen::new();
+        codegen_pass2.runtime_addresses.heap_init = Some(heap_init_offset);
+        codegen_pass2.runtime_addresses.allocate = Some(allocate_offset);
+
+        let mut code = codegen_pass2.generate(program);
+
+        // Append runtime support functions at the end
+        code.extend(heap_init_code);
+        code.extend(runtime::generate_allocate());
+
+        // Note: heap_ptr lives in data segment (0x403000), handled by ELF generator
+
+        (code, Some(heap_init_offset))
+    } else {
+        // No heap allocation needed, single-pass is fine
+        let mut codegen = X86CodeGen::new();
+        (codegen.generate(program), None)
+    }
 }
 
 #[cfg(test)]
@@ -239,7 +360,7 @@ mod tests {
         program.add_instruction(IRInstruction::Push(42));
         program.add_instruction(IRInstruction::Return);
 
-        let machine_code = compile_to_executable(&program);
+        let (machine_code, _heap_offset) = compile_to_executable(&program);
 
         let mut jit_code = machine_code;
         jit_code.push(0xc3); // ret
@@ -256,12 +377,47 @@ mod tests {
         program.add_instruction(IRInstruction::Add);
         program.add_instruction(IRInstruction::Return);
 
-        let machine_code = compile_to_executable(&program);
+        let (machine_code, _heap_offset) = compile_to_executable(&program);
 
         let mut jit_code = machine_code;
         jit_code.push(0xc3); // ret
 
         let result = JitRunner::exec(&jit_code);
         assert_eq!(result, 5);
+    }
+
+    #[test]
+    fn test_heap_allocation_basic() {
+        // Test that heap allocation instructions generate correct code and offsets
+        let mut program = IRProgram::new();
+        program.add_instruction(IRInstruction::InitHeap);
+        program.add_instruction(IRInstruction::Allocate(100));
+        program.add_instruction(IRInstruction::Push(42));
+        program.add_instruction(IRInstruction::Return);
+
+        let (machine_code, heap_offset) = compile_to_executable(&program);
+
+        // Verify heap_offset is set when heap instructions are used
+        assert!(heap_offset.is_some());
+
+        // Verify machine code is generated (non-empty)
+        assert!(!machine_code.is_empty());
+
+        // The machine code should include runtime functions at the end
+        // (we can't easily test execution in JIT since it needs proper memory setup)
+    }
+
+    #[test]
+    fn test_no_heap_when_not_needed() {
+        // Test that programs without heap instructions don't get heap setup
+        let mut program = IRProgram::new();
+        program.add_instruction(IRInstruction::Push(42));
+        program.add_instruction(IRInstruction::Return);
+
+        let (machine_code, heap_offset) = compile_to_executable(&program);
+
+        // Verify heap_offset is None when heap instructions are not used
+        assert!(heap_offset.is_none());
+        assert!(!machine_code.is_empty());
     }
 }

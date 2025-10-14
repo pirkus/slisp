@@ -1,5 +1,4 @@
 /// CLI commands for file compilation
-
 use crate::ast_parser::{AstParser, AstParserTrt};
 use crate::codegen::compile_to_executable;
 use crate::compiler::{compile_program, compile_to_ir};
@@ -25,10 +24,10 @@ pub fn compile_file_to_executable(input_file: &str, output_file: &str) -> Result
     };
 
     // Generate machine code
-    let machine_code = compile_to_executable(&ir_program);
+    let (machine_code, heap_init_offset) = compile_to_executable(&ir_program);
 
     // Generate ELF executable
-    match generate_elf_executable(&machine_code, output_file) {
+    match generate_elf_executable(&machine_code, output_file, heap_init_offset) {
         Ok(()) => {}
         Err(e) => return Err(format!("Failed to write executable: {}", e)),
     }
@@ -62,10 +61,10 @@ pub fn compile_to_file(expression: &str, output_file: &str) -> Result<(), String
     };
 
     // Generate machine code
-    let machine_code = compile_to_executable(&ir_program);
+    let (machine_code, heap_init_offset) = compile_to_executable(&ir_program);
 
     // Generate ELF executable
-    match generate_elf_executable(&machine_code, output_file) {
+    match generate_elf_executable(&machine_code, output_file, heap_init_offset) {
         Ok(()) => {}
         Err(e) => return Err(format!("Failed to write executable: {}", e)),
     }

@@ -1,3 +1,4 @@
+mod bindings;
 /// Compiler module - compiles AST nodes to IR
 ///
 /// This module is organized into:
@@ -5,11 +6,9 @@
 /// - expressions: Arithmetic, comparisons, conditionals, and logical operations
 /// - functions: Function definitions (defn) and function calls
 /// - bindings: Variable bindings (let expressions)
-
 mod context;
 mod expressions;
 mod functions;
-mod bindings;
 
 pub use context::CompileContext;
 
@@ -29,7 +28,7 @@ pub enum CompileError {
 pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
     let mut program = IRProgram::new();
     let mut context = CompileContext::new();
-    let instructions = compile_node(node, &mut context)?;
+    let instructions = compile_node(node, &mut context, &mut program)?;
     for instruction in instructions {
         program.add_instruction(instruction);
     }
@@ -94,20 +93,24 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
             if !root.is_empty() {
                 if let Node::Symbol { value } = &root[0] {
                     if value == "defn" {
-                        let (mut instructions, func_info) = functions::compile_defn(&root[1..], &mut context)?;
+                        let (mut instructions, func_info) =
+                            functions::compile_defn(&root[1..], &mut context, &mut program)?;
                         let start_address = program.len();
-                        
-                        if let IRInstruction::DefineFunction(ref name, ref params, _) = instructions[0] {
-                            instructions[0] = IRInstruction::DefineFunction(name.clone(), *params, start_address);
+
+                        if let IRInstruction::DefineFunction(ref name, ref params, _) =
+                            instructions[0]
+                        {
+                            instructions[0] =
+                                IRInstruction::DefineFunction(name.clone(), *params, start_address);
                         }
-                        
+
                         let updated_func_info = crate::ir::FunctionInfo {
                             name: func_info.name,
                             param_count: func_info.param_count,
                             start_address,
                             local_count: func_info.local_count,
                         };
-                        
+
                         for instruction in instructions {
                             program.add_instruction(instruction);
                         }
@@ -117,8 +120,8 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
                 }
             }
         }
-        
-        let instructions = compile_node(expr, &mut context)?;
+
+        let instructions = compile_node(expr, &mut context, &mut program)?;
         for instruction in instructions {
             program.add_instruction(instruction);
         }
@@ -135,9 +138,10 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
 pub(crate) fn compile_node(
     node: &Node,
     context: &mut CompileContext,
+    program: &mut IRProgram,
 ) -> Result<Vec<IRInstruction>, CompileError> {
     match node {
-        Node::Primitive { value } => expressions::compile_primitive(value),
+        Node::Primitive { value } => expressions::compile_primitive(value, program),
         Node::Symbol { value } => {
             if let Some(slot) = context.get_parameter(value) {
                 Ok(vec![IRInstruction::LoadParam(slot)])
@@ -147,7 +151,7 @@ pub(crate) fn compile_node(
                 Err(CompileError::UndefinedVariable(value.clone()))
             }
         }
-        Node::List { root } => compile_list(root, context),
+        Node::List { root } => compile_list(root, context, program),
         Node::Vector { root: _ } => Err(CompileError::UnsupportedOperation(
             "Vectors not supported in compilation yet".to_string(),
         )),
@@ -158,6 +162,7 @@ pub(crate) fn compile_node(
 fn compile_list(
     nodes: &[Node],
     context: &mut CompileContext,
+    program: &mut IRProgram,
 ) -> Result<Vec<IRInstruction>, CompileError> {
     if nodes.is_empty() {
         return Ok(vec![IRInstruction::Push(0)]);
@@ -168,24 +173,64 @@ fn compile_list(
 
     match operator {
         Node::Symbol { value } => match value.as_str() {
-            "+" => expressions::compile_arithmetic_op(args, context, IRInstruction::Add, "+"),
-            "-" => expressions::compile_arithmetic_op(args, context, IRInstruction::Sub, "-"),
-            "*" => expressions::compile_arithmetic_op(args, context, IRInstruction::Mul, "*"),
-            "/" => expressions::compile_arithmetic_op(args, context, IRInstruction::Div, "/"),
-            "=" => expressions::compile_comparison_op(args, context, IRInstruction::Equal, "="),
-            "<" => expressions::compile_comparison_op(args, context, IRInstruction::Less, "<"),
-            ">" => expressions::compile_comparison_op(args, context, IRInstruction::Greater, ">"),
-            "<=" => expressions::compile_comparison_op(args, context, IRInstruction::LessEqual, "<="),
-            ">=" => expressions::compile_comparison_op(args, context, IRInstruction::GreaterEqual, ">="),
-            "if" => expressions::compile_if(args, context),
-            "and" => expressions::compile_logical_and(args, context),
-            "or" => expressions::compile_logical_or(args, context),
-            "not" => expressions::compile_logical_not(args, context),
-            "let" => bindings::compile_let(args, context),
-            "defn" => Ok(functions::compile_defn(args, context)?.0),
+            "+" => {
+                expressions::compile_arithmetic_op(args, context, program, IRInstruction::Add, "+")
+            }
+            "-" => {
+                expressions::compile_arithmetic_op(args, context, program, IRInstruction::Sub, "-")
+            }
+            "*" => {
+                expressions::compile_arithmetic_op(args, context, program, IRInstruction::Mul, "*")
+            }
+            "/" => {
+                expressions::compile_arithmetic_op(args, context, program, IRInstruction::Div, "/")
+            }
+            "=" => expressions::compile_comparison_op(
+                args,
+                context,
+                program,
+                IRInstruction::Equal,
+                "=",
+            ),
+            "<" => {
+                expressions::compile_comparison_op(args, context, program, IRInstruction::Less, "<")
+            }
+            ">" => expressions::compile_comparison_op(
+                args,
+                context,
+                program,
+                IRInstruction::Greater,
+                ">",
+            ),
+            "<=" => expressions::compile_comparison_op(
+                args,
+                context,
+                program,
+                IRInstruction::LessEqual,
+                "<=",
+            ),
+            ">=" => expressions::compile_comparison_op(
+                args,
+                context,
+                program,
+                IRInstruction::GreaterEqual,
+                ">=",
+            ),
+            "if" => expressions::compile_if(args, context, program),
+            "and" => expressions::compile_logical_and(args, context, program),
+            "or" => expressions::compile_logical_or(args, context, program),
+            "not" => expressions::compile_logical_not(args, context, program),
+            "let" => bindings::compile_let(args, context, program),
+            "defn" => Ok(functions::compile_defn(args, context, program)?.0),
             op => {
                 if let Some(func_info) = context.get_function(op) {
-                    functions::compile_function_call(op, args, context, func_info.param_count)
+                    functions::compile_function_call(
+                        op,
+                        args,
+                        context,
+                        program,
+                        func_info.param_count,
+                    )
                 } else {
                     Err(CompileError::UnsupportedOperation(op.to_string()))
                 }

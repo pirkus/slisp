@@ -1,13 +1,13 @@
-/// Variable binding compilation (let expressions)
-
-use crate::domain::Node;
-use crate::ir::IRInstruction;
 use super::{CompileContext, CompileError};
+/// Variable binding compilation (let expressions)
+use crate::domain::Node;
+use crate::ir::{IRInstruction, IRProgram};
 
 /// Compile a let binding expression
 pub fn compile_let(
     args: &[Node],
     context: &mut CompileContext,
+    program: &mut IRProgram,
 ) -> Result<Vec<IRInstruction>, CompileError> {
     if args.len() != 2 {
         return Err(CompileError::ArityError("let".to_string(), 2, args.len()));
@@ -44,14 +44,14 @@ pub fn compile_let(
             }
         };
 
-        instructions.extend(crate::compiler::compile_node(val_node, context)?);
+        instructions.extend(crate::compiler::compile_node(val_node, context, program)?);
 
         let slot = context.add_variable(var_name.clone());
         instructions.push(IRInstruction::StoreLocal(slot));
         added_variables.push(var_name.clone());
     }
 
-    instructions.extend(crate::compiler::compile_node(&args[1], context)?);
+    instructions.extend(crate::compiler::compile_node(&args[1], context, program)?);
 
     context.remove_variables(&added_variables);
 

@@ -1,5 +1,4 @@
 /// Compilation context for tracking variables, parameters, and functions
-
 use crate::ir::FunctionInfo;
 use std::collections::HashMap;
 
@@ -7,12 +6,12 @@ use std::collections::HashMap;
 /// Tracks variables, parameters, and function definitions
 #[derive(Debug, Clone)]
 pub struct CompileContext {
-    pub variables: HashMap<String, usize>,   // variable name -> local slot index
-    pub parameters: HashMap<String, usize>,  // parameter name -> param slot index
+    pub variables: HashMap<String, usize>, // variable name -> local slot index
+    pub parameters: HashMap<String, usize>, // parameter name -> param slot index
     pub functions: HashMap<String, FunctionInfo>, // function name -> function info
     pub next_slot: usize,
-    pub free_slots: Vec<usize>,              // stack of freed slots for reuse
-    pub in_function: bool,                   // true when compiling inside a function
+    pub free_slots: Vec<usize>, // stack of freed slots for reuse
+    pub in_function: bool,      // true when compiling inside a function
 }
 
 impl CompileContext {
@@ -57,7 +56,11 @@ impl CompileContext {
     }
 
     /// Add a function to the context
-    pub fn add_function(&mut self, name: String, info: FunctionInfo) -> Result<(), super::CompileError> {
+    pub fn add_function(
+        &mut self,
+        name: String,
+        info: FunctionInfo,
+    ) -> Result<(), super::CompileError> {
         if self.functions.contains_key(&name) {
             return Err(super::CompileError::DuplicateFunction(name));
         }

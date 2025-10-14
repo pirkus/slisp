@@ -1,6 +1,5 @@
 /// System V ABI implementation for x86-64
 /// Handles calling convention, stack frame management, and register usage
-
 use crate::ir::FunctionInfo;
 
 /// Generate function prologue following System V ABI
@@ -43,7 +42,11 @@ pub fn generate_prologue(func_info: &FunctionInfo) -> Vec<u8> {
         &[0x4c, 0x89, 0x4d], // mov [rbp+offset], r9
     ];
 
-    for (i, &reg_code) in param_reg_codes.iter().enumerate().take(func_info.param_count.min(6)) {
+    for (i, &reg_code) in param_reg_codes
+        .iter()
+        .enumerate()
+        .take(func_info.param_count.min(6))
+    {
         let offset = 8 * (i + 1);
         code.extend_from_slice(reg_code);
         code.push((-(offset as i8)) as u8);
@@ -69,12 +72,12 @@ pub fn generate_epilogue() -> Vec<u8> {
 /// Following System V ABI: RDI, RSI, RDX, RCX, R8, R9
 pub fn generate_call_setup(arg_count: usize) -> Vec<u8> {
     let arg_regs: Vec<&[u8]> = vec![
-        &[0x5f],             // pop rdi
-        &[0x5e],             // pop rsi
-        &[0x5a],             // pop rdx
-        &[0x59],             // pop rcx
-        &[0x41, 0x58],       // pop r8
-        &[0x41, 0x59],       // pop r9
+        &[0x5f],       // pop rdi
+        &[0x5e],       // pop rsi
+        &[0x5a],       // pop rdx
+        &[0x59],       // pop rcx
+        &[0x41, 0x58], // pop r8
+        &[0x41, 0x59], // pop r9
     ];
 
     let mut code = Vec::new();

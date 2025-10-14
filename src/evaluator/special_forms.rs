@@ -1,7 +1,6 @@
+use super::{Environment, EvalError, Value};
 /// Special forms - if, let, fn, def, defn
-
 use crate::domain::Node;
-use super::{Value, EvalError, Environment};
 
 /// Evaluate if conditional
 pub fn eval_if(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
@@ -15,6 +14,7 @@ pub fn eval_if(args: &[Node], env: &mut Environment) -> Result<Value, EvalError>
         Value::Number(n) => n != 0,
         Value::Nil => false,
         Value::Function { .. } => true, // Functions are always truthy
+        Value::String(s) => !s.is_empty(),
     };
 
     if is_truthy {

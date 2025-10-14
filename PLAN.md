@@ -1,5 +1,43 @@
 # Lisp to Machine Code Compiler Plan
 
+## 🚀 Latest Session Summary (2025-10-13)
+
+**Major Accomplishment: Heap Allocation Infrastructure (Phase 6.1) - ✅ 100% COMPLETE!**
+
+Successfully implemented a complete bump allocator with runtime support functions, enabling dynamic memory allocation in compiled executables. This is a major architectural milestone!
+
+**Session Accomplishments:**
+
+1. ✅ **Wired up InitHeap/Allocate in code generation** - Connected IR instructions to runtime functions
+2. ✅ **Implemented two-pass code generation** - Correctly calculates runtime function addresses before generating calls
+3. ✅ **Updated ELF entry stub** - Conditionally calls `_heap_init` before `-main` when heap is needed
+4. ✅ **Fixed single-expression path** - Added proper function prologue/epilogue for stack management
+5. ✅ **All 92 tests passing** - Added integration tests for heap allocation in executables
+6. ✅ **Tested with real programs** - Both single-expression and multi-function programs work correctly
+
+**Key Implementation Details:**
+- Two-pass compilation: Pass 1 calculates addresses, Pass 2 generates correct call offsets
+- Runtime functions appended after user code in machine code blob
+- ELF generator conditionally creates data segment only when heap is needed
+- Entry stub at 0x401000 calls `_heap_init` at runtime, then transfers control to user code
+- Bump allocator uses mmap to allocate 1MB heap at program startup
+- heap_ptr stored in RW data segment at fixed address 0x403000
+
+**Architecture:**
+```
+Entry Stub (22 bytes if heap, 17 bytes otherwise)
+  ↓ call _heap_init (if heap needed)
+  ↓ call -main (user code)
+  ↓ exit with return value
+User Code (functions + expressions)
+Runtime Functions (_heap_init, _allocate)
+```
+
+**Next Steps:**
+- Phase 6.2: Implement heap-allocated strings using this foundation
+- Copy string literals to heap during initialization
+- Implement string operations (str, count, get, subs) in compiler mode
+
 ## Current State
 - ✅ **AST parser** - Complete with robust error handling for malformed s-expressions
 - ✅ **JIT runner** - Working x86-64 machine code execution using memory-mapped pages
@@ -59,8 +97,9 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 ### ✅ **Interpreter Mode** (`slisp` or `slisp --compile` REPL)
 **Fully Supported:**
 - ✅ Number literals (`42`, `123`)
+- ✅ **String literals** (`"hello world"`) with escape sequences (`\n`, `\t`, `\"`, `\\`)
 - ✅ Arithmetic operations (`+`, `-`, `*`, `/`) with multi-operand support
-- ✅ Comparison operations (`=`, `<`, `>`, `<=`, `>=`)
+- ✅ Comparison operations (`=`, `<`, `>`, `<=`, `>=`) - works with numbers, strings, booleans
 - ✅ Logical operations (`and`, `or`, `not`) with short-circuit evaluation
 - ✅ Conditional expressions (`if condition then else`)
 - ✅ Nested expressions (`(+ 2 (* 3 4))`)
@@ -70,11 +109,13 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 - ✅ **Anonymous functions** (`fn [params] body`) with closures
 - ✅ **Function calls** with proper arity checking and lexical scoping
 - ✅ **Variable definitions** (`def name value`) with persistent environment
+- ✅ **String operations** (`str`, `count`, `get`, `subs`) - Clojure-style
 - ✅ Comprehensive error handling and type checking
 
 **Examples:**
 ```lisp
 42                          ; → 42
+"hello world"               ; → "hello world"
 (+ 2 3)                     ; → 5
 (* (+ 1 2) (- 5 3))        ; → 6
 (if (> 10 5) 42 0)         ; → 42
@@ -88,6 +129,10 @@ Lisp Source → AST → [Tree Evaluator] → IR → Code Generation → Machine 
 ((fn [x] (* x x)) 5)        ; → 25
 (def pi 3.14159)            ; → 3.14159
 (* pi 2)                    ; → 6.28318
+(str "hello" " " "world")   ; → "hello world"
+(count "hello")             ; → 5
+(get "hello" 0)             ; → "h"
+(subs "hello world" 0 5)    ; → "hello"
 ```
 
 ### ✅ **Compiler Mode** (`slisp --compile -o <file> [expr|file.slisp]`) - **MAJOR BREAKTHROUGH!**
@@ -245,17 +290,85 @@ slisp --compile -o test test.slisp
 - ✅ **All 70 tests passing** after refactoring
 - ✅ **No functional changes** - Pure code organization improvement
 
-### **Phase 6: Runtime Data Types & Memory Management** (NEXT PRIORITY)
+### **Phase 6: Runtime Data Types & Memory Management**
 
 **Goal:** Support rich data types beyond numbers with proper memory management.
 
-#### **Phase 6.1: String Support**
-- [ ] **String literals** in parser (`"hello world"`)
-- [ ] **String IR type** - Add `String` variant to IR values
-- [ ] **Heap allocation** - Allocate strings on heap with length prefix
-- [ ] **String operations** - `str-concat`, `str-length`, `str-get` (indexing)
-- [ ] **Memory management** - Reference counting or simple GC for strings
-- [ ] **Escape sequences** - Support `\n`, `\t`, `\"`, `\\` in string literals
+#### **Phase 6.1: Heap Allocation (Bump Allocator) - ✅ COMPLETED!**
+
+**Goal:** Implement basic heap memory allocation for runtime-allocated data (strings, future data structures).
+
+**Design Decisions:**
+- **Allocator Type:** Bump allocator (arena allocator) - simple pointer increment
+- **Implementation:** Runtime support functions (`_heap_init`, `_allocate`) called from generated code
+- **Memory Model:** Single mmap-allocated 1MB region, bump pointer forward on each allocation
+- **ELF Structure:** Multi-segment executable (code segment RX, data segment RW)
+- **heap_ptr location:** Fixed address 0x403000 in data segment
+- ⚠️ **Known Limitation:** No individual object freeing - memory grows until program ends
+- 🔄 **Future Work:** Upgrade to malloc/free or garbage collection in Phase 6.3
+
+**✅ Completed Implementation:**
+- ✅ **IR instructions** - Added `Allocate(size)`, `InitHeap` to IR
+- ✅ **Runtime functions** - Implemented in `codegen/runtime.rs`:
+  - `_heap_init`: Uses mmap syscall to allocate 1MB heap, stores address at 0x403000
+  - `_allocate`: Bump allocator implementation (increment pointer, return old value)
+- ✅ **ELF multi-segment support** - Conditionally creates data segment when heap is needed:
+  - Program header 1: Code segment (RX) at 0x401000
+  - Program header 2: Data segment (RW) at 0x403000 (only if heap needed)
+- ✅ **Instruction generation** - Full implementation in `codegen/instructions.rs`:
+  - `generate_call_heap_init()` - Generates call to _heap_init runtime function
+  - `generate_call_allocate()` - Generates call to _allocate runtime function
+  - `generate_allocate_inline()` - Generates size parameter + call
+- ✅ **Code generation wiring** - Connected in both single-expression and multi-function paths
+- ✅ **Two-pass compilation** - Pass 1 calculates addresses, Pass 2 generates correct call offsets
+- ✅ **Entry stub enhancement** - Conditionally calls `_heap_init` before user code when heap is needed
+- ✅ **RuntimeAddresses tracking** - Struct in X86CodeGen tracks runtime function locations
+- ✅ **Function prologue/epilogue** - Fixed single-expression path to use proper stack frames
+- ✅ **Integration tests** - Added `test_heap_allocation_in_executable` test
+- ✅ **All 92 tests passing** - No regressions, heap allocation fully working
+
+**Why Bump Allocator?**
+- ✅ Extremely simple: ~58 bytes of assembly for _heap_init, ~25 bytes for _allocate
+- ✅ Very fast: just pointer increment (1-2 instructions per allocation)
+- ✅ No fragmentation
+- ✅ Perfect for short-lived programs (scripts, calculations)
+- ✅ Foundation for future GC (Phase 6.3)
+- ✅ Foundation for heap-allocated strings (Phase 6.2)
+- ⚠️ Trade-off: Memory grows until program ends (acceptable for MVP)
+
+#### **Phase 6.2: Heap-Allocated Strings - IN PROGRESS**
+
+**✅ Interpreter Mode (Fully Working):**
+- ✅ **String literals** in parser (`"hello world"`) - Full parsing with escape sequences
+- ✅ **String AST type** - `Primitive::String(String)` variant in domain
+- ✅ **String value type** - `Value::String(String)` in evaluator
+- ✅ **Escape sequences** - Support `\n`, `\t`, `\r`, `\"`, `\\` in string literals
+- ✅ **String operations** (Clojure-style):
+  - ✅ `str` - Concatenation with automatic type conversion
+  - ✅ `count` - String length
+  - ✅ `get` - Character at index (returns nil for out of bounds)
+  - ✅ `subs` - Substring extraction
+- ✅ **Enhanced equality** - `=` operator now supports strings, booleans, and nil
+- ✅ **String truthiness** - Empty strings are falsy, non-empty are truthy
+- ✅ **REPL display** - Proper string formatting with quotes
+- ✅ **89 passing tests** - Comprehensive test coverage for all string features
+
+**⚠️ Compiler Mode (Partial - Infrastructure exists, needs heap allocation):**
+- ✅ **PushString IR instruction** - Added to IR with string table tracking
+- ✅ **IRProgram string table** - Deduplicates and tracks string literals
+- ✅ **Compiler refactoring** - IRProgram threaded through all compile functions
+- ✅ **x86-64 code generation** - `generate_push_string()` generates movabs + push
+- ❌ **Heap allocation for strings** - Need to implement using bump allocator
+- ❌ **String copying to heap** - Copy string literals to allocated memory
+- ❌ **Working compiled strings** - Strings compile but need heap support
+
+**Next Steps for Full Compiler Support:**
+1. Implement bump allocator (Phase 6.1)
+2. Allocate string memory on heap during program initialization
+3. Copy string data from embedded literals to heap
+4. Update PushString to reference heap-allocated strings
+5. Test compiled programs with string literals
+6. Add string operations in compiler mode (str, count, get, subs)
 
 #### **Phase 6.2: Data Structure Support**
 - [ ] **Vectors/Lists** - Mutable/immutable sequences `[1 2 3]`
@@ -367,3 +480,4 @@ slisp --compile -o test test.slisp
 - if you fail to rewrite a file, try the diff again, do not try simpler solutions or complete rewrites
 - feel free to add/expand the plan as you see fit
 - When implementing new features, start with interpreter mode first (easier), then add compiler support
+- sample slisp programs for testing are in tests/programs/

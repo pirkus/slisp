@@ -1,5 +1,4 @@
 /// REPL (Read-Eval-Print-Loop) for both interpreter and compiler modes
-
 use crate::ast_parser::{AstParser, AstParserTrt};
 use crate::codegen::compile_to_executable;
 use crate::compiler::{compile_to_ir, CompileError};
@@ -79,7 +78,7 @@ fn parse_compile_and_execute(input: &str) -> Result<i64, String> {
         Err(error) => return Err(format_compile_error(&error)),
     };
 
-    let machine_code = compile_to_executable(&ir_program);
+    let (machine_code, _heap_offset) = compile_to_executable(&ir_program);
 
     let result = JitRunner::exec(&machine_code);
     Ok(result as i64)
@@ -99,6 +98,7 @@ fn format_value(value: &Value) -> String {
         Value::Function { params, .. } => {
             format!("#<function/{}>", params.len())
         }
+        Value::String(s) => format!("\"{}\"", s),
     }
 }
 

@@ -1,13 +1,13 @@
-/// Function definition and call compilation
-
-use crate::domain::Node;
-use crate::ir::{FunctionInfo, IRInstruction};
 use super::{CompileContext, CompileError};
+/// Function definition and call compilation
+use crate::domain::Node;
+use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
 
 /// Compile a function definition (defn)
 pub fn compile_defn(
     args: &[Node],
     context: &mut CompileContext,
+    program: &mut IRProgram,
 ) -> Result<(Vec<IRInstruction>, FunctionInfo), CompileError> {
     if args.len() != 3 {
         return Err(CompileError::ArityError("defn".to_string(), 3, args.len()));
@@ -72,7 +72,11 @@ pub fn compile_defn(
         0, // Will be set by caller
     )];
 
-    instructions.extend(crate::compiler::compile_node(&args[2], &mut func_context)?);
+    instructions.extend(crate::compiler::compile_node(
+        &args[2],
+        &mut func_context,
+        program,
+    )?);
     instructions.push(IRInstruction::Return);
 
     let func_info = FunctionInfo {
@@ -90,6 +94,7 @@ pub fn compile_function_call(
     func_name: &str,
     args: &[Node],
     context: &mut CompileContext,
+    program: &mut IRProgram,
     expected_param_count: usize,
 ) -> Result<Vec<IRInstruction>, CompileError> {
     if args.len() != expected_param_count {
@@ -103,7 +108,7 @@ pub fn compile_function_call(
     let mut instructions = Vec::new();
 
     for arg in args {
-        instructions.extend(crate::compiler::compile_node(arg, context)?);
+        instructions.extend(crate::compiler::compile_node(arg, context, program)?);
     }
 
     instructions.push(IRInstruction::Call(func_name.to_string(), args.len()));

@@ -1,7 +1,7 @@
 #[derive(PartialEq, Debug, Clone)]
 pub enum Primitive {
     Number(usize),
-    _Str(String),
+    String(String),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -20,14 +20,10 @@ impl Node {
     }
 
     pub fn new_list_from_raw(nodes: Vec<Node>) -> Node {
-        Node::List {
-            root: nodes,
-        }
+        Node::List { root: nodes }
     }
 
     pub fn new_vector_from_raw(nodes: Vec<Node>) -> Node {
-        Node::Vector {
-            root: nodes,
-        }
+        Node::Vector { root: nodes }
     }
 }

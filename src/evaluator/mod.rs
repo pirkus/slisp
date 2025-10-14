@@ -3,7 +3,6 @@
 /// This module is organized into:
 /// - primitives: Arithmetic, comparison, and logical operations
 /// - special_forms: Special forms (if, let, fn, def, defn)
-
 mod primitives;
 mod special_forms;
 
@@ -14,6 +13,7 @@ use std::collections::HashMap;
 pub enum Value {
     Number(isize),
     Boolean(bool),
+    String(String),
     Nil,
     Function {
         params: Vec<String>,
@@ -50,9 +50,7 @@ pub(crate) fn eval_with_env(node: &Node, env: &mut Environment) -> Result<Value,
 fn eval_primitive(primitive: &Primitive) -> Result<Value, EvalError> {
     match primitive {
         Primitive::Number(n) => Ok(Value::Number(*n as isize)),
-        Primitive::_Str(_) => Err(EvalError::TypeError(
-            "String literals not supported yet".to_string(),
-        )),
+        Primitive::String(s) => Ok(Value::String(s.clone())),
     }
 }
 
@@ -87,7 +85,7 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
                 },
                 "/",
             ),
-            "=" => primitives::eval_comparison_op(args, env, |a, b| a == b, "="),
+            "=" => primitives::eval_equal(args, env),
             "<" => primitives::eval_comparison_op(args, env, |a, b| a < b, "<"),
             ">" => primitives::eval_comparison_op(args, env, |a, b| a > b, ">"),
             "<=" => primitives::eval_comparison_op(args, env, |a, b| a <= b, "<="),
@@ -100,6 +98,10 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
             "fn" => special_forms::eval_fn(args, env),
             "def" => special_forms::eval_def(args, env),
             "defn" => special_forms::eval_defn(args, env),
+            "str" => primitives::eval_str(args, env),
+            "count" => primitives::eval_count(args, env),
+            "get" => primitives::eval_get(args, env),
+            "subs" => primitives::eval_subs(args, env),
             op => {
                 if let Some(func_value) = env.get(op) {
                     special_forms::eval_function_call(func_value.clone(), args, env)
@@ -490,5 +492,173 @@ mod tests {
         let result2 = eval_with_env(&ast2, &mut env).unwrap();
 
         assert_eq!(result2, Value::Number(50));
+    }
+
+    #[test]
+    fn test_string_literal() {
+        assert_eq!(
+            parse_and_eval("\"hello\""),
+            Ok(Value::String("hello".to_string()))
+        );
+        assert_eq!(
+            parse_and_eval("\"world\""),
+            Ok(Value::String("world".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_string_with_escapes() {
+        assert_eq!(
+            parse_and_eval("\"hello\\nworld\""),
+            Ok(Value::String("hello\nworld".to_string()))
+        );
+        assert_eq!(
+            parse_and_eval("\"tab\\there\""),
+            Ok(Value::String("tab\there".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_empty_string() {
+        assert_eq!(parse_and_eval("\"\""), Ok(Value::String("".to_string())));
+    }
+
+    #[test]
+    fn test_string_truthiness() {
+        // Non-empty strings are truthy
+        assert_eq!(parse_and_eval("(if \"hello\" 1 0)"), Ok(Value::Number(1)));
+        // Empty strings are falsy
+        assert_eq!(parse_and_eval("(if \"\" 1 0)"), Ok(Value::Number(0)));
+    }
+
+    #[test]
+    fn test_string_in_let() {
+        assert_eq!(
+            parse_and_eval("(let [s \"hello\"] s)"),
+            Ok(Value::String("hello".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_str_concatenation() {
+        // Basic concatenation
+        assert_eq!(
+            parse_and_eval("(str \"hello\" \"world\")"),
+            Ok(Value::String("helloworld".to_string()))
+        );
+        // With spaces
+        assert_eq!(
+            parse_and_eval("(str \"hello\" \" \" \"world\")"),
+            Ok(Value::String("hello world".to_string()))
+        );
+        // Empty strings
+        assert_eq!(
+            parse_and_eval("(str \"\" \"hello\" \"\")"),
+            Ok(Value::String("hello".to_string()))
+        );
+        // No arguments
+        assert_eq!(parse_and_eval("(str)"), Ok(Value::String("".to_string())));
+    }
+
+    #[test]
+    fn test_str_mixed_types() {
+        // Numbers
+        assert_eq!(
+            parse_and_eval("(str \"value: \" 42)"),
+            Ok(Value::String("value: 42".to_string()))
+        );
+        // Booleans
+        assert_eq!(
+            parse_and_eval("(str \"result: \" (> 5 3))"),
+            Ok(Value::String("result: true".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_count_string() {
+        assert_eq!(parse_and_eval("(count \"hello\")"), Ok(Value::Number(5)));
+        assert_eq!(parse_and_eval("(count \"\")"), Ok(Value::Number(0)));
+        assert_eq!(
+            parse_and_eval("(count \"hello world\")"),
+            Ok(Value::Number(11))
+        );
+    }
+
+    #[test]
+    fn test_get_string() {
+        // Valid indices
+        assert_eq!(
+            parse_and_eval("(get \"hello\" 0)"),
+            Ok(Value::String("h".to_string()))
+        );
+        assert_eq!(
+            parse_and_eval("(get \"hello\" 4)"),
+            Ok(Value::String("o".to_string()))
+        );
+        // Out of bounds returns nil
+        assert_eq!(parse_and_eval("(get \"hello\" 5)"), Ok(Value::Nil));
+        assert_eq!(parse_and_eval("(get \"hello\" 100)"), Ok(Value::Nil));
+        // Note: Negative literals like -1 are parsed as (- 1) in simple Lisp parsers
+        // For now, we test with explicit subtraction
+        assert_eq!(parse_and_eval("(get \"hello\" (- 0 1))"), Ok(Value::Nil));
+    }
+
+    #[test]
+    fn test_subs_string() {
+        // Basic substring
+        assert_eq!(
+            parse_and_eval("(subs \"hello\" 0 5)"),
+            Ok(Value::String("hello".to_string()))
+        );
+        assert_eq!(
+            parse_and_eval("(subs \"hello\" 1 4)"),
+            Ok(Value::String("ell".to_string()))
+        );
+        // Substring to end
+        assert_eq!(
+            parse_and_eval("(subs \"hello\" 2)"),
+            Ok(Value::String("llo".to_string()))
+        );
+        // Empty substring
+        assert_eq!(
+            parse_and_eval("(subs \"hello\" 2 2)"),
+            Ok(Value::String("".to_string()))
+        );
+        // From beginning
+        assert_eq!(
+            parse_and_eval("(subs \"hello\" 0 3)"),
+            Ok(Value::String("hel".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_string_operations_combined() {
+        // Count of concatenated string
+        assert_eq!(
+            parse_and_eval("(count (str \"hello\" \"world\"))"),
+            Ok(Value::Number(10))
+        );
+        // Get from concatenated string
+        assert_eq!(
+            parse_and_eval("(get (str \"hello\" \"world\") 5)"),
+            Ok(Value::String("w".to_string()))
+        );
+        // Substring of concatenated string
+        assert_eq!(
+            parse_and_eval("(subs (str \"hello\" \" \" \"world\") 0 5)"),
+            Ok(Value::String("hello".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_string_in_conditionals() {
+        assert_eq!(
+            parse_and_eval("(if (= (count \"hi\") 2) \"yes\" \"no\")"),
+            Ok(Value::String("yes".to_string()))
+        );
+        assert_eq!(
+            parse_and_eval("(if (= (get \"abc\" 0) \"a\") 1 0)"),
+            Ok(Value::Number(1))
+        );
     }
 }

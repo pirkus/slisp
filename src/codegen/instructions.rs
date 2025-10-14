@@ -1,6 +1,5 @@
 /// x86-64 instruction generation
 /// Each function generates machine code for a specific operation
-
 use crate::ir::FunctionInfo;
 use std::collections::HashMap;
 
@@ -15,46 +14,59 @@ pub fn generate_push(value: i64) -> Vec<u8> {
     }
 }
 
+/// Generate machine code to push a string address
+/// The address will be filled in during ELF generation
+pub fn generate_push_string(address: u64) -> Vec<u8> {
+    let mut code = Vec::new();
+    // movabs rax, address (10 bytes)
+    code.push(0x48); // REX.W prefix
+    code.push(0xb8); // mov rax, imm64
+    code.extend_from_slice(&address.to_le_bytes());
+    // push rax
+    code.push(0x50);
+    code
+}
+
 /// Generate machine code for addition
 pub fn generate_add() -> Vec<u8> {
     vec![
-        0x58,             // pop rax
-        0x5b,             // pop rbx
+        0x58, // pop rax
+        0x5b, // pop rbx
         0x48, 0x01, 0xd8, // add rax, rbx
-        0x50,             // push rax
+        0x50, // push rax
     ]
 }
 
 /// Generate machine code for subtraction
 pub fn generate_sub() -> Vec<u8> {
     vec![
-        0x58,             // pop rax
-        0x5b,             // pop rbx
+        0x58, // pop rax
+        0x5b, // pop rbx
         0x48, 0x29, 0xc3, // sub rbx, rax
-        0x53,             // push rbx
+        0x53, // push rbx
     ]
 }
 
 /// Generate machine code for multiplication
 pub fn generate_mul() -> Vec<u8> {
     vec![
-        0x58,                   // pop rax
-        0x5b,                   // pop rbx
+        0x58, // pop rax
+        0x5b, // pop rbx
         0x48, 0x0f, 0xaf, 0xd8, // imul rbx, rax
-        0x53,                   // push rbx
+        0x53, // push rbx
     ]
 }
 
 /// Generate machine code for division
 pub fn generate_div() -> Vec<u8> {
     vec![
-        0x58,             // pop rax (divisor)
-        0x5b,             // pop rbx (dividend)
+        0x58, // pop rax (divisor)
+        0x5b, // pop rbx (dividend)
         0x48, 0x89, 0xd8, // mov rax, rbx
         0x48, 0x89, 0xc1, // mov rcx, rax
-        0x48, 0x99,       // cqo (sign extend)
+        0x48, 0x99, // cqo (sign extend)
         0x48, 0xf7, 0xf9, // idiv rcx
-        0x50,             // push rax
+        0x50, // push rax
     ]
 }
 
@@ -63,7 +75,8 @@ pub fn generate_load_param(slot: usize) -> Vec<u8> {
     let offset = 8 * (slot + 1);
     if offset <= 127 {
         vec![
-            0xff, 0x75,                    // push [rbp+offset]
+            0xff,
+            0x75, // push [rbp+offset]
             ((-(offset as i8)) as u8),
         ]
     } else {
@@ -95,7 +108,8 @@ pub fn generate_load_local(slot: usize, func_info: &FunctionInfo) -> Vec<u8> {
     let offset = 8 * (func_info.param_count + slot + 1);
     if offset <= 127 {
         vec![
-            0xff, 0x75,                    // push [rbp+offset]
+            0xff,
+            0x75, // push [rbp+offset]
             ((-(offset as i8)) as u8),
         ]
     } else {
@@ -130,6 +144,43 @@ pub fn generate_call(
 /// Epilogue is generated separately
 pub fn generate_return() -> Vec<u8> {
     vec![0x58] // pop rax (return value)
+}
+
+/// Generate machine code to call _heap_init runtime function
+/// Takes the offset to the _heap_init function from the current position
+pub fn generate_call_heap_init(heap_init_offset: i32) -> Vec<u8> {
+    let mut code = Vec::new();
+    code.push(0xe8); // call relative
+    code.extend_from_slice(&heap_init_offset.to_le_bytes());
+    code
+}
+
+/// Generate machine code to call _allocate runtime function
+/// Size should already be in RDI register (System V ABI calling convention)
+/// Returns pointer in RAX, which is then pushed onto stack
+pub fn generate_call_allocate(allocate_offset: i32) -> Vec<u8> {
+    let mut code = Vec::new();
+    code.push(0xe8); // call relative
+    code.extend_from_slice(&allocate_offset.to_le_bytes());
+    code.push(0x50); // push rax (save allocated pointer on stack)
+    code
+}
+
+/// Generate machine code for Allocate instruction
+/// Takes size as immediate, puts it in RDI, calls _allocate
+pub fn generate_allocate_inline(size: usize, allocate_offset: i32) -> Vec<u8> {
+    let mut code = Vec::new();
+
+    // mov rdi, size (put size in first argument register)
+    code.push(0x48); // REX.W
+    code.push(0xc7); // mov r/m64, imm32
+    code.push(0xc7); // ModR/M byte for RDI
+    code.extend_from_slice(&(size as u32).to_le_bytes());
+
+    // call _allocate
+    code.extend(generate_call_allocate(allocate_offset));
+
+    code
 }
 
 #[cfg(test)]

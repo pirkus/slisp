@@ -1,4 +1,4 @@
-use crate::domain::Node;
+use crate::domain::{Node, Primitive};
 
 pub struct AstParser;
 
@@ -45,6 +45,14 @@ impl AstParser {
                     *offset += 1;
                     sexp.push(Self::parse_container(input, offset, true, true));
                 }
+                '"' => {
+                    if !buffer.is_empty() {
+                        sexp.push(Self::parse_atom(&buffer));
+                        buffer = String::new();
+                    }
+                    *offset += 1;
+                    sexp.push(Self::parse_string_literal(input, offset));
+                }
                 ')' => {
                     if !inside_container || is_vector {
                         panic!("Unexpected closing parenthesis");
@@ -85,6 +93,47 @@ impl AstParser {
             Self::parse_atom(&buffer)
         } else {
             sexp.first().unwrap().to_owned()
+        }
+    }
+
+    fn parse_string_literal(input: &[u8], offset: &mut usize) -> Node {
+        let mut buffer = String::new();
+        let mut escape = false;
+
+        while *offset < input.len() {
+            let c = input[*offset] as char;
+
+            if escape {
+                match c {
+                    'n' => buffer.push('\n'),
+                    't' => buffer.push('\t'),
+                    'r' => buffer.push('\r'),
+                    '"' => buffer.push('"'),
+                    '\\' => buffer.push('\\'),
+                    _ => buffer.push(c), // Unknown escape sequence, just include the character
+                }
+                escape = false;
+            } else if c == '\\' {
+                escape = true;
+            } else if c == '"' {
+                // Found closing quote, offset is now at the closing quote
+                // The main loop will increment it past the quote
+                break;
+            } else {
+                buffer.push(c);
+            }
+
+            *offset += 1;
+        }
+
+        if *offset >= input.len() {
+            panic!("Unterminated string literal");
+        }
+
+        // Don't increment offset here - let the main loop handle it
+
+        Node::Primitive {
+            value: Primitive::String(buffer),
         }
     }
 
@@ -318,5 +367,82 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn parse_string_literal() {
+        let parsed = AstParser::parse_sexp_new_domain(b"\"hello world\"", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::Primitive {
+                value: Primitive::String("hello world".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn parse_string_with_escapes() {
+        let parsed = AstParser::parse_sexp_new_domain(b"\"hello\\nworld\\t!\"", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::Primitive {
+                value: Primitive::String("hello\nworld\t!".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn parse_string_with_quotes() {
+        let parsed = AstParser::parse_sexp_new_domain(b"\"say \\\"hello\\\"\"", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::Primitive {
+                value: Primitive::String("say \"hello\"".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn parse_string_with_backslash() {
+        let parsed = AstParser::parse_sexp_new_domain(b"\"path\\\\to\\\\file\"", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::Primitive {
+                value: Primitive::String("path\\to\\file".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn parse_string_in_list() {
+        let parsed = AstParser::parse_sexp_new_domain(b"(print \"hello\")", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::new_list_from_raw(vec![
+                Node::Symbol {
+                    value: "print".to_string()
+                },
+                Node::Primitive {
+                    value: Primitive::String("hello".to_string())
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_empty_string() {
+        let parsed = AstParser::parse_sexp_new_domain(b"\"\"", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::Primitive {
+                value: Primitive::String("".to_string())
+            }
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn parse_unterminated_string() {
+        AstParser::parse_sexp_new_domain(b"\"hello", &mut 0);
     }
 }
