@@ -1,65 +1,5 @@
 # Lisp to Machine Code Compiler Plan
 
-## 🚀 Latest Session Summary (2025-10-14)
-
-**Major Accomplishment: Proper Malloc/Free Implementation (Phase 6.1 Upgrade) - ✅ 100% COMPLETE!**
-
-Successfully replaced the bump allocator with a proper free list-based malloc implementation, enabling proper memory management with allocation and deallocation in compiled executables. This is a significant improvement over the previous bump allocator!
-
-**Session Accomplishments:**
-
-1. ✅ **Replaced bump allocator with free list malloc** - Proper first-fit allocation algorithm
-2. ✅ **Implemented _free runtime function** - Returns blocks to free list for reuse
-3. ✅ **Added Free IR instruction** - Full compiler support for deallocation
-4. ✅ **Updated data segment layout** - Now uses 24 bytes (heap_base, heap_end, free_list_head)
-5. ✅ **Updated all code generation paths** - Both single and multi-function compilation support free
-6. ✅ **All 99 tests passing** - No regressions, malloc/free fully working
-
-**Key Implementation Details:**
-- Free list structure: blocks have `[size][next]` header when free, `[size|ALLOCATED_BIT]` when allocated
-- First-fit allocation: searches free list for suitable block, removes from list, marks as allocated
-- Simple free: clears allocated bit and prepends block to free list head
-- Data segment: 24 bytes at 0x403000 (heap_base, heap_end, free_list_head)
-- Three runtime functions: _heap_init (initializes), _allocate (allocates), _free (deallocates)
-
-**Previous Session Summary (2025-10-13) - Bump Allocator:**
-
-**Major Accomplishment: Heap Allocation Infrastructure (Phase 6.1) - ✅ 100% COMPLETE!**
-
-Successfully implemented a complete bump allocator with runtime support functions, enabling dynamic memory allocation in compiled executables. This was a major architectural milestone, now upgraded to proper malloc/free!
-
-**Session Accomplishments:**
-
-1. ✅ **Wired up InitHeap/Allocate in code generation** - Connected IR instructions to runtime functions
-2. ✅ **Implemented two-pass code generation** - Correctly calculates runtime function addresses before generating calls
-3. ✅ **Updated ELF entry stub** - Conditionally calls `_heap_init` before `-main` when heap is needed
-4. ✅ **Fixed single-expression path** - Added proper function prologue/epilogue for stack management
-5. ✅ **All 92 tests passing** - Added integration tests for heap allocation in executables
-6. ✅ **Tested with real programs** - Both single-expression and multi-function programs work correctly
-
-**Key Implementation Details:**
-- Two-pass compilation: Pass 1 calculates addresses, Pass 2 generates correct call offsets
-- Runtime functions appended after user code in machine code blob
-- ELF generator conditionally creates data segment only when heap is needed
-- Entry stub at 0x401000 calls `_heap_init` at runtime, then transfers control to user code
-- Bump allocator uses mmap to allocate 1MB heap at program startup
-- heap_ptr stored in RW data segment at fixed address 0x403000
-
-**Architecture:**
-```
-Entry Stub (22 bytes if heap, 17 bytes otherwise)
-  ↓ call _heap_init (if heap needed)
-  ↓ call -main (user code)
-  ↓ exit with return value
-User Code (functions + expressions)
-Runtime Functions (_heap_init, _allocate)
-```
-
-**Next Steps:**
-- Phase 6.2: Implement heap-allocated strings using this foundation
-- Copy string literals to heap during initialization
-- Implement string operations (str, count, get, subs) in compiler mode
-
 ## Current State
 - ✅ **AST parser** - Complete with robust error handling for malformed s-expressions
 - ✅ **JIT runner** - Working x86-64 machine code execution using memory-mapped pages
@@ -324,13 +264,13 @@ slisp --compile -o test test.slisp
 - **Allocator Type:** Free list-based malloc - first-fit allocation with explicit deallocation
 - **Implementation:** Runtime support functions (`_heap_init`, `_allocate`, `_free`) called from generated code
 - **Memory Model:** Single mmap-allocated 1MB region with free list management
-- **Block Structure:** 
+- **Block Structure:**
   - Free blocks: `[size: 8 bytes][next: 8 bytes][data...]`
   - Allocated blocks: `[size | ALLOCATED_BIT: 8 bytes][data...]`
 - **ELF Structure:** Multi-segment executable (code segment RX, data segment RW)
 - **Data segment layout (0x403000-0x403018):**
   - `heap_base` (0x403000): Start of heap region
-  - `heap_end` (0x403008): End of heap region  
+  - `heap_end` (0x403008): End of heap region
   - `free_list_head` (0x403010): Pointer to first free block
 - ✅ **Proper memory management:** Individual objects can be freed and memory reused
 - 🔄 **Future Work:** Add block coalescing for better memory efficiency (Phase 6.3)
@@ -367,8 +307,7 @@ slisp --compile -o test test.slisp
 - ✅ Simple first-fit algorithm: reasonable performance with minimal complexity
 - 🔄 Future optimization: block coalescing to reduce fragmentation
 
-#### **Phase 6.2: Heap-Allocated Strings - IN PROGRESS**
-
+#### **Phase 6.2: Heap-Allocated Strings**
 **✅ Interpreter Mode (Fully Working):**
 - ✅ **String literals** in parser (`"hello world"`) - Full parsing with escape sequences
 - ✅ **String AST type** - `Primitive::String(String)` variant in domain
@@ -382,24 +321,29 @@ slisp --compile -o test test.slisp
 - ✅ **Enhanced equality** - `=` operator now supports strings, booleans, and nil
 - ✅ **String truthiness** - Empty strings are falsy, non-empty are truthy
 - ✅ **REPL display** - Proper string formatting with quotes
-- ✅ **89 passing tests** - Comprehensive test coverage for all string features
+- ✅ **Comprehensive test coverage** - All string features tested in interpreter mode
 
-**⚠️ Compiler Mode (Partial - Infrastructure exists, needs heap allocation):**
+**✅ Compiler Mode (Fully Working - String Literals):**
 - ✅ **PushString IR instruction** - Added to IR with string table tracking
 - ✅ **IRProgram string table** - Deduplicates and tracks string literals
 - ✅ **Compiler refactoring** - IRProgram threaded through all compile functions
-- ✅ **x86-64 code generation** - `generate_push_string()` generates movabs + push
-- ❌ **Heap allocation for strings** - Need to implement using bump allocator
-- ❌ **String copying to heap** - Copy string literals to allocated memory
-- ❌ **Working compiled strings** - Strings compile but need heap support
+- ✅ **x86-64 code generation** - `generate_push_string()` generates movabs + push with rodata addresses
+- ✅ **Rodata segment in ELF** - Read-only segment at 0x404000 for string literals
+- ✅ **String address calculation** - `X86CodeGen::set_string_addresses()` computes correct offsets
+- ✅ **Working compiled strings** - String literals compile to native executables
+- ✅ **Integration test** - `test_string_literal_in_executable` verifies functionality
+- ✅ **All 101 tests passing** - No regressions, strings work in compiled mode
 
-**Next Steps for Full Compiler Support:**
-1. ✅ Implement malloc/free allocator (Phase 6.1) - COMPLETED!
-2. Allocate string memory on heap during program initialization
-3. Copy string data from embedded literals to heap
-4. Update PushString to reference heap-allocated strings
-5. Test compiled programs with string literals
-6. Add string operations in compiler mode (str, count, get, subs)
+**Design Decisions:**
+- **Storage:** Strings stored in rodata segment (not heap) - more efficient, no deallocation needed
+- **Null termination:** All strings null-terminated for C interop compatibility
+- **Deduplication:** String table automatically deduplicates identical literals
+- **Address space:** Rodata at 0x404000, separate from code (0x401000) and data (0x403000)
+
+**Future Work (Phase 6.2+):**
+- ❌ **String operations in compiler** - `str`, `count`, `get`, `subs` need runtime implementations
+- ❌ **String concatenation** - Requires heap allocation + runtime function
+- ❌ **String mutation** - Not planned (strings are immutable in design)
 
 #### **Phase 6.2: Data Structure Support**
 - [ ] **Vectors/Lists** - Mutable/immutable sequences `[1 2 3]`

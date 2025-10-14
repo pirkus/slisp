@@ -26,6 +26,7 @@ pub struct X86CodeGen {
     instruction_positions: Vec<usize>,
     function_addresses: HashMap<String, usize>, // function name -> code offset
     runtime_addresses: RuntimeAddresses,        // addresses of runtime support functions
+    string_addresses: Vec<u64>,                 // addresses of string literals in rodata segment
 }
 
 impl X86CodeGen {
@@ -39,6 +40,18 @@ impl X86CodeGen {
                 allocate: None,
                 free: None,
             },
+            string_addresses: Vec::new(),
+        }
+    }
+
+    /// Set string addresses for rodata segment
+    pub fn set_string_addresses(&mut self, program: &IRProgram) {
+        const RODATA_VADDR: u64 = 0x404000;
+        let mut offset = 0u64;
+
+        for string in &program.string_literals {
+            self.string_addresses.push(RODATA_VADDR + offset);
+            offset += string.len() as u64 + 1; // +1 for null terminator
         }
     }
 
@@ -178,10 +191,10 @@ impl X86CodeGen {
     fn generate_instruction(&mut self, inst: &IRInstruction, func_info: &FunctionInfo) {
         let code = match inst {
             IRInstruction::Push(value) => instructions::generate_push(*value),
-            IRInstruction::PushString(_index) => {
-                // For now, push a placeholder address (0)
-                // This will be properly resolved when we implement ELF string sections
-                instructions::generate_push_string(0)
+            IRInstruction::PushString(index) => {
+                // Get the actual rodata address for this string
+                let address = self.string_addresses.get(*index).copied().unwrap_or(0);
+                instructions::generate_push_string(address)
             }
             IRInstruction::Add => instructions::generate_add(),
             IRInstruction::Sub => instructions::generate_sub(),
@@ -268,9 +281,11 @@ impl X86CodeGen {
                 IRInstruction::Push(value) => {
                     self.code.extend(instructions::generate_push(*value));
                 }
-                IRInstruction::PushString(_index) => {
-                    // For now, push placeholder address
-                    self.code.extend(instructions::generate_push_string(0));
+                IRInstruction::PushString(index) => {
+                    // Get the actual rodata address for this string
+                    let address = self.string_addresses.get(*index).copied().unwrap_or(0);
+                    self.code
+                        .extend(instructions::generate_push_string(address));
                 }
                 IRInstruction::Add => {
                     self.code.extend(instructions::generate_add());
@@ -360,6 +375,7 @@ pub fn compile_to_executable(program: &IRProgram) -> (Vec<u8>, Option<usize>) {
         // TWO-PASS APPROACH for runtime functions:
         // Pass 1: Generate code to calculate where runtime functions will be
         let mut codegen_pass1 = X86CodeGen::new();
+        codegen_pass1.set_string_addresses(program);
         let code_pass1 = codegen_pass1.generate(program);
 
         // Calculate runtime function addresses
@@ -371,6 +387,7 @@ pub fn compile_to_executable(program: &IRProgram) -> (Vec<u8>, Option<usize>) {
 
         // Pass 2: Generate code with correct runtime addresses
         let mut codegen_pass2 = X86CodeGen::new();
+        codegen_pass2.set_string_addresses(program);
         codegen_pass2.runtime_addresses.heap_init = Some(heap_init_offset);
         codegen_pass2.runtime_addresses.allocate = Some(allocate_offset);
         codegen_pass2.runtime_addresses.free = Some(free_offset);
@@ -388,6 +405,7 @@ pub fn compile_to_executable(program: &IRProgram) -> (Vec<u8>, Option<usize>) {
     } else {
         // No heap allocation needed, single-pass is fine
         let mut codegen = X86CodeGen::new();
+        codegen.set_string_addresses(program);
         (codegen.generate(program), None)
     }
 }

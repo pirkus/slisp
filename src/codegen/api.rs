@@ -48,6 +48,7 @@ impl Target {
     /// * `machine_code` - The compiled machine code
     /// * `output_path` - Path to write the executable
     /// * `heap_init_offset` - Optional offset to heap initialization function
+    /// * `string_literals` - String literals to embed in rodata segment
     ///
     /// # Returns
     /// * Result indicating success or IO error
@@ -56,12 +57,14 @@ impl Target {
         machine_code: &[u8],
         output_path: &str,
         heap_init_offset: Option<usize>,
+        string_literals: &[String],
     ) -> std::io::Result<()> {
         match self {
             Target::X86_64Linux => x86_64_linux::executable::generate_executable(
                 machine_code,
                 output_path,
                 heap_init_offset,
+                string_literals,
             ),
             Target::X86_64Windows => {
                 unimplemented!("x86-64 Windows (PE format) not yet implemented")

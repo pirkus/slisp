@@ -18,7 +18,12 @@ pub fn compile_file_to_executable(input_file: &str, output_file: &str) -> Result
     let (machine_code, heap_init_offset) = compile_to_executable(&ir_program, target);
 
     target
-        .generate_executable(&machine_code, output_file, heap_init_offset)
+        .generate_executable(
+            &machine_code,
+            output_file,
+            heap_init_offset,
+            &ir_program.string_literals,
+        )
         .map_err(|e| format!("Failed to write executable: {}", e))?;
 
     Command::new("chmod")
