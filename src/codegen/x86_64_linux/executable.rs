@@ -1,10 +1,22 @@
+/// Executable generation for x86-64 Linux (ELF format)
+///
+/// This module generates ELF (Executable and Linkable Format) binaries
+/// for x86-64 Linux systems. It creates the ELF headers, program headers,
+/// and entry stub that uses Linux syscalls.
 use std::fs::File;
 use std::io::{Result as IoResult, Write};
 
-/// Fixed address for the data segment containing heap_ptr
+/// Fixed address for the data segment containing heap_ptr (Linux x86-64 convention)
 const DATA_SEGMENT_VADDR: u64 = 0x403000;
 
-pub fn generate_elf_executable(
+/// Generate an executable binary from machine code
+///
+/// Creates an ELF executable for x86-64 Linux with:
+/// - Entry stub that calls _heap_init (if needed) and -main
+/// - Code segment (RX) with user code and runtime functions
+/// - Data segment (RW) with heap_ptr (if heap is used)
+/// - Linux exit syscall (syscall #60)
+pub fn generate_executable(
     machine_code: &[u8],
     output_path: &str,
     heap_init_offset: Option<usize>,
@@ -39,7 +51,7 @@ fn create_elf_with_segments(machine_code: &[u8], heap_init_offset: Option<usize>
     let code_file_offset = 0x1000u64;
     let data_file_offset = 0x2000u64;
 
-    // Virtual addresses
+    // Virtual addresses (Linux x86-64 convention)
     let code_vaddr = 0x401000u64;
     let data_vaddr = DATA_SEGMENT_VADDR;
     let entry_point = code_vaddr;
@@ -58,7 +70,7 @@ fn create_elf_with_segments(machine_code: &[u8], heap_init_offset: Option<usize>
     elf.push(2); // EI_CLASS: 64-bit
     elf.push(1); // EI_DATA: little endian
     elf.push(1); // EI_VERSION: current
-    elf.push(0); // EI_OSABI: System V
+    elf.push(0); // EI_OSABI: System V (Linux)
     elf.extend_from_slice(&[0; 8]); // EI_PAD: padding
 
     // e_type, e_machine, e_version
@@ -107,39 +119,63 @@ fn create_elf_with_segments(machine_code: &[u8], heap_init_offset: Option<usize>
 
     // ========== Code Segment ==========
     // Entry stub: optionally call _heap_init, then call -main, then exit with return value
+    // Uses Linux syscall convention: syscall #60 = exit
     if let Some(heap_init_off) = heap_init_offset {
-        // Entry stub with heap initialization (22 bytes)
-        // Calculate call offset to _heap_init: entry_stub_size + heap_init_off
+        // Entry stub with heap initialization (22 bytes x86-64 machine code)
+        // Structure:
+        //   0-4:   call _heap_init (5 bytes)
+        //   5-9:   call -main (5 bytes)
+        //   10-12: mov rdi, rax (3 bytes)
+        //   13-19: mov rax, 60 (7 bytes)
+        //   20-21: syscall (2 bytes)
+
+        // Calculate call offset to _heap_init
+        // Target address = entry_stub_size + heap_init_off
+        // Current position after call instruction = 5
+        // Relative offset = target - current = (entry_stub_size + heap_init_off) - 5
         let heap_init_call_offset = (entry_stub_size + heap_init_off) as i32 - 5;
 
-        // call _heap_init
+        // call _heap_init (x86-64: e8 + rel32)
         elf.push(0xe8);
         elf.extend_from_slice(&heap_init_call_offset.to_le_bytes());
 
-        // call -main (machine code starts right after entry stub)
-        // From current position (5 bytes into entry stub), we need to jump to entry_stub_size
-        // Offset = entry_stub_size - 5 - 5 (size of call instruction)
+        // Calculate call offset to -main
+        // -main is at position entry_stub_size (right after this stub)
+        // Current position after call instruction = 10
+        // Relative offset = entry_stub_size - 10
         let main_call_offset = (entry_stub_size - 10) as i32;
+
+        // call -main (x86-64: e8 + rel32)
         elf.push(0xe8);
         elf.extend_from_slice(&main_call_offset.to_le_bytes());
 
-        // mov rdi, rax (return value from -main becomes exit code)
+        // mov rdi, rax (x86-64: return value from -main becomes exit code)
         elf.extend_from_slice(&[0x48, 0x89, 0xc7]);
 
-        // mov rax, 60 (exit syscall)
+        // mov rax, 60 (x86-64: Linux exit syscall number)
         elf.extend_from_slice(&[0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00]);
 
-        // syscall
+        // syscall (x86-64: Linux syscall instruction)
         elf.extend_from_slice(&[0x0f, 0x05]);
     } else {
-        // Entry stub without heap initialization (17 bytes)
-        // call -main (skip exit code: 12 bytes)
-        elf.extend_from_slice(&[
-            0xe8, 0x0c, 0x00, 0x00, 0x00, // call +12
-            0x48, 0x89, 0xc7, // mov rdi, rax
-            0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00, // mov rax, 60 (exit syscall)
-            0x0f, 0x05, // syscall
-        ]);
+        // Entry stub without heap initialization (17 bytes x86-64 machine code)
+        // Structure:
+        //   0-4:   call -main (5 bytes)
+        //   5-7:   mov rdi, rax (3 bytes)
+        //   8-14:  mov rax, 60 (7 bytes)
+        //   15-16: syscall (2 bytes)
+
+        // Calculate call offset to -main
+        // -main is at position entry_stub_size (right after this stub)
+        // Current position after call instruction = 5
+        // Relative offset = entry_stub_size - 5
+        let main_call_offset = (entry_stub_size - 5) as i32;
+
+        elf.push(0xe8); // call opcode
+        elf.extend_from_slice(&main_call_offset.to_le_bytes());
+        elf.extend_from_slice(&[0x48, 0x89, 0xc7]); // mov rdi, rax
+        elf.extend_from_slice(&[0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00]); // mov rax, 60
+        elf.extend_from_slice(&[0x0f, 0x05]); // syscall
     }
 
     // Add the machine code (user functions + runtime functions)
@@ -166,7 +202,7 @@ mod tests {
     use std::process::Command;
 
     #[test]
-    fn test_elf_generation() {
+    fn test_executable_generation() {
         // Simple function that returns 42
         let machine_code = vec![
             0x55, // push rbp
@@ -178,7 +214,7 @@ mod tests {
         ];
 
         let output_path = "/tmp/test_slisp_executable";
-        generate_elf_executable(&machine_code, output_path, None).unwrap();
+        generate_executable(&machine_code, output_path, None).unwrap();
 
         // Make executable
         Command::new("chmod")
@@ -216,7 +252,7 @@ mod tests {
             ];
 
             let output_path = format!("/tmp/test_slisp_executable_{}", test_val);
-            generate_elf_executable(&machine_code, &output_path, None).unwrap();
+            generate_executable(&machine_code, &output_path, None).unwrap();
 
             Command::new("chmod")
                 .args(["+x", &output_path])
@@ -239,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_heap_allocation_in_executable() {
-        use crate::codegen::compile_to_executable;
+        use crate::codegen::api::{compile_to_executable, Target};
         use crate::ir::{IRInstruction, IRProgram};
 
         // Create a program that uses heap allocation
@@ -251,14 +287,14 @@ mod tests {
         program.add_instruction(IRInstruction::Return);
 
         // Compile to machine code with heap support
-        let (machine_code, heap_init_offset) = compile_to_executable(&program);
+        let (machine_code, heap_init_offset) = compile_to_executable(&program, Target::X86_64Linux);
 
         // Verify heap is enabled
         assert!(heap_init_offset.is_some());
 
         // Generate ELF executable
         let output_path = "/tmp/test_slisp_heap_exec";
-        generate_elf_executable(&machine_code, output_path, heap_init_offset).unwrap();
+        generate_executable(&machine_code, output_path, heap_init_offset).unwrap();
 
         // Make executable
         Command::new("chmod")
