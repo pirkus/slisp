@@ -158,6 +158,25 @@ pub(crate) fn compile_node(
     }
 }
 
+/// Compile count operation (string length)
+fn compile_count(
+    args: &[Node],
+    context: &mut CompileContext,
+    program: &mut IRProgram,
+) -> Result<Vec<IRInstruction>, CompileError> {
+    if args.len() != 1 {
+        return Err(CompileError::ArityError("count".to_string(), 1, args.len()));
+    }
+
+    // Compile the argument (should be a string)
+    let mut instructions = compile_node(&args[0], context, program)?;
+
+    // Call _string_count runtime function (takes 1 arg: string pointer)
+    instructions.push(IRInstruction::RuntimeCall("_string_count".to_string(), 1));
+
+    Ok(instructions)
+}
+
 /// Compile a list (function call or special form) to IR
 fn compile_list(
     nodes: &[Node],
@@ -222,6 +241,7 @@ fn compile_list(
             "not" => expressions::compile_logical_not(args, context, program),
             "let" => bindings::compile_let(args, context, program),
             "defn" => Ok(functions::compile_defn(args, context, program)?.0),
+            "count" => compile_count(args, context, program),
             op => {
                 if let Some(func_info) = context.get_function(op) {
                     functions::compile_function_call(

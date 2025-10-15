@@ -12,6 +12,7 @@ pub struct RuntimeAddresses {
     pub heap_init: Option<usize>,
     pub allocate: Option<usize>,
     pub free: Option<usize>,
+    pub string_count: Option<usize>,
 }
 
 /// Code generation backend trait for different target architectures
