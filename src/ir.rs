@@ -39,6 +39,9 @@ pub enum IRInstruction {
     Allocate(usize), // Allocate N bytes, push address onto stack
     Free,            // Pop address from stack and free it
 
+    // Runtime function calls
+    RuntimeCall(String, usize), // (function_name, arg_count) - Call a runtime support function
+
     // Program flow
     Return, // Return top of stack as program result
 }

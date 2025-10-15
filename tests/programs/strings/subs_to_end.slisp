@@ -1,0 +1,2 @@
+(defn -main []
+  (count (subs "hello world" 6)))

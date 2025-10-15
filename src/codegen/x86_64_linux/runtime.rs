@@ -101,6 +101,56 @@ pub fn generate_heap_init() -> Vec<u8> {
     code
 }
 
+/// Generate the string_count function
+/// Takes string pointer in RDI, returns length in RAX
+/// Counts characters until null terminator
+///
+/// Algorithm:
+/// 1. Initialize counter to 0
+/// 2. Loop through string until null byte found
+/// 3. Return counter
+pub fn generate_string_count() -> Vec<u8> {
+    let mut code = Vec::new();
+
+    // _string_count:
+    // rdi = string pointer
+    // rax = counter (return value)
+
+    // Initialize counter
+    code.extend_from_slice(&[0x48, 0x31, 0xc0]); // xor rax, rax
+
+    // Check if pointer is NULL
+    code.extend_from_slice(&[0x48, 0x85, 0xff]); // test rdi, rdi
+    code.extend_from_slice(&[0x74, 0x00]); // je .return (offset filled later)
+    let return_jump_offset = code.len() - 1;
+
+    // .loop:
+    let loop_start = code.len();
+
+    // Load byte at [rdi + rax] and compare to 0
+    code.extend_from_slice(&[0x80, 0x3c, 0x07, 0x00]); // cmp byte [rdi + rax], 0
+
+    // If zero, we're done
+    code.extend_from_slice(&[0x74, 0x00]); // je .return (offset filled later)
+    let return_jump_offset2 = code.len() - 1;
+
+    // Increment counter
+    code.extend_from_slice(&[0x48, 0xff, 0xc0]); // inc rax
+
+    // Loop back
+    let back_jump_offset = -(((code.len() + 2) - loop_start) as i8);
+    code.extend_from_slice(&[0xeb, back_jump_offset as u8]); // jmp .loop
+
+    // .return:
+    let return_label = code.len();
+    code[return_jump_offset] = (return_label - return_jump_offset - 1) as u8;
+    code[return_jump_offset2] = (return_label - return_jump_offset2 - 1) as u8;
+
+    code.extend_from_slice(&[0xc3]); // ret
+
+    code
+}
+
 /// Generate the free function
 /// Takes pointer in RDI (pointer to data, not block header)
 /// Returns nothing

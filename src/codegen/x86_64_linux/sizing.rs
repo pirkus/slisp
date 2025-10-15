@@ -44,6 +44,16 @@ pub fn instruction_size(instruction: &IRInstruction, has_locals: bool) -> usize 
         IRInstruction::InitHeap => 0, // Generated as runtime function, not inline
         IRInstruction::Allocate(_) => 10, // mov rdi, size + call _allocate + push rax
         IRInstruction::Free => 6,     // pop rdi + call _free
+        // Runtime function calls
+        IRInstruction::RuntimeCall(_, arg_count) => {
+            let pop_size = match arg_count {
+                0 => 0,
+                1 => 1, // pop rdi
+                2 => 2, // pop rsi + pop rdi
+                _ => 3, // conservative estimate
+            };
+            pop_size + 5 + 1 // pops + call (5 bytes) + push rax (1 byte)
+        }
     }
 }
 

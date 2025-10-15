@@ -1,0 +1,3 @@
+(defn -main []
+  (let [result (subs "hello" 0 3)]
+    0))

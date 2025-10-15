@@ -1,0 +1,5 @@
+(defn compute [x y]
+  (+ x y))
+
+(defn -main []
+  (count (str "Result: " (compute 40 2))))

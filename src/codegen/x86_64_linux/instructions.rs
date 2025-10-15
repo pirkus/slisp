@@ -198,6 +198,44 @@ pub fn generate_free_inline(free_offset: i32) -> Vec<u8> {
     code
 }
 
+/// Generate machine code for a runtime function call
+/// Pops arguments from stack into registers (System V ABI), calls function, pushes result
+/// Currently supports up to 1 argument (RDI)
+pub fn generate_runtime_call(runtime_offset: i32, arg_count: usize) -> Vec<u8> {
+    let mut code = Vec::new();
+
+    // Pop arguments from stack into registers (right-to-left for System V ABI)
+    // System V ABI: RDI, RSI, RDX, RCX, R8, R9
+    match arg_count {
+        0 => {
+            // No arguments
+        }
+        1 => {
+            // pop rdi (first argument)
+            code.push(0x5f);
+        }
+        2 => {
+            // pop rsi (second argument)
+            code.extend_from_slice(&[0x5e]);
+            // pop rdi (first argument)
+            code.push(0x5f);
+        }
+        _ => {
+            // TODO: Support more arguments if needed
+            panic!("Runtime calls with more than 2 arguments not yet supported");
+        }
+    }
+
+    // call runtime_function
+    code.push(0xe8); // call relative
+    code.extend_from_slice(&runtime_offset.to_le_bytes());
+
+    // push rax (return value onto stack)
+    code.push(0x50);
+
+    code
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

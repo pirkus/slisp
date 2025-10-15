@@ -332,22 +332,25 @@ slisp --compile -o test test.slisp
 - ✅ **String address calculation** - `X86CodeGen::set_string_addresses()` computes correct offsets
 - ✅ **Working compiled strings** - String literals compile to native executables
 - ✅ **Integration test** - `test_string_literal_in_executable` verifies functionality
-- ✅ **All 101 tests passing** - No regressions, strings work in compiled mode
 
 **Design Decisions:**
 - **Storage:** Strings stored in rodata segment (not heap) - more efficient, no deallocation needed
 - **Null termination:** All strings null-terminated for C interop compatibility
 - **Deduplication:** String table automatically deduplicates identical literals
 - **Address space:** Rodata at 0x404000, separate from code (0x401000) and data (0x403000)
-
-**✅ Compiler Mode (String Operations - Partial Implementation):**
+**✅ Compiler Mode (String Operations - count operation COMPLETED!):**
 - ✅ **RuntimeCall IR instruction** - Generic instruction for calling runtime functions (extensible for all string ops)
-- ✅ **Runtime function infrastructure** - `generate_runtime_call()` with address tracking in codegen
-- ✅ **count operation** - `_string_count` runtime function compiles to native code
-  - ✅ Syntax: `(count "string")` → returns string length as integer
-  - ✅ Implementation: x86-64 assembly iterating null-terminated strings
-  - ✅ Test coverage: `(count "")` → 0, `(count "hello")` → 5, `(count "hello world")` → 11
-  - ✅ All 101 tests passing
+- ✅ **Compiler integration** - `compile_count()` function generates `RuntimeCall` IR instruction
+- ✅ **Code generation** - `RuntimeCall` handler implemented in both `generate_instruction()` and `generate_code()` methods
+- ✅ **Runtime function** - `_string_count` runtime function implemented in x86-64 assembly
+- ✅ **Runtime address tracking** - `string_count` address wired up in `RuntimeAddresses` with two-pass compilation
+- ✅ **Integration tests** - Full test coverage for compiled count operation
+
+**Implementation Details:**
+- **Runtime function**: `generate_string_count()` generates x86-64 assembly that iterates null-terminated strings
+- **Calling convention**: System V ABI (RDI = string pointer, RAX = return value)
+- **Two-pass compilation**: Calculates runtime function addresses before generating calls
+- **Modular design**: `generate_runtime_call()` supports multiple runtime functions with variable argument counts
 
 **Future Work (Phase 6.2+):**
 - ❌ **str operation** - String concatenation (requires heap allocation + runtime function)

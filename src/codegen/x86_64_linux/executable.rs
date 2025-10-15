@@ -551,4 +551,114 @@ mod tests {
         // Cleanup
         let _ = fs::remove_file(output_path);
     }
+
+    #[test]
+    fn test_string_count_in_executable() {
+        use crate::codegen::api::{compile_to_executable, Target};
+        use crate::ir::{IRInstruction, IRProgram};
+
+        // Create a program that counts the length of "hello"
+        // (count "hello") should return 5
+        let mut program = IRProgram::new();
+
+        // Add string to string table
+        let string_index = program.add_string("hello".to_string());
+
+        // Push the string address, call _string_count, return result
+        program.add_instruction(IRInstruction::PushString(string_index));
+        program.add_instruction(IRInstruction::RuntimeCall("_string_count".to_string(), 1));
+        program.add_instruction(IRInstruction::Return);
+
+        // Compile to machine code
+        let (machine_code, heap_init_offset) = compile_to_executable(&program, Target::X86_64Linux);
+
+        // Generate ELF executable with string literals
+        let output_path = "/tmp/test_slisp_string_count_hello";
+        generate_executable(
+            &machine_code,
+            output_path,
+            heap_init_offset,
+            &program.string_literals,
+        )
+        .unwrap();
+
+        // Make executable
+        Command::new("chmod")
+            .args(["+x", output_path])
+            .output()
+            .expect("Failed to chmod");
+
+        // Run and check exit code (should be 5 for "hello")
+        let output = Command::new(output_path)
+            .output()
+            .expect("Failed to execute");
+
+        if let Some(exit_code) = output.status.code() {
+            assert_eq!(
+                exit_code, 5,
+                "Expected exit code 5 (length of 'hello'), got {}",
+                exit_code
+            );
+        } else {
+            panic!("Program crashed during string count test");
+        }
+
+        // Cleanup
+        let _ = fs::remove_file(output_path);
+    }
+
+    #[test]
+    fn test_string_count_empty_in_executable() {
+        use crate::codegen::api::{compile_to_executable, Target};
+        use crate::ir::{IRInstruction, IRProgram};
+
+        // Create a program that counts the length of ""
+        // (count "") should return 0
+        let mut program = IRProgram::new();
+
+        // Add empty string to string table
+        let string_index = program.add_string("".to_string());
+
+        // Push the string address, call _string_count, return result
+        program.add_instruction(IRInstruction::PushString(string_index));
+        program.add_instruction(IRInstruction::RuntimeCall("_string_count".to_string(), 1));
+        program.add_instruction(IRInstruction::Return);
+
+        // Compile to machine code
+        let (machine_code, heap_init_offset) = compile_to_executable(&program, Target::X86_64Linux);
+
+        // Generate ELF executable with string literals
+        let output_path = "/tmp/test_slisp_string_count_empty";
+        generate_executable(
+            &machine_code,
+            output_path,
+            heap_init_offset,
+            &program.string_literals,
+        )
+        .unwrap();
+
+        // Make executable
+        Command::new("chmod")
+            .args(["+x", output_path])
+            .output()
+            .expect("Failed to chmod");
+
+        // Run and check exit code (should be 0 for "")
+        let output = Command::new(output_path)
+            .output()
+            .expect("Failed to execute");
+
+        if let Some(exit_code) = output.status.code() {
+            assert_eq!(
+                exit_code, 0,
+                "Expected exit code 0 (length of empty string), got {}",
+                exit_code
+            );
+        } else {
+            panic!("Program crashed during empty string count test");
+        }
+
+        // Cleanup
+        let _ = fs::remove_file(output_path);
+    }
 }

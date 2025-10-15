@@ -39,6 +39,7 @@ impl X86CodeGen {
                 heap_init: None,
                 allocate: None,
                 free: None,
+                string_count: None,
             },
             string_addresses: Vec::new(),
         }
@@ -87,6 +88,34 @@ impl X86CodeGen {
         } else {
             // Placeholder if free address not yet known
             instructions::generate_free_inline(0)
+        }
+    }
+
+    /// Generate code to call a runtime function
+    fn generate_runtime_call_code(
+        &self,
+        func_name: &str,
+        arg_count: usize,
+        current_pos: usize,
+    ) -> Vec<u8> {
+        let runtime_addr = match func_name {
+            "_string_count" => self.runtime_addresses.string_count,
+            _ => None,
+        };
+
+        if let Some(addr) = runtime_addr {
+            // Calculate offset based on arg_count (number of pop instructions before call)
+            let pop_size = match arg_count {
+                0 => 0,
+                1 => 1, // pop rdi
+                2 => 2, // pop rsi + pop rdi
+                _ => panic!("Unsupported arg_count"),
+            };
+            let offset = (addr as i32) - ((current_pos + pop_size + 5) as i32);
+            instructions::generate_runtime_call(offset, arg_count)
+        } else {
+            // Placeholder if runtime address not yet known
+            instructions::generate_runtime_call(0, arg_count)
         }
     }
 
@@ -230,6 +259,11 @@ impl X86CodeGen {
                 self.generate_free_code(current_pos)
             }
 
+            IRInstruction::RuntimeCall(func_name, arg_count) => {
+                let current_pos = self.code.len();
+                self.generate_runtime_call_code(func_name, *arg_count, current_pos)
+            }
+
             IRInstruction::Return => {
                 let mut code = instructions::generate_return();
                 code.extend(abi::generate_epilogue());
@@ -337,6 +371,14 @@ impl X86CodeGen {
                         self.code.extend(instructions::generate_free_inline(0));
                     }
                 }
+                IRInstruction::RuntimeCall(func_name, arg_count) => {
+                    let current_pos = self.code.len();
+                    self.code.extend(self.generate_runtime_call_code(
+                        func_name,
+                        *arg_count,
+                        current_pos,
+                    ));
+                }
                 IRInstruction::Return => {
                     self.code.extend(instructions::generate_return());
                     // Always add epilogue since we always add prologue
@@ -371,7 +413,13 @@ pub fn compile_to_executable(program: &IRProgram) -> (Vec<u8>, Option<usize>) {
         )
     });
 
-    if needs_heap {
+    // Check if program uses string operations
+    let needs_string_ops = program
+        .instructions
+        .iter()
+        .any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, _) if name == "_string_count"));
+
+    if needs_heap || needs_string_ops {
         // TWO-PASS APPROACH for runtime functions:
         // Pass 1: Generate code to calculate where runtime functions will be
         let mut codegen_pass1 = X86CodeGen::new();
@@ -379,31 +427,58 @@ pub fn compile_to_executable(program: &IRProgram) -> (Vec<u8>, Option<usize>) {
         let code_pass1 = codegen_pass1.generate(program);
 
         // Calculate runtime function addresses
-        let heap_init_offset = code_pass1.len();
-        let heap_init_code = runtime::generate_heap_init();
-        let allocate_offset = heap_init_offset + heap_init_code.len();
-        let allocate_code = runtime::generate_allocate();
-        let free_offset = allocate_offset + allocate_code.len();
+        let mut current_offset = code_pass1.len();
+        let mut heap_init_offset = None;
+        let mut allocate_offset = None;
+        let mut free_offset = None;
+        let mut string_count_offset = None;
+
+        // Add heap functions if needed
+        if needs_heap {
+            heap_init_offset = Some(current_offset);
+            let heap_init_code = runtime::generate_heap_init();
+            current_offset += heap_init_code.len();
+
+            allocate_offset = Some(current_offset);
+            let allocate_code = runtime::generate_allocate();
+            current_offset += allocate_code.len();
+
+            free_offset = Some(current_offset);
+            let free_code = runtime::generate_free();
+            current_offset += free_code.len();
+        }
+
+        // Add string functions if needed
+        if needs_string_ops {
+            string_count_offset = Some(current_offset);
+            // No need to track offset further - string_count is the last runtime function for now
+        }
 
         // Pass 2: Generate code with correct runtime addresses
         let mut codegen_pass2 = X86CodeGen::new();
         codegen_pass2.set_string_addresses(program);
-        codegen_pass2.runtime_addresses.heap_init = Some(heap_init_offset);
-        codegen_pass2.runtime_addresses.allocate = Some(allocate_offset);
-        codegen_pass2.runtime_addresses.free = Some(free_offset);
+        codegen_pass2.runtime_addresses.heap_init = heap_init_offset;
+        codegen_pass2.runtime_addresses.allocate = allocate_offset;
+        codegen_pass2.runtime_addresses.free = free_offset;
+        codegen_pass2.runtime_addresses.string_count = string_count_offset;
 
         let mut code = codegen_pass2.generate(program);
 
         // Append runtime support functions at the end
-        code.extend(heap_init_code);
-        code.extend(allocate_code);
-        code.extend(runtime::generate_free());
+        if needs_heap {
+            code.extend(runtime::generate_heap_init());
+            code.extend(runtime::generate_allocate());
+            code.extend(runtime::generate_free());
+        }
+        if needs_string_ops {
+            code.extend(runtime::generate_string_count());
+        }
 
         // Note: heap globals (heap_base, heap_end, free_list_head) live in data segment (0x403000-0x403018), handled by ELF generator
 
-        (code, Some(heap_init_offset))
+        (code, heap_init_offset)
     } else {
-        // No heap allocation needed, single-pass is fine
+        // No runtime functions needed, single-pass is fine
         let mut codegen = X86CodeGen::new();
         codegen.set_string_addresses(program);
         (codegen.generate(program), None)
