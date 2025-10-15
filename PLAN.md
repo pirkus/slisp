@@ -340,9 +340,19 @@ slisp --compile -o test test.slisp
 - **Deduplication:** String table automatically deduplicates identical literals
 - **Address space:** Rodata at 0x404000, separate from code (0x401000) and data (0x403000)
 
+**✅ Compiler Mode (String Operations - Partial Implementation):**
+- ✅ **RuntimeCall IR instruction** - Generic instruction for calling runtime functions (extensible for all string ops)
+- ✅ **Runtime function infrastructure** - `generate_runtime_call()` with address tracking in codegen
+- ✅ **count operation** - `_string_count` runtime function compiles to native code
+  - ✅ Syntax: `(count "string")` → returns string length as integer
+  - ✅ Implementation: x86-64 assembly iterating null-terminated strings
+  - ✅ Test coverage: `(count "")` → 0, `(count "hello")` → 5, `(count "hello world")` → 11
+  - ✅ All 101 tests passing
+
 **Future Work (Phase 6.2+):**
-- ❌ **String operations in compiler** - `str`, `count`, `get`, `subs` need runtime implementations
-- ❌ **String concatenation** - Requires heap allocation + runtime function
+- ❌ **str operation** - String concatenation (requires heap allocation + runtime function)
+- ❌ **get operation** - Character at index (requires runtime function)
+- ❌ **subs operation** - Substring extraction (requires runtime function)
 - ❌ **String mutation** - Not planned (strings are immutable in design)
 
 #### **Phase 6.2: Data Structure Support**
