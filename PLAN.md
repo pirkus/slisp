@@ -371,16 +371,43 @@ slisp --compile -o test test.slisp
 - **Fix**: Changed byte sequence in `generate_string_concat_2()` line 137 to correct REX prefix
 - **Result**: String concatenation now works perfectly in compiled executables
 
-**Current Limitation:**
-- **2-argument str only** - `(str "a" "b")` works, but `(str "a" "b" "c")` requires nested calls: `(str (str "a" "b") "c")`
-- **Nested str calls have issues** - Temporary value management needs improvement for complex expressions
+**What Works (Session 3):**
+```lisp
+;; Simple string concatenation (2 arguments only)
+(str "hello" " world")  ; Returns heap-allocated "hello world"
+
+;; String operations in let bindings with automatic cleanup
+(let [s1 (str "hello" " world")]
+  (count s1))  ; Returns 11, s1 automatically freed on scope exit
+
+;; Multiple string allocations - all freed automatically
+(let [s1 (str "first" " string")
+      s2 (str "second" " string")]
+  42)  ; Returns 42, both s1 and s2 freed when let scope ends
+
+;; String literals (in rodata, no allocation needed)
+(count "hello")  ; Returns 5, no heap allocation
+
+;; Mixing strings and other operations
+(let [greeting (str "Hello" " World")
+      len (count greeting)]
+  len)  ; Returns 11, greeting freed before return
+```
+
+**Known Limitations:**
+- **2-argument str only** - `(str "a" "b")` works, but `(str "a" "b" "c")` not supported
+- **❌ Nested str calls fail** - `(str (str "a" "b") "c")` returns NULL
+  - Issue: Inner result not saved as temporary, gets freed before outer call can use it
+  - Fix needed: Temporary variable management for nested heap-allocating expressions
+- **No value sharing between scopes** - Can't return or pass heap values (would be freed prematurely)
+  - Would need string duplication on escape or reference counting
 
 **Future Work (Phase 6.2+):**
 - ❌ **get operation** - Character at index (requires runtime function)
 - ❌ **subs operation** - Substring extraction (requires runtime function)
 - ❌ **N-argument str** - Support `(str "a" "b" "c" ...)` with variadic arguments
-- ❌ **Nested str improvement** - Fix temporary value management for complex expressions
-`(str (str "a" "b") "c")`
+- ❌ **Nested str fix** - Temporary value management for `(str (str "a" "b") "c")`
+- ❌ **String escape/duplication** - Copy strings when returned or passed between scopes
 - ❌ **String mutation** - Not planned (strings are immutable in design)
 
 #### **Phase 6.2: Data Structure Support**
@@ -395,26 +422,70 @@ slisp --compile -o test test.slisp
   - [ ] Operations: `hash-set`, `conj`, `disj`, `contains?`
 
 #### **Phase 6.3: Memory Management - ✅ SCOPE-BASED DEALLOCATION IMPLEMENTED!**
-- ✅ **Automatic freeing on scope exit** - `let`-bound heap values freed when scope ends
-  - ✅ `CompileContext` tracks which variables hold heap pointers (`heap_allocated_vars`)
-  - ✅ `FreeLocal` IR instruction frees local variables without affecting stack
-  - ✅ RAX register preservation (push/pop around _free call) to protect return values
-  - ✅ Works correctly with `str` operation - strings freed after use
-- ✅ **Simple ownership model** - Each scope owns its heap allocations
-  - Values freed when scope ends (after body evaluation, before return)
-  - Works for `let` bindings in current implementation
-  - **Limitation**: Doesn't handle passing heap values between scopes (would need duplication or reference counting)
+
+**Current Memory Model (Session 3):**
+The compiler implements a **simple scope-based ownership model** for heap-allocated values:
+
+```
+Ownership Rules:
+1. Each `let` binding owns its heap-allocated values
+2. Values are freed when the `let` scope ends (after body evaluation, before return)
+3. No sharing between scopes - values cannot escape their defining scope
+4. Automatic tracking - compiler identifies heap-allocating operations (like `str`)
+```
+
+**Example Execution Flow:**
+```lisp
+(let [s1 (str "hello" " world")  ; 1. Allocate 12 bytes, store pointer in s1
+      s2 (str "foo" "bar")]      ; 2. Allocate 7 bytes, store pointer in s2
+  (count s1))                    ; 3. Use s1 (still valid)
+                                 ; 4. Free s2 (FreeLocal slot 1)
+                                 ; 5. Free s1 (FreeLocal slot 0)
+                                 ; 6. Return count result
+```
+
+**What Gets Freed Automatically:**
+- ✅ Heap-allocated strings from `str` operation
+- ✅ Multiple allocations in same scope (freed in reverse order)
+- ✅ Allocations even if unused (e.g., `(let [s (str "a" "b")] 42)`)
+
+**What Doesn't Work Yet:**
+- ❌ Returning heap values from functions (would be freed before return)
+- ❌ Passing heap values as arguments (caller's scope frees them)
+- ❌ Nested allocations like `(str (str "a" "b") "c")` (inner value freed too early)
+- ❌ Conditional allocations (would need smarter lifetime tracking)
 
 **Implementation Details (Session 3):**
 - Added `heap_allocated_vars: HashMap<String, bool>` to `CompileContext`
 - Helper function `is_heap_allocating_expression()` identifies `str` calls
 - `FreeLocal(slot)` instruction: `push rax; mov rdi,[rbp-slot*8]; call _free; pop rax`
 - Preserves RAX because `_free` clobbers it with internal operations
+- Free instructions inserted after body evaluation, before function epilogue
+
+**Why RAX Preservation Matters:**
+```
+Without preservation:
+  push 7            ; Return value on stack
+  mov rdi, [rbp-8]  ; Load s1 pointer
+  call _free        ; _free clobbers RAX internally!
+  pop rax           ; Pop return value into RAX (correct value: 7)
+  ret               ; Return RAX (now contains garbage from _free!)
+
+With preservation:
+  push 7            ; Return value on stack
+  push rax          ; Save RAX (stack protection)
+  mov rdi, [rbp-8]  ; Load s1 pointer
+  call _free        ; _free clobbers RAX (we don't care)
+  pop rax           ; Restore RAX (still has correct value)
+  pop rax           ; Pop return value (overwrites with 7)
+  ret               ; Return 7 ✓
+```
 
 **Future Enhancements:**
 - [ ] **Block coalescing** - Merge adjacent free blocks to reduce fragmentation
-- [ ] **Reference counting GC** - Automatic memory management for shared values
-- [ ] **String duplication on escape** - Copy strings when returned or passed to other scopes
+- [ ] **Reference counting** - Track value lifetimes across scopes for sharing
+- [ ] **String duplication on escape** - Copy strings when returned/passed to enable value sharing
+- [ ] **Smart lifetime analysis** - Only free values that won't be used again
   - [ ] Auto-free when count reaches zero
 - [ ] **Alternative: Mark & Sweep GC** - More robust but complex
   - [ ] Root set identification (stack, globals)
