@@ -7,6 +7,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct CompileContext {
     pub variables: HashMap<String, usize>, // variable name -> local slot index
+    pub heap_allocated_vars: HashMap<String, bool>, // tracks if variable holds heap pointer
     pub parameters: HashMap<String, usize>, // parameter name -> param slot index
     pub functions: HashMap<String, FunctionInfo>, // function name -> function info
     pub next_slot: usize,
@@ -18,6 +19,7 @@ impl CompileContext {
     pub fn new() -> Self {
         Self {
             variables: HashMap::new(),
+            heap_allocated_vars: HashMap::new(),
             parameters: HashMap::new(),
             functions: HashMap::new(),
             next_slot: 0,
@@ -88,5 +90,24 @@ impl CompileContext {
         for name in names {
             self.remove_variable(name);
         }
+    }
+
+    /// Mark a variable as holding a heap-allocated pointer
+    pub fn mark_heap_allocated(&mut self, name: &str) {
+        self.heap_allocated_vars.insert(name.to_string(), true);
+    }
+
+    /// Check if a variable holds a heap-allocated pointer
+    pub fn is_heap_allocated(&self, name: &str) -> bool {
+        self.heap_allocated_vars.get(name).copied().unwrap_or(false)
+    }
+
+    /// Get list of heap-allocated variables from a list of names
+    pub fn get_heap_allocated_vars(&self, names: &[String]) -> Vec<String> {
+        names
+            .iter()
+            .filter(|name| self.is_heap_allocated(name))
+            .cloned()
+            .collect()
     }
 }

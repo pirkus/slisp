@@ -92,6 +92,41 @@ impl X86CodeGen {
         }
     }
 
+    fn generate_free_local_code(&self, slot: usize, current_pos: usize) -> Vec<u8> {
+        let mut code = Vec::new();
+
+        // Save RAX (might contain return value that we need to preserve)
+        code.push(0x50); // push rax
+
+        // Load the pointer from local variable into rdi (arg for _free)
+        // Local variables are at rbp - 8*(slot+1)
+        let offset = 8 * (slot + 1);
+
+        // mov rdi, [rbp - offset]
+        if offset <= 128 {
+            code.extend_from_slice(&[0x48, 0x8b, 0x7d, (256 - offset) as u8]); // 4 bytes
+        } else {
+            code.extend_from_slice(&[0x48, 0x8b, 0xbd]); // mov rdi, [rbp - offset]
+            code.extend_from_slice(&(-(offset as i32)).to_le_bytes()); // 7 bytes total
+        }
+
+        // Call _free (this will clobber RAX, but we saved it above)
+        if let Some(free_addr) = self.runtime_addresses.free {
+            let call_pos = current_pos + code.len();
+            let offset = (free_addr as i32) - ((call_pos + 5) as i32);
+            code.push(0xe8); // call
+            code.extend_from_slice(&offset.to_le_bytes());
+        } else {
+            // Placeholder
+            code.extend_from_slice(&[0xe8, 0x00, 0x00, 0x00, 0x00]);
+        }
+
+        // Restore RAX
+        code.push(0x58); // pop rax
+
+        code
+    }
+
     /// Generate code to call a runtime function
     fn generate_runtime_call_code(
         &self,
@@ -261,6 +296,11 @@ impl X86CodeGen {
                 self.generate_free_code(current_pos)
             }
 
+            IRInstruction::FreeLocal(slot) => {
+                let current_pos = self.code.len();
+                self.generate_free_local_code(*slot, current_pos)
+            }
+
             IRInstruction::RuntimeCall(func_name, arg_count) => {
                 let current_pos = self.code.len();
                 self.generate_runtime_call_code(func_name, *arg_count, current_pos)
@@ -372,6 +412,11 @@ impl X86CodeGen {
                         // Placeholder if free address not yet known
                         self.code.extend(instructions::generate_free_inline(0));
                     }
+                }
+                IRInstruction::FreeLocal(slot) => {
+                    let current_pos = self.code.len();
+                    self.code
+                        .extend(self.generate_free_local_code(*slot, current_pos));
                 }
                 IRInstruction::RuntimeCall(func_name, arg_count) => {
                     let current_pos = self.code.len();

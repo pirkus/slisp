@@ -11,7 +11,9 @@
 - ✅ **Heap allocation** - Free-list malloc/free implementation for dynamic memory
 - ✅ **String operations** - Working `str` concatenation and `count` in both interpreter and compiler modes
 
-**Session 3 Summary (2025-10-15):** Fixed critical bug in `str` operation - XOR instruction had wrong REX prefix encoding, causing string length counter to be initialized with garbage instead of zero. Changed `0x49, 0x31, 0xf6` to `0x4d, 0x31, 0xf6` in `generate_string_concat_2()`. Result: String concatenation now works perfectly in compiled executables!
+**Session 3 Summary (2025-10-15):**  
+1. **Fixed `str` operation bug:** XOR instruction had wrong REX prefix (0x49 instead of 0x4d), causing garbage length calculations. String concatenation now works!
+2. **Implemented automatic memory management:** Added scope-based memory freeing for heap-allocated strings in `let` bindings. When heap-allocated variables go out of scope, they are automatically freed using new `FreeLocal` IR instruction that preserves RAX register.
 
 ## Architecture Overview
 ```
@@ -378,6 +380,7 @@ slisp --compile -o test test.slisp
 - ❌ **subs operation** - Substring extraction (requires runtime function)
 - ❌ **N-argument str** - Support `(str "a" "b" "c" ...)` with variadic arguments
 - ❌ **Nested str improvement** - Fix temporary value management for complex expressions
+`(str (str "a" "b") "c")`
 - ❌ **String mutation** - Not planned (strings are immutable in design)
 
 #### **Phase 6.2: Data Structure Support**
@@ -391,14 +394,27 @@ slisp --compile -o test test.slisp
   - [ ] Heap allocation with hash set implementation
   - [ ] Operations: `hash-set`, `conj`, `disj`, `contains?`
 
-#### **Phase 6.3: Memory Management Enhancements**
+#### **Phase 6.3: Memory Management - ✅ SCOPE-BASED DEALLOCATION IMPLEMENTED!**
+- ✅ **Automatic freeing on scope exit** - `let`-bound heap values freed when scope ends
+  - ✅ `CompileContext` tracks which variables hold heap pointers (`heap_allocated_vars`)
+  - ✅ `FreeLocal` IR instruction frees local variables without affecting stack
+  - ✅ RAX register preservation (push/pop around _free call) to protect return values
+  - ✅ Works correctly with `str` operation - strings freed after use
+- ✅ **Simple ownership model** - Each scope owns its heap allocations
+  - Values freed when scope ends (after body evaluation, before return)
+  - Works for `let` bindings in current implementation
+  - **Limitation**: Doesn't handle passing heap values between scopes (would need duplication or reference counting)
+
+**Implementation Details (Session 3):**
+- Added `heap_allocated_vars: HashMap<String, bool>` to `CompileContext`
+- Helper function `is_heap_allocating_expression()` identifies `str` calls
+- `FreeLocal(slot)` instruction: `push rax; mov rdi,[rbp-slot*8]; call _free; pop rax`
+- Preserves RAX because `_free` clobbers it with internal operations
+
+**Future Enhancements:**
 - [ ] **Block coalescing** - Merge adjacent free blocks to reduce fragmentation
-  - [ ] Detect adjacent free blocks during free()
-  - [ ] Merge blocks by updating size and next pointers
-  - [ ] Improves memory efficiency for long-running programs
-- [ ] **Reference counting GC** - Automatic memory management layer
-  - [ ] Reference count field in heap-allocated objects
-  - [ ] Increment on copy, decrement on drop
+- [ ] **Reference counting GC** - Automatic memory management for shared values
+- [ ] **String duplication on escape** - Copy strings when returned or passed to other scopes
   - [ ] Auto-free when count reaches zero
 - [ ] **Alternative: Mark & Sweep GC** - More robust but complex
   - [ ] Root set identification (stack, globals)
