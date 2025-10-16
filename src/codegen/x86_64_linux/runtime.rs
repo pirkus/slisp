@@ -101,6 +101,181 @@ pub fn generate_heap_init() -> Vec<u8> {
     code
 }
 
+/// Generate the string_concat_2 function
+/// Takes two string pointers (RDI = str1, RSI = str2)
+/// Returns pointer to concatenated string in RAX (heap-allocated, null-terminated)
+///
+/// Parameters:
+/// - `allocate_offset`: Optional offset to _allocate function. If None, returns stub.
+///                      Offset is relative: (allocate_addr - current_position_in_concat_2)
+///
+/// Algorithm:
+/// 1. Calculate length of str1 and str2
+/// 2. Allocate heap memory (len1 + len2 + 1 for null terminator)
+/// 3. Copy str1 into buffer
+/// 4. Copy str2 after str1
+/// 5. Add null terminator
+/// 6. Return pointer to result
+pub fn generate_string_concat_2(allocate_offset: Option<i32>) -> Vec<u8> {
+    let mut code = Vec::new();
+
+    // _string_concat_2:
+    // rdi = str1, rsi = str2
+
+    // Save callee-saved registers
+    code.extend_from_slice(&[0x53]); // push rbx
+    code.extend_from_slice(&[0x55]); // push rbp
+    code.extend_from_slice(&[0x41, 0x54]); // push r12
+    code.extend_from_slice(&[0x41, 0x55]); // push r13
+    code.extend_from_slice(&[0x41, 0x56]); // push r14
+    code.extend_from_slice(&[0x41, 0x57]); // push r15
+
+    // Save arguments: r12 = str1, r13 = str2
+    code.extend_from_slice(&[0x49, 0x89, 0xfc]); // mov r12, rdi
+    code.extend_from_slice(&[0x49, 0x89, 0xf5]); // mov r13, rsi
+
+    // Calculate length of str1 -> r14
+    code.extend_from_slice(&[0x4d, 0x31, 0xf6]); // xor r14, r14
+    code.extend_from_slice(&[0x4c, 0x89, 0xe3]); // mov rbx, r12
+                                                 // .len1_loop:
+    let len1_loop = code.len();
+    code.extend_from_slice(&[0x80, 0x3b, 0x00]); // cmp byte [rbx], 0
+    code.extend_from_slice(&[0x74, 0x00]); // je .len1_done
+    let len1_done_jump = code.len() - 1;
+    code.extend_from_slice(&[0x49, 0xff, 0xc6]); // inc r14
+    code.extend_from_slice(&[0x48, 0xff, 0xc3]); // inc rbx
+    let len1_back = -(((code.len() + 2) - len1_loop) as i8);
+    code.extend_from_slice(&[0xeb, len1_back as u8]); // jmp .len1_loop
+                                                      // .len1_done:
+    let len1_done = code.len();
+    code[len1_done_jump] = (len1_done - len1_done_jump - 1) as u8;
+
+    // Calculate length of str2 -> rbx (reusing rbx as temp)
+    code.extend_from_slice(&[0x48, 0x31, 0xdb]); // xor rbx, rbx
+    code.extend_from_slice(&[0x4c, 0x89, 0xe8]); // mov rax, r13
+                                                 // .len2_loop:
+    let len2_loop = code.len();
+    code.extend_from_slice(&[0x80, 0x38, 0x00]); // cmp byte [rax], 0
+    code.extend_from_slice(&[0x74, 0x00]); // je .len2_done
+    let len2_done_jump = code.len() - 1;
+    code.extend_from_slice(&[0x48, 0xff, 0xc3]); // inc rbx
+    code.extend_from_slice(&[0x48, 0xff, 0xc0]); // inc rax
+    let len2_back = -(((code.len() + 2) - len2_loop) as i8);
+    code.extend_from_slice(&[0xeb, len2_back as u8]); // jmp .len2_loop
+                                                      // .len2_done:
+    let len2_done = code.len();
+    code[len2_done_jump] = (len2_done - len2_done_jump - 1) as u8;
+
+    // Total length = r14 + rbx + 1
+    code.extend_from_slice(&[0x4c, 0x89, 0xf7]); // mov rdi, r14
+    code.extend_from_slice(&[0x48, 0x01, 0xdf]); // add rdi, rbx
+    code.extend_from_slice(&[0x48, 0xff, 0xc7]); // inc rdi (for null terminator)
+
+    if let Some(offset) = allocate_offset {
+        // Align stack to 16 bytes before call (System V ABI requirement)
+        // We've pushed 6 registers (48 bytes), plus return address will be pushed (8 bytes) = 56 bytes
+        // 56 % 16 = 8, so we need to subtract 8 more bytes to align
+        code.extend_from_slice(&[0x48, 0x83, 0xec, 0x08]); // sub rsp, 8
+
+        // Call _allocate with rdi = total size
+        // Note: Position is after the above instructions
+        let call_position = code.len();
+        let call_offset = offset - (call_position as i32) - 5; // -5 for call instruction size
+        eprintln!(
+            "  concat_2: call_position={}, offset={}, call_offset={}",
+            call_position, offset, call_offset
+        );
+        eprintln!(
+            "  concat_2: if concat_2 is at X, call is at X+{}, targets X+{}",
+            call_position, offset
+        );
+        code.extend_from_slice(&[0xe8]); // call (relative)
+        code.extend_from_slice(&call_offset.to_le_bytes());
+
+        // Restore stack alignment
+        code.extend_from_slice(&[0x48, 0x83, 0xc4, 0x08]); // add rsp, 8
+
+        // rax now contains allocated buffer pointer
+        // Check if allocation failed
+        code.extend_from_slice(&[0x48, 0x85, 0xc0]); // test rax, rax
+        code.extend_from_slice(&[0x74, 0x00]); // je .return_null
+        let return_null_jump = code.len() - 1;
+
+        // Save allocated pointer in rbp (we'll need it for the return value)
+        code.extend_from_slice(&[0x48, 0x89, 0xc5]); // mov rbp, rax
+
+        // Copy str1 (r12) into buffer
+        // rax = destination, r12 = source
+        code.extend_from_slice(&[0x4c, 0x89, 0xe3]); // mov rbx, r12
+                                                     // .copy1_loop:
+        let copy1_loop = code.len();
+        code.extend_from_slice(&[0x8a, 0x0b]); // mov cl, [rbx]
+        code.extend_from_slice(&[0x84, 0xc9]); // test cl, cl
+        code.extend_from_slice(&[0x74, 0x00]); // je .copy1_done
+        let copy1_done_jump = code.len() - 1;
+        code.extend_from_slice(&[0x88, 0x08]); // mov [rax], cl
+        code.extend_from_slice(&[0x48, 0xff, 0xc3]); // inc rbx
+        code.extend_from_slice(&[0x48, 0xff, 0xc0]); // inc rax
+        let copy1_back = -(((code.len() + 2) - copy1_loop) as i8);
+        code.extend_from_slice(&[0xeb, copy1_back as u8]); // jmp .copy1_loop
+                                                           // .copy1_done:
+        let copy1_done = code.len();
+        code[copy1_done_jump] = (copy1_done - copy1_done_jump - 1) as u8;
+
+        // Copy str2 (r13) into buffer (rax is already positioned after str1)
+        code.extend_from_slice(&[0x4c, 0x89, 0xeb]); // mov rbx, r13
+                                                     // .copy2_loop:
+        let copy2_loop = code.len();
+        code.extend_from_slice(&[0x8a, 0x0b]); // mov cl, [rbx]
+        code.extend_from_slice(&[0x84, 0xc9]); // test cl, cl
+        code.extend_from_slice(&[0x74, 0x00]); // je .copy2_done
+        let copy2_done_jump = code.len() - 1;
+        code.extend_from_slice(&[0x88, 0x08]); // mov [rax], cl
+        code.extend_from_slice(&[0x48, 0xff, 0xc3]); // inc rbx
+        code.extend_from_slice(&[0x48, 0xff, 0xc0]); // inc rax
+        let copy2_back = -(((code.len() + 2) - copy2_loop) as i8);
+        code.extend_from_slice(&[0xeb, copy2_back as u8]); // jmp .copy2_loop
+                                                           // .copy2_done:
+        let copy2_done = code.len();
+        code[copy2_done_jump] = (copy2_done - copy2_done_jump - 1) as u8;
+
+        // Add null terminator
+        code.extend_from_slice(&[0xc6, 0x00, 0x00]); // mov byte [rax], 0
+
+        // Return result pointer from rbp
+        code.extend_from_slice(&[0x48, 0x89, 0xe8]); // mov rax, rbp
+        code.extend_from_slice(&[0xeb, 0x00]); // jmp .return
+        let return_jump = code.len() - 1;
+
+        // .return_null:
+        let return_null = code.len();
+        code[return_null_jump] = (return_null - return_null_jump - 1) as u8;
+        code.extend_from_slice(&[0x48, 0x31, 0xc0]); // xor rax, rax
+
+        // .return:
+        let return_label = code.len();
+        code[return_jump] = (return_label - return_jump - 1) as u8;
+    } else {
+        // Stub mode: return test value
+        code.extend_from_slice(&[0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00]); // mov rax, 1
+    }
+
+    // NOTE: rax already contains the return value at this point
+    // We must NOT pop any registers after setting rax, or we'll lose the value
+
+    // Restore registers (EXCEPT rax which has our return value)
+    code.extend_from_slice(&[0x41, 0x5f]); // pop r15
+    code.extend_from_slice(&[0x41, 0x5e]); // pop r14
+    code.extend_from_slice(&[0x41, 0x5d]); // pop r13
+    code.extend_from_slice(&[0x41, 0x5c]); // pop r12
+    code.extend_from_slice(&[0x5d]); // pop rbp
+    code.extend_from_slice(&[0x5b]); // pop rbx
+
+    code.extend_from_slice(&[0xc3]); // ret
+
+    code
+}
+
 /// Generate the string_count function
 /// Takes string pointer in RDI, returns length in RAX
 /// Counts characters until null terminator

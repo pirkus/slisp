@@ -177,6 +177,32 @@ fn compile_count(
     Ok(instructions)
 }
 
+/// Compile str operation (string concatenation)
+/// For now, only supports 2 arguments (will expand to N later)
+fn compile_str(
+    args: &[Node],
+    context: &mut CompileContext,
+    program: &mut IRProgram,
+) -> Result<Vec<IRInstruction>, CompileError> {
+    if args.len() != 2 {
+        return Err(CompileError::ArityError("str".to_string(), 2, args.len()));
+    }
+
+    let mut instructions = Vec::new();
+
+    // Compile both arguments (should be strings)
+    instructions.extend(compile_node(&args[0], context, program)?);
+    instructions.extend(compile_node(&args[1], context, program)?);
+
+    // Call _string_concat_2 runtime function (takes 2 args: str1, str2)
+    instructions.push(IRInstruction::RuntimeCall(
+        "_string_concat_2".to_string(),
+        2,
+    ));
+
+    Ok(instructions)
+}
+
 /// Compile a list (function call or special form) to IR
 fn compile_list(
     nodes: &[Node],
@@ -242,6 +268,7 @@ fn compile_list(
             "let" => bindings::compile_let(args, context, program),
             "defn" => Ok(functions::compile_defn(args, context, program)?.0),
             "count" => compile_count(args, context, program),
+            "str" => compile_str(args, context, program),
             op => {
                 if let Some(func_info) = context.get_function(op) {
                     functions::compile_function_call(

@@ -8,6 +8,10 @@
 - ✅ **REPL interface** - Interactive shell with Ctrl+D exit and error handling
 - ✅ **ELF executable generation** - Compiles SLisp expressions to standalone native executables
 - ✅ **Modular architecture** - Refactored codebase with well-organized modules (codegen, compiler, evaluator, repl, cli)
+- ✅ **Heap allocation** - Free-list malloc/free implementation for dynamic memory
+- ✅ **String operations** - Working `str` concatenation and `count` in both interpreter and compiler modes
+
+**Session 3 Summary (2025-10-15):** Fixed critical bug in `str` operation - XOR instruction had wrong REX prefix encoding, causing string length counter to be initialized with garbage instead of zero. Changed `0x49, 0x31, 0xf6` to `0x4d, 0x31, 0xf6` in `generate_string_concat_2()`. Result: String concatenation now works perfectly in compiled executables!
 
 ## Architecture Overview
 ```
@@ -352,10 +356,28 @@ slisp --compile -o test test.slisp
 - **Two-pass compilation**: Calculates runtime function addresses before generating calls
 - **Modular design**: `generate_runtime_call()` supports multiple runtime functions with variable argument counts
 
+**✅ Compiler Mode (String Operations - str operation COMPLETED!):**
+- ✅ **Infrastructure complete** - `RuntimeCall` for `_string_concat_2`, compiler integration, two-pass compilation
+- ✅ **Runtime function fully implemented** - `generate_string_concat_2()` with heap allocation, string copying, null termination
+- ✅ **Cross-function calls working** - `_string_concat_2` successfully calls `_allocate` with proper relative offsets
+- ✅ **2-argument str working** - `(str "hello" " world")` compiles and produces "hello world" in heap memory
+- ✅ **Testing verified** - Concatenated strings correctly allocated, length = 11, content verified with memory inspection
+
+**Bug Fixed (Session 3):**
+- **Issue**: XOR instruction used wrong encoding (`49 31 f6` = `xor r14, rsi` instead of `4d 31 f6` = `xor r14, r14`)
+- **Impact**: r14 (string length counter) was initialized with garbage, causing allocate to request random sizes
+- **Fix**: Changed byte sequence in `generate_string_concat_2()` line 137 to correct REX prefix
+- **Result**: String concatenation now works perfectly in compiled executables
+
+**Current Limitation:**
+- **2-argument str only** - `(str "a" "b")` works, but `(str "a" "b" "c")` requires nested calls: `(str (str "a" "b") "c")`
+- **Nested str calls have issues** - Temporary value management needs improvement for complex expressions
+
 **Future Work (Phase 6.2+):**
-- ❌ **str operation** - String concatenation (requires heap allocation + runtime function)
 - ❌ **get operation** - Character at index (requires runtime function)
 - ❌ **subs operation** - Substring extraction (requires runtime function)
+- ❌ **N-argument str** - Support `(str "a" "b" "c" ...)` with variadic arguments
+- ❌ **Nested str improvement** - Fix temporary value management for complex expressions
 - ❌ **String mutation** - Not planned (strings are immutable in design)
 
 #### **Phase 6.2: Data Structure Support**

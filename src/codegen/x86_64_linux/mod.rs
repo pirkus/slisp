@@ -40,6 +40,7 @@ impl X86CodeGen {
                 allocate: None,
                 free: None,
                 string_count: None,
+                string_concat_2: None,
             },
             string_addresses: Vec::new(),
         }
@@ -100,6 +101,7 @@ impl X86CodeGen {
     ) -> Vec<u8> {
         let runtime_addr = match func_name {
             "_string_count" => self.runtime_addresses.string_count,
+            "_string_concat_2" => self.runtime_addresses.string_concat_2,
             _ => None,
         };
 
@@ -410,14 +412,14 @@ pub fn compile_to_executable(program: &IRProgram) -> (Vec<u8>, Option<usize>) {
         matches!(
             inst,
             IRInstruction::InitHeap | IRInstruction::Allocate(_) | IRInstruction::PushString(_)
-        )
+        ) || matches!(inst, IRInstruction::RuntimeCall(name, _) if name == "_string_concat_2")
     });
 
     // Check if program uses string operations
     let needs_string_ops = program
         .instructions
         .iter()
-        .any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, _) if name == "_string_count"));
+        .any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, _) if name == "_string_count" || name == "_string_concat_2"));
 
     if needs_heap || needs_string_ops {
         // TWO-PASS APPROACH for runtime functions:
@@ -428,30 +430,77 @@ pub fn compile_to_executable(program: &IRProgram) -> (Vec<u8>, Option<usize>) {
 
         // Calculate runtime function addresses
         let mut current_offset = code_pass1.len();
+        eprintln!(
+            "Pass 1: user code size = {}, runtime functions start at {}",
+            code_pass1.len(),
+            current_offset
+        );
         let mut heap_init_offset = None;
         let mut allocate_offset = None;
         let mut free_offset = None;
         let mut string_count_offset = None;
+        let mut string_concat_2_offset = None;
 
         // Add heap functions if needed
         if needs_heap {
             heap_init_offset = Some(current_offset);
             let heap_init_code = runtime::generate_heap_init();
+            eprintln!(
+                "Pass 1: heap_init at {}, size={}",
+                current_offset,
+                heap_init_code.len()
+            );
             current_offset += heap_init_code.len();
 
             allocate_offset = Some(current_offset);
             let allocate_code = runtime::generate_allocate();
+            eprintln!(
+                "Pass 1: allocate at {}, size={}",
+                current_offset,
+                allocate_code.len()
+            );
             current_offset += allocate_code.len();
 
             free_offset = Some(current_offset);
             let free_code = runtime::generate_free();
+            eprintln!(
+                "Pass 1: free at {}, size={}",
+                current_offset,
+                free_code.len()
+            );
             current_offset += free_code.len();
         }
 
         // Add string functions if needed
         if needs_string_ops {
             string_count_offset = Some(current_offset);
-            // No need to track offset further - string_count is the last runtime function for now
+            let string_count_code = runtime::generate_string_count();
+            eprintln!(
+                "Pass 1: string_count at {}, size={}",
+                current_offset,
+                string_count_code.len()
+            );
+            current_offset += string_count_code.len();
+
+            string_concat_2_offset = Some(current_offset);
+            eprintln!("Pass 1: string_concat_2 will be at {}", current_offset);
+
+            // Calculate tentative offset for concat_2 to call allocate
+            // This is needed so concat_2 generates the same size in both passes
+            let tentative_allocate_offset = if let Some(alloc_addr) = allocate_offset {
+                Some((alloc_addr as i32) - (current_offset as i32))
+            } else {
+                None
+            };
+
+            // Generate concat_2 with the offset to get its size
+            let string_concat_2_code = runtime::generate_string_concat_2(tentative_allocate_offset);
+            eprintln!(
+                "Pass 1: concat_2 offset={:?}, size={}",
+                tentative_allocate_offset,
+                string_concat_2_code.len()
+            );
+            current_offset += string_concat_2_code.len();
         }
 
         // Pass 2: Generate code with correct runtime addresses
@@ -461,8 +510,10 @@ pub fn compile_to_executable(program: &IRProgram) -> (Vec<u8>, Option<usize>) {
         codegen_pass2.runtime_addresses.allocate = allocate_offset;
         codegen_pass2.runtime_addresses.free = free_offset;
         codegen_pass2.runtime_addresses.string_count = string_count_offset;
+        codegen_pass2.runtime_addresses.string_concat_2 = string_concat_2_offset;
 
         let mut code = codegen_pass2.generate(program);
+        eprintln!("Pass 2: user code size = {}", code.len());
 
         // Append runtime support functions at the end
         if needs_heap {
@@ -472,6 +523,25 @@ pub fn compile_to_executable(program: &IRProgram) -> (Vec<u8>, Option<usize>) {
         }
         if needs_string_ops {
             code.extend(runtime::generate_string_count());
+
+            // Calculate offset from _string_concat_2 to _allocate
+            // Must use same calculation as pass 1!
+            let allocate_relative_offset = if let (Some(alloc_addr), Some(concat_addr)) =
+                (allocate_offset, string_concat_2_offset)
+            {
+                // Relative offset: allocate_addr - concat_2_start
+                Some((alloc_addr as i32) - (concat_addr as i32))
+            } else {
+                None
+            };
+
+            let concat2_code = runtime::generate_string_concat_2(allocate_relative_offset);
+            eprintln!(
+                "Pass 2: concat_2 offset={:?}, size={}",
+                allocate_relative_offset,
+                concat2_code.len()
+            );
+            code.extend(concat2_code);
         }
 
         // Note: heap globals (heap_base, heap_end, free_list_head) live in data segment (0x403000-0x403018), handled by ELF generator

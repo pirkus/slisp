@@ -13,6 +13,7 @@ pub struct RuntimeAddresses {
     pub allocate: Option<usize>,
     pub free: Option<usize>,
     pub string_count: Option<usize>,
+    pub string_concat_2: Option<usize>,
 }
 
 /// Code generation backend trait for different target architectures
