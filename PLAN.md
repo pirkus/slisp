@@ -482,6 +482,11 @@ With preservation:
 ```
 
 **Future Enhancements:**
+- [ ] **Don't allocate unused variables** - Optimization to skip allocation for unused heap values
+  - Example: `(let [s (str "a" "b")] 42)` - s is never used, don't call str at all
+  - Requires use-before-def analysis to detect unused variables
+  - Can eliminate both allocation AND freeing overhead
+  - Would make dead code elimination more effective
 - [ ] **Block coalescing** - Merge adjacent free blocks to reduce fragmentation
 - [ ] **Reference counting** - Track value lifetimes across scopes for sharing
 - [ ] **String duplication on escape** - Copy strings when returned/passed to enable value sharing
