@@ -4,28 +4,18 @@ use crate::ast::Node;
 use crate::ir::{IRInstruction, IRProgram};
 
 /// Compile a let binding expression
-pub fn compile_let(
-    args: &[Node],
-    context: &mut CompileContext,
-    program: &mut IRProgram,
-) -> Result<Vec<IRInstruction>, CompileError> {
+pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
     if args.len() != 2 {
         return Err(CompileError::ArityError("let".to_string(), 2, args.len()));
     }
 
     let bindings = match &args[0] {
         Node::Vector { root } => root,
-        _ => {
-            return Err(CompileError::InvalidExpression(
-                "let requires a vector of bindings".to_string(),
-            ))
-        }
+        _ => return Err(CompileError::InvalidExpression("let requires a vector of bindings".to_string())),
     };
 
     if bindings.len() % 2 != 0 {
-        return Err(CompileError::InvalidExpression(
-            "let bindings must have even number of elements".to_string(),
-        ));
+        return Err(CompileError::InvalidExpression("let bindings must have even number of elements".to_string()));
     }
 
     let mut instructions = Vec::new();
@@ -37,11 +27,7 @@ pub fn compile_let(
 
         let var_name = match var_node {
             Node::Symbol { value } => value,
-            _ => {
-                return Err(CompileError::InvalidExpression(
-                    "let binding variables must be symbols".to_string(),
-                ))
-            }
+            _ => return Err(CompileError::InvalidExpression("let binding variables must be symbols".to_string())),
         };
 
         // Check if the value expression produces a heap-allocated result

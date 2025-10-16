@@ -3,12 +3,7 @@ use super::{Environment, EvalError, Value};
 use crate::ast::Node;
 
 /// Evaluate arithmetic operations (+, -, *, /)
-pub fn eval_arithmetic_op<F>(
-    args: &[Node],
-    env: &mut Environment,
-    op: F,
-    op_name: &str,
-) -> Result<Value, EvalError>
+pub fn eval_arithmetic_op<F>(args: &[Node], env: &mut Environment, op: F, op_name: &str) -> Result<Value, EvalError>
 where
     F: Fn(isize, isize) -> isize,
 {
@@ -19,12 +14,7 @@ where
     let first = crate::evaluator::eval_with_env(&args[0], env)?;
     let first_num = match first {
         Value::Number(n) => n,
-        _ => {
-            return Err(EvalError::TypeError(format!(
-                "{} requires numbers",
-                op_name
-            )))
-        }
+        _ => return Err(EvalError::TypeError(format!("{} requires numbers", op_name))),
     };
 
     args[1..]
@@ -33,10 +23,7 @@ where
             let val = crate::evaluator::eval_with_env(arg, env)?;
             match val {
                 Value::Number(n) => Ok(op(acc, n)),
-                _ => Err(EvalError::TypeError(format!(
-                    "{} requires numbers",
-                    op_name
-                ))),
+                _ => Err(EvalError::TypeError(format!("{} requires numbers", op_name))),
             }
         })
         .map(Value::Number)
@@ -63,12 +50,7 @@ pub fn eval_equal(args: &[Node], env: &mut Environment) -> Result<Value, EvalErr
 }
 
 /// Evaluate comparison operations (<, >, <=, >=)
-pub fn eval_comparison_op<F>(
-    args: &[Node],
-    env: &mut Environment,
-    op: F,
-    op_name: &str,
-) -> Result<Value, EvalError>
+pub fn eval_comparison_op<F>(args: &[Node], env: &mut Environment, op: F, op_name: &str) -> Result<Value, EvalError>
 where
     F: Fn(isize, isize) -> bool,
 {
@@ -81,10 +63,7 @@ where
 
     match (left, right) {
         (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(op(a, b))),
-        _ => Err(EvalError::TypeError(format!(
-            "{} requires numbers",
-            op_name
-        ))),
+        _ => Err(EvalError::TypeError(format!("{} requires numbers", op_name))),
     }
 }
 
@@ -171,9 +150,7 @@ pub fn eval_count(args: &[Node], env: &mut Environment) -> Result<Value, EvalErr
     let val = crate::evaluator::eval_with_env(&args[0], env)?;
     match val {
         Value::String(s) => Ok(Value::Number(s.len() as isize)),
-        _ => Err(EvalError::TypeError(
-            "count requires a string argument".to_string(),
-        )),
+        _ => Err(EvalError::TypeError("count requires a string argument".to_string())),
     }
 }
 
@@ -197,12 +174,8 @@ pub fn eval_get(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
             let ch = s.chars().nth(idx).unwrap();
             Ok(Value::String(ch.to_string()))
         }
-        (Value::String(_), _) => Err(EvalError::TypeError(
-            "get: index must be a number".to_string(),
-        )),
-        _ => Err(EvalError::TypeError(
-            "get: first argument must be a string".to_string(),
-        )),
+        (Value::String(_), _) => Err(EvalError::TypeError("get: index must be a number".to_string())),
+        _ => Err(EvalError::TypeError("get: first argument must be a string".to_string())),
     }
 }
 
@@ -220,17 +193,11 @@ pub fn eval_subs(args: &[Node], env: &mut Environment) -> Result<Value, EvalErro
             let start = match start_val {
                 Value::Number(n) => {
                     if n < 0 {
-                        return Err(EvalError::InvalidOperation(
-                            "subs: start index cannot be negative".to_string(),
-                        ));
+                        return Err(EvalError::InvalidOperation("subs: start index cannot be negative".to_string()));
                     }
                     n as usize
                 }
-                _ => {
-                    return Err(EvalError::TypeError(
-                        "subs: start index must be a number".to_string(),
-                    ))
-                }
+                _ => return Err(EvalError::TypeError("subs: start index must be a number".to_string())),
             };
 
             let end = if args.len() == 3 {
@@ -238,50 +205,31 @@ pub fn eval_subs(args: &[Node], env: &mut Environment) -> Result<Value, EvalErro
                 match end_val {
                     Value::Number(n) => {
                         if n < 0 {
-                            return Err(EvalError::InvalidOperation(
-                                "subs: end index cannot be negative".to_string(),
-                            ));
+                            return Err(EvalError::InvalidOperation("subs: end index cannot be negative".to_string()));
                         }
                         n as usize
                     }
-                    _ => {
-                        return Err(EvalError::TypeError(
-                            "subs: end index must be a number".to_string(),
-                        ))
-                    }
+                    _ => return Err(EvalError::TypeError("subs: end index must be a number".to_string())),
                 }
             } else {
                 s.len()
             };
 
             if start > s.len() {
-                return Err(EvalError::InvalidOperation(format!(
-                    "subs: start index {} out of bounds for string of length {}",
-                    start,
-                    s.len()
-                )));
+                return Err(EvalError::InvalidOperation(format!("subs: start index {} out of bounds for string of length {}", start, s.len())));
             }
 
             if end > s.len() {
-                return Err(EvalError::InvalidOperation(format!(
-                    "subs: end index {} out of bounds for string of length {}",
-                    end,
-                    s.len()
-                )));
+                return Err(EvalError::InvalidOperation(format!("subs: end index {} out of bounds for string of length {}", end, s.len())));
             }
 
             if start > end {
-                return Err(EvalError::InvalidOperation(format!(
-                    "subs: start index {} is greater than end index {}",
-                    start, end
-                )));
+                return Err(EvalError::InvalidOperation(format!("subs: start index {} is greater than end index {}", start, end)));
             }
 
             let substring: String = s.chars().skip(start).take(end - start).collect();
             Ok(Value::String(substring))
         }
-        _ => Err(EvalError::TypeError(
-            "subs: first argument must be a string".to_string(),
-        )),
+        _ => Err(EvalError::TypeError("subs: first argument must be a string".to_string())),
     }
 }

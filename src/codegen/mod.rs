@@ -22,7 +22,7 @@ mod backend;
 pub mod x86_64_linux;
 
 // Re-export public API
-pub use api::{compile_to_executable, detect_host_target};
+pub use api::{compile_to_executable, compile_to_object, detect_host_target, link_executable};
 
 // Export backend trait for future use with multiple architecture backends
 #[allow(unused_imports)]

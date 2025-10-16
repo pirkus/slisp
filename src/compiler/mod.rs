@@ -49,29 +49,17 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
                     if value == "defn" {
                         // Register function in context but don't compile yet
                         if root.len() != 4 {
-                            return Err(CompileError::ArityError(
-                                "defn".to_string(),
-                                3,
-                                root.len() - 1,
-                            ));
+                            return Err(CompileError::ArityError("defn".to_string(), 3, root.len() - 1));
                         }
 
                         let func_name = match &root[1] {
                             Node::Symbol { value } => value.clone(),
-                            _ => {
-                                return Err(CompileError::InvalidExpression(
-                                    "Function name must be a symbol".to_string(),
-                                ))
-                            }
+                            _ => return Err(CompileError::InvalidExpression("Function name must be a symbol".to_string())),
                         };
 
                         let params = match &root[2] {
                             Node::Vector { root } => root,
-                            _ => {
-                                return Err(CompileError::InvalidExpression(
-                                    "Function parameters must be a vector".to_string(),
-                                ))
-                            }
+                            _ => return Err(CompileError::InvalidExpression("Function parameters must be a vector".to_string())),
                         };
 
                         let func_info = FunctionInfo {
@@ -93,15 +81,11 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
             if !root.is_empty() {
                 if let Node::Symbol { value } = &root[0] {
                     if value == "defn" {
-                        let (mut instructions, func_info) =
-                            functions::compile_defn(&root[1..], &mut context, &mut program)?;
+                        let (mut instructions, func_info) = functions::compile_defn(&root[1..], &mut context, &mut program)?;
                         let start_address = program.len();
 
-                        if let IRInstruction::DefineFunction(ref name, ref params, _) =
-                            instructions[0]
-                        {
-                            instructions[0] =
-                                IRInstruction::DefineFunction(name.clone(), *params, start_address);
+                        if let IRInstruction::DefineFunction(ref name, ref params, _) = instructions[0] {
+                            instructions[0] = IRInstruction::DefineFunction(name.clone(), *params, start_address);
                         }
 
                         let updated_func_info = crate::ir::FunctionInfo {
@@ -135,11 +119,7 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
 }
 
 /// Compile a single AST node to IR
-pub(crate) fn compile_node(
-    node: &Node,
-    context: &mut CompileContext,
-    program: &mut IRProgram,
-) -> Result<Vec<IRInstruction>, CompileError> {
+pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
     match node {
         Node::Primitive { value } => expressions::compile_primitive(value, program),
         Node::Symbol { value } => {
@@ -152,18 +132,12 @@ pub(crate) fn compile_node(
             }
         }
         Node::List { root } => compile_list(root, context, program),
-        Node::Vector { root: _ } => Err(CompileError::UnsupportedOperation(
-            "Vectors not supported in compilation yet".to_string(),
-        )),
+        Node::Vector { root: _ } => Err(CompileError::UnsupportedOperation("Vectors not supported in compilation yet".to_string())),
     }
 }
 
 /// Compile count operation (string length)
-fn compile_count(
-    args: &[Node],
-    context: &mut CompileContext,
-    program: &mut IRProgram,
-) -> Result<Vec<IRInstruction>, CompileError> {
+fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
     if args.len() != 1 {
         return Err(CompileError::ArityError("count".to_string(), 1, args.len()));
     }
@@ -179,11 +153,7 @@ fn compile_count(
 
 /// Compile str operation (string concatenation)
 /// For now, only supports 2 arguments (will expand to N later)
-fn compile_str(
-    args: &[Node],
-    context: &mut CompileContext,
-    program: &mut IRProgram,
-) -> Result<Vec<IRInstruction>, CompileError> {
+fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
     if args.len() != 2 {
         return Err(CompileError::ArityError("str".to_string(), 2, args.len()));
     }
@@ -195,20 +165,13 @@ fn compile_str(
     instructions.extend(compile_node(&args[1], context, program)?);
 
     // Call _string_concat_2 runtime function (takes 2 args: str1, str2)
-    instructions.push(IRInstruction::RuntimeCall(
-        "_string_concat_2".to_string(),
-        2,
-    ));
+    instructions.push(IRInstruction::RuntimeCall("_string_concat_2".to_string(), 2));
 
     Ok(instructions)
 }
 
 /// Compile a list (function call or special form) to IR
-fn compile_list(
-    nodes: &[Node],
-    context: &mut CompileContext,
-    program: &mut IRProgram,
-) -> Result<Vec<IRInstruction>, CompileError> {
+fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
     if nodes.is_empty() {
         return Ok(vec![IRInstruction::Push(0)]);
     }
@@ -218,49 +181,15 @@ fn compile_list(
 
     match operator {
         Node::Symbol { value } => match value.as_str() {
-            "+" => {
-                expressions::compile_arithmetic_op(args, context, program, IRInstruction::Add, "+")
-            }
-            "-" => {
-                expressions::compile_arithmetic_op(args, context, program, IRInstruction::Sub, "-")
-            }
-            "*" => {
-                expressions::compile_arithmetic_op(args, context, program, IRInstruction::Mul, "*")
-            }
-            "/" => {
-                expressions::compile_arithmetic_op(args, context, program, IRInstruction::Div, "/")
-            }
-            "=" => expressions::compile_comparison_op(
-                args,
-                context,
-                program,
-                IRInstruction::Equal,
-                "=",
-            ),
-            "<" => {
-                expressions::compile_comparison_op(args, context, program, IRInstruction::Less, "<")
-            }
-            ">" => expressions::compile_comparison_op(
-                args,
-                context,
-                program,
-                IRInstruction::Greater,
-                ">",
-            ),
-            "<=" => expressions::compile_comparison_op(
-                args,
-                context,
-                program,
-                IRInstruction::LessEqual,
-                "<=",
-            ),
-            ">=" => expressions::compile_comparison_op(
-                args,
-                context,
-                program,
-                IRInstruction::GreaterEqual,
-                ">=",
-            ),
+            "+" => expressions::compile_arithmetic_op(args, context, program, IRInstruction::Add, "+"),
+            "-" => expressions::compile_arithmetic_op(args, context, program, IRInstruction::Sub, "-"),
+            "*" => expressions::compile_arithmetic_op(args, context, program, IRInstruction::Mul, "*"),
+            "/" => expressions::compile_arithmetic_op(args, context, program, IRInstruction::Div, "/"),
+            "=" => expressions::compile_comparison_op(args, context, program, IRInstruction::Equal, "="),
+            "<" => expressions::compile_comparison_op(args, context, program, IRInstruction::Less, "<"),
+            ">" => expressions::compile_comparison_op(args, context, program, IRInstruction::Greater, ">"),
+            "<=" => expressions::compile_comparison_op(args, context, program, IRInstruction::LessEqual, "<="),
+            ">=" => expressions::compile_comparison_op(args, context, program, IRInstruction::GreaterEqual, ">="),
             "if" => expressions::compile_if(args, context, program),
             "and" => expressions::compile_logical_and(args, context, program),
             "or" => expressions::compile_logical_or(args, context, program),
@@ -271,21 +200,13 @@ fn compile_list(
             "str" => compile_str(args, context, program),
             op => {
                 if let Some(func_info) = context.get_function(op) {
-                    functions::compile_function_call(
-                        op,
-                        args,
-                        context,
-                        program,
-                        func_info.param_count,
-                    )
+                    functions::compile_function_call(op, args, context, program, func_info.param_count)
                 } else {
                     Err(CompileError::UnsupportedOperation(op.to_string()))
                 }
             }
         },
-        _ => Err(CompileError::InvalidExpression(
-            "First element must be a symbol".to_string(),
-        )),
+        _ => Err(CompileError::InvalidExpression("First element must be a symbol".to_string())),
     }
 }
 
@@ -302,24 +223,13 @@ mod tests {
     #[test]
     fn test_compile_number() {
         let program = compile_expression("42").unwrap();
-        assert_eq!(
-            program.instructions,
-            vec![IRInstruction::Push(42), IRInstruction::Return]
-        );
+        assert_eq!(program.instructions, vec![IRInstruction::Push(42), IRInstruction::Return]);
     }
 
     #[test]
     fn test_compile_arithmetic() {
         let program = compile_expression("(+ 2 3)").unwrap();
-        assert_eq!(
-            program.instructions,
-            vec![
-                IRInstruction::Push(2),
-                IRInstruction::Push(3),
-                IRInstruction::Add,
-                IRInstruction::Return
-            ]
-        );
+        assert_eq!(program.instructions, vec![IRInstruction::Push(2), IRInstruction::Push(3), IRInstruction::Add, IRInstruction::Return]);
     }
 
     #[test]
@@ -349,14 +259,7 @@ mod tests {
     #[test]
     fn test_compile_not() {
         let program = compile_expression("(not 0)").unwrap();
-        assert_eq!(
-            program.instructions,
-            vec![
-                IRInstruction::Push(0),
-                IRInstruction::Not,
-                IRInstruction::Return
-            ]
-        );
+        assert_eq!(program.instructions, vec![IRInstruction::Push(0), IRInstruction::Not, IRInstruction::Return]);
     }
 
     #[test]
@@ -430,28 +333,16 @@ mod tests {
     #[test]
     fn test_compile_let_error_cases() {
         // Wrong arity
-        assert!(matches!(
-            compile_expression("(let [x 5])"),
-            Err(CompileError::ArityError(_, 2, 1))
-        ));
+        assert!(matches!(compile_expression("(let [x 5])"), Err(CompileError::ArityError(_, 2, 1))));
 
         // Non-vector bindings
-        assert!(matches!(
-            compile_expression("(let (x 5) x)"),
-            Err(CompileError::InvalidExpression(_))
-        ));
+        assert!(matches!(compile_expression("(let (x 5) x)"), Err(CompileError::InvalidExpression(_))));
 
         // Odd number of binding elements
-        assert!(matches!(
-            compile_expression("(let [x] x)"),
-            Err(CompileError::InvalidExpression(_))
-        ));
+        assert!(matches!(compile_expression("(let [x] x)"), Err(CompileError::InvalidExpression(_))));
 
         // Non-symbol in binding
-        assert!(matches!(
-            compile_expression("(let [5 x] x)"),
-            Err(CompileError::InvalidExpression(_))
-        ));
+        assert!(matches!(compile_expression("(let [5 x] x)"), Err(CompileError::InvalidExpression(_))));
     }
 
     #[test]
@@ -523,27 +414,15 @@ mod tests {
     #[test]
     fn test_compile_function_error_cases() {
         // Wrong arity
-        assert!(matches!(
-            compile_expression("(defn add [x])"),
-            Err(CompileError::ArityError(_, 3, 2))
-        ));
+        assert!(matches!(compile_expression("(defn add [x])"), Err(CompileError::ArityError(_, 3, 2))));
 
         // Non-symbol function name
-        assert!(matches!(
-            compile_expression("(defn 123 [x] x)"),
-            Err(CompileError::InvalidExpression(_))
-        ));
+        assert!(matches!(compile_expression("(defn 123 [x] x)"), Err(CompileError::InvalidExpression(_))));
 
         // Non-vector parameters
-        assert!(matches!(
-            compile_expression("(defn add (x y) (+ x y))"),
-            Err(CompileError::InvalidExpression(_))
-        ));
+        assert!(matches!(compile_expression("(defn add (x y) (+ x y))"), Err(CompileError::InvalidExpression(_))));
 
         // Non-symbol parameter
-        assert!(matches!(
-            compile_expression("(defn add [x 123] (+ x 123))"),
-            Err(CompileError::InvalidExpression(_))
-        ));
+        assert!(matches!(compile_expression("(defn add [x 123] (+ x 123))"), Err(CompileError::InvalidExpression(_))));
     }
 }

@@ -120,11 +120,7 @@ pub fn generate_load_local(slot: usize, func_info: &FunctionInfo) -> Vec<u8> {
 }
 
 /// Generate machine code for a function call
-pub fn generate_call(
-    func_name: &str,
-    function_addresses: &HashMap<String, usize>,
-    current_pos: usize,
-) -> Vec<u8> {
+pub fn generate_call(func_name: &str, function_addresses: &HashMap<String, usize>, current_pos: usize) -> Vec<u8> {
     let mut code = Vec::new();
 
     if let Some(&func_addr) = function_addresses.get(func_name) {
@@ -147,29 +143,18 @@ pub fn generate_return() -> Vec<u8> {
 }
 
 /// Generate machine code to call _heap_init runtime function
-/// Takes the offset to the _heap_init function from the current position
-pub fn generate_call_heap_init(heap_init_offset: i32) -> Vec<u8> {
-    let mut code = Vec::new();
+/// Returns (code bytes, offset within code where 32-bit displacement resides)
+pub fn generate_call_heap_init(heap_init_offset: Option<i32>) -> (Vec<u8>, usize) {
+    let mut code = Vec::with_capacity(5);
     code.push(0xe8); // call relative
-    code.extend_from_slice(&heap_init_offset.to_le_bytes());
-    code
-}
-
-/// Generate machine code to call _allocate runtime function
-/// Size should already be in RDI register (System V ABI calling convention)
-/// Returns pointer in RAX, which is then pushed onto stack
-pub fn generate_call_allocate(allocate_offset: i32) -> Vec<u8> {
-    let mut code = Vec::new();
-    code.push(0xe8); // call relative
-    code.extend_from_slice(&allocate_offset.to_le_bytes());
-    code.push(0x50); // push rax (save allocated pointer on stack)
-    code
+    code.extend_from_slice(&heap_init_offset.unwrap_or(0).to_le_bytes());
+    (code, 1)
 }
 
 /// Generate machine code for Allocate instruction
 /// Takes size as immediate, puts it in RDI, calls _allocate
-pub fn generate_allocate_inline(size: usize, allocate_offset: i32) -> Vec<u8> {
-    let mut code = Vec::new();
+pub fn generate_allocate_inline(size: usize, allocate_offset: Option<i32>) -> (Vec<u8>, usize) {
+    let mut code = Vec::with_capacity(13);
 
     // mov rdi, size (put size in first argument register)
     code.push(0x48); // REX.W
@@ -177,31 +162,35 @@ pub fn generate_allocate_inline(size: usize, allocate_offset: i32) -> Vec<u8> {
     code.push(0xc7); // ModR/M byte for RDI
     code.extend_from_slice(&(size as u32).to_le_bytes());
 
-    // call _allocate
-    code.extend(generate_call_allocate(allocate_offset));
+    let call_disp_offset = code.len() + 1;
 
-    code
+    // call _allocate
+    code.push(0xe8);
+    code.extend_from_slice(&allocate_offset.unwrap_or(0).to_le_bytes());
+    code.push(0x50); // push rax (save allocated pointer on stack)
+
+    (code, call_disp_offset)
 }
 
 /// Generate machine code for Free instruction
 /// Pops address from stack, puts it in RDI, calls _free
-pub fn generate_free_inline(free_offset: i32) -> Vec<u8> {
-    let mut code = Vec::new();
+pub fn generate_free_inline(free_offset: Option<i32>) -> (Vec<u8>, usize) {
+    let mut code = Vec::with_capacity(6);
 
     // pop rdi (get address from stack into first argument register)
     code.push(0x5f);
 
     // call _free
     code.push(0xe8); // call relative
-    code.extend_from_slice(&free_offset.to_le_bytes());
+    code.extend_from_slice(&free_offset.unwrap_or(0).to_le_bytes());
 
-    code
+    (code, 2)
 }
 
 /// Generate machine code for a runtime function call
 /// Pops arguments from stack into registers (System V ABI), calls function, pushes result
 /// Currently supports up to 1 argument (RDI)
-pub fn generate_runtime_call(runtime_offset: i32, arg_count: usize) -> Vec<u8> {
+pub fn generate_runtime_call(runtime_offset: Option<i32>, arg_count: usize) -> (Vec<u8>, usize) {
     let mut code = Vec::new();
 
     // Pop arguments from stack into registers (right-to-left for System V ABI)
@@ -227,13 +216,14 @@ pub fn generate_runtime_call(runtime_offset: i32, arg_count: usize) -> Vec<u8> {
     }
 
     // call runtime_function
+    let call_disp_offset = code.len() + 1;
     code.push(0xe8); // call relative
-    code.extend_from_slice(&runtime_offset.to_le_bytes());
+    code.extend_from_slice(&runtime_offset.unwrap_or(0).to_le_bytes());
 
     // push rax (return value onto stack)
     code.push(0x50);
 
-    code
+    (code, call_disp_offset)
 }
 
 #[cfg(test)]

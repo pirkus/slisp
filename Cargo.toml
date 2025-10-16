@@ -7,3 +7,8 @@ edition = "2021"
 
 [dependencies]
 memmap2 = "0.9.4"
+slisp-runtime = { path = "runtime" }
+object = { version = "0.36", features = ["write"] }
+
+[workspace]
+members = ["runtime"]

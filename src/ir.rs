@@ -87,11 +87,7 @@ impl IRProgram {
 
     /// Add a string literal and return its index
     pub fn add_string(&mut self, s: String) -> usize {
-        if let Some(index) = self
-            .string_literals
-            .iter()
-            .position(|existing| existing == &s)
-        {
+        if let Some(index) = self.string_literals.iter().position(|existing| existing == &s) {
             return index;
         }
 

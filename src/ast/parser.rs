@@ -17,12 +17,7 @@ impl AstParser {
         Self::parse_container(input, offset, inside_container, false)
     }
 
-    fn parse_container(
-        input: &[u8],
-        offset: &mut usize,
-        inside_container: bool,
-        is_vector: bool,
-    ) -> Node {
+    fn parse_container(input: &[u8], offset: &mut usize, inside_container: bool, is_vector: bool) -> Node {
         let mut buffer = String::new();
         let mut sexp = vec![];
 
@@ -132,18 +127,14 @@ impl AstParser {
 
         // Don't increment offset here - let the main loop handle it
 
-        Node::Primitive {
-            value: Primitive::String(buffer),
-        }
+        Node::Primitive { value: Primitive::String(buffer) }
     }
 
     fn parse_atom(buffer: &str) -> Node {
         if let Ok(num) = buffer.parse::<usize>() {
             Node::new_number(num)
         } else {
-            Node::Symbol {
-                value: buffer.to_string(),
-            }
+            Node::Symbol { value: buffer.to_string() }
         }
     }
 }
@@ -158,17 +149,9 @@ mod tests {
         assert_eq!(
             parsed,
             Node::new_list_from_raw(vec![
-                Node::Symbol {
-                    value: String::from("+")
-                },
+                Node::Symbol { value: String::from("+") },
                 Node::new_number(2),
-                Node::new_list_from_raw(vec![
-                    Node::Symbol {
-                        value: String::from("*")
-                    },
-                    Node::new_number(3),
-                    Node::new_number(4)
-                ])
+                Node::new_list_from_raw(vec![Node::Symbol { value: String::from("*") }, Node::new_number(3), Node::new_number(4)])
             ])
         );
     }
@@ -179,27 +162,11 @@ mod tests {
         assert_eq!(
             parsed,
             Node::new_list_from_raw(vec![
-                Node::Symbol {
-                    value: String::from("+")
-                },
+                Node::Symbol { value: String::from("+") },
                 Node::new_list_from_raw(vec![
-                    Node::Symbol {
-                        value: String::from("+")
-                    },
-                    Node::new_list_from_raw(vec![
-                        Node::Symbol {
-                            value: String::from("*")
-                        },
-                        Node::new_number(1),
-                        Node::new_number(2)
-                    ]),
-                    Node::new_list_from_raw(vec![
-                        Node::Symbol {
-                            value: String::from("*")
-                        },
-                        Node::new_number(3),
-                        Node::new_number(4)
-                    ])
+                    Node::Symbol { value: String::from("+") },
+                    Node::new_list_from_raw(vec![Node::Symbol { value: String::from("*") }, Node::new_number(1), Node::new_number(2)]),
+                    Node::new_list_from_raw(vec![Node::Symbol { value: String::from("*") }, Node::new_number(3), Node::new_number(4)])
                 ])
             ])
         );
@@ -214,12 +181,7 @@ mod tests {
     #[test]
     fn parse_single_symbol() {
         let parsed = AstParser::parse_sexp_new_domain(b"hello", &mut 0);
-        assert_eq!(
-            parsed,
-            Node::Symbol {
-                value: "hello".to_string()
-            }
-        );
+        assert_eq!(parsed, Node::Symbol { value: "hello".to_string() });
     }
 
     #[test]
@@ -233,13 +195,7 @@ mod tests {
         let parsed = AstParser::parse_sexp_new_domain(b"(+   2    3)", &mut 0);
         assert_eq!(
             parsed,
-            Node::new_list_from_raw(vec![
-                Node::Symbol {
-                    value: String::from("+")
-                },
-                Node::new_number(2),
-                Node::new_number(3)
-            ])
+            Node::new_list_from_raw(vec![Node::Symbol { value: String::from("+") }, Node::new_number(2), Node::new_number(3)])
         );
     }
 
@@ -248,13 +204,7 @@ mod tests {
         let parsed = AstParser::parse_sexp_new_domain(b"(+ 1 2) (- 5 3)", &mut 0);
         assert_eq!(
             parsed,
-            Node::new_list_from_raw(vec![
-                Node::Symbol {
-                    value: String::from("+")
-                },
-                Node::new_number(1),
-                Node::new_number(2)
-            ])
+            Node::new_list_from_raw(vec![Node::Symbol { value: String::from("+") }, Node::new_number(1), Node::new_number(2)])
         );
     }
 
@@ -263,27 +213,14 @@ mod tests {
         let parsed = AstParser::parse_sexp_new_domain(b"(+ abc 2)", &mut 0);
         assert_eq!(
             parsed,
-            Node::new_list_from_raw(vec![
-                Node::Symbol {
-                    value: "+".to_string()
-                },
-                Node::Symbol {
-                    value: "abc".to_string()
-                },
-                Node::new_number(2)
-            ])
+            Node::new_list_from_raw(vec![Node::Symbol { value: "+".to_string() }, Node::Symbol { value: "abc".to_string() }, Node::new_number(2)])
         );
     }
 
     #[test]
     fn parse_complex_symbol() {
         let parsed = AstParser::parse_sexp_new_domain(b"abc123def", &mut 0);
-        assert_eq!(
-            parsed,
-            Node::Symbol {
-                value: "abc123def".to_string()
-            }
-        );
+        assert_eq!(parsed, Node::Symbol { value: "abc123def".to_string() });
     }
 
     #[test]
@@ -297,15 +234,7 @@ mod tests {
         let parsed = AstParser::parse_sexp_new_domain(b"(+ 1.2.3 4)", &mut 0);
         assert_eq!(
             parsed,
-            Node::new_list_from_raw(vec![
-                Node::Symbol {
-                    value: "+".to_string()
-                },
-                Node::Symbol {
-                    value: "1.2.3".to_string()
-                },
-                Node::new_number(4)
-            ])
+            Node::new_list_from_raw(vec![Node::Symbol { value: "+".to_string() }, Node::Symbol { value: "1.2.3".to_string() }, Node::new_number(4)])
         );
     }
 
@@ -335,13 +264,9 @@ mod tests {
         assert_eq!(
             parsed,
             Node::new_vector_from_raw(vec![
-                Node::Symbol {
-                    value: "x".to_string()
-                },
+                Node::Symbol { value: "x".to_string() },
                 Node::new_number(5),
-                Node::Symbol {
-                    value: "y".to_string()
-                },
+                Node::Symbol { value: "y".to_string() },
                 Node::new_number(10)
             ])
         );
@@ -353,18 +278,9 @@ mod tests {
         assert_eq!(
             parsed,
             Node::new_list_from_raw(vec![
-                Node::Symbol {
-                    value: "let".to_string()
-                },
-                Node::new_vector_from_raw(vec![
-                    Node::Symbol {
-                        value: "x".to_string()
-                    },
-                    Node::new_number(5)
-                ]),
-                Node::Symbol {
-                    value: "x".to_string()
-                }
+                Node::Symbol { value: "let".to_string() },
+                Node::new_vector_from_raw(vec![Node::Symbol { value: "x".to_string() }, Node::new_number(5)]),
+                Node::Symbol { value: "x".to_string() }
             ])
         );
     }
@@ -419,9 +335,7 @@ mod tests {
         assert_eq!(
             parsed,
             Node::new_list_from_raw(vec![
-                Node::Symbol {
-                    value: "print".to_string()
-                },
+                Node::Symbol { value: "print".to_string() },
                 Node::Primitive {
                     value: Primitive::String("hello".to_string())
                 }

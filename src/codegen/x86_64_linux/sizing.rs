@@ -41,9 +41,9 @@ pub fn instruction_size(instruction: &IRInstruction, has_locals: bool) -> usize 
         // String operations
         IRInstruction::PushString(_) => 10, // movabs rax, <address> + push rax
         // Memory allocation
-        IRInstruction::InitHeap => 0, // Generated as runtime function, not inline
-        IRInstruction::Allocate(_) => 10, // mov rdi, size + call _allocate + push rax
-        IRInstruction::Free => 6,     // pop rdi + call _free
+        IRInstruction::InitHeap => 0,      // Generated as runtime function, not inline
+        IRInstruction::Allocate(_) => 10,  // mov rdi, size + call _allocate + push rax
+        IRInstruction::Free => 6,          // pop rdi + call _free
         IRInstruction::FreeLocal(_) => 11, // push rax (1) + mov rdi,[rbp-N] (4) + call _free (5) + pop rax (1)
         // Runtime function calls
         IRInstruction::RuntimeCall(_, arg_count) => {

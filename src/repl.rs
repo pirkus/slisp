@@ -59,16 +59,12 @@ fn parse_and_eval(input: &str) -> Result<Value, EvalError> {
         eval_node(&ast)
     }) {
         Ok(result) => result,
-        Err(_) => Err(EvalError::InvalidOperation(
-            "Parse error: malformed expression".to_string(),
-        )),
+        Err(_) => Err(EvalError::InvalidOperation("Parse error: malformed expression".to_string())),
     }
 }
 
 fn parse_compile_and_execute(input: &str) -> Result<i64, String> {
-    let ast = match std::panic::catch_unwind(|| {
-        AstParser::parse_sexp_new_domain(input.as_bytes(), &mut 0)
-    }) {
+    let ast = match std::panic::catch_unwind(|| AstParser::parse_sexp_new_domain(input.as_bytes(), &mut 0)) {
         Ok(ast) => ast,
         Err(_) => return Err("Parse error: malformed expression".to_string()),
     };
@@ -79,9 +75,9 @@ fn parse_compile_and_execute(input: &str) -> Result<i64, String> {
     };
 
     let target = detect_host_target();
-    let (machine_code, _heap_offset) = compile_to_executable(&ir_program, target);
+    let artifact = compile_to_executable(&ir_program, target);
 
-    let result = JitRunner::exec(&machine_code);
+    let result = JitRunner::exec(artifact.as_code());
     Ok(result as i64)
 }
 
@@ -108,10 +104,7 @@ fn format_error(error: &EvalError) -> String {
         EvalError::UndefinedSymbol(symbol) => format!("Undefined symbol: {}", symbol),
         EvalError::InvalidOperation(msg) => format!("Invalid operation: {}", msg),
         EvalError::ArityError(op, expected, actual) => {
-            format!(
-                "Arity error in '{}': expected {} arguments, got {}",
-                op, expected, actual
-            )
+            format!("Arity error in '{}': expected {} arguments, got {}", op, expected, actual)
         }
         EvalError::TypeError(msg) => format!("Type error: {}", msg),
     }
@@ -122,10 +115,7 @@ pub fn format_compile_error(error: &CompileError) -> String {
         CompileError::UnsupportedOperation(op) => format!("Unsupported operation: {}", op),
         CompileError::InvalidExpression(msg) => format!("Invalid expression: {}", msg),
         CompileError::ArityError(op, expected, actual) => {
-            format!(
-                "Arity error in '{}': expected {} arguments, got {}",
-                op, expected, actual
-            )
+            format!("Arity error in '{}': expected {} arguments, got {}", op, expected, actual)
         }
         CompileError::UndefinedVariable(var) => format!("Undefined variable: {}", var),
         CompileError::DuplicateFunction(func) => format!("Duplicate function definition: {}", func),

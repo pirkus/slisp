@@ -24,7 +24,7 @@ impl Target {
     ///
     /// # Returns
     /// * `(machine_code, heap_init_offset)` - Generated machine code and optional heap init offset
-    pub fn compile(&self, program: &IRProgram) -> (Vec<u8>, Option<usize>) {
+    pub fn compile(&self, program: &IRProgram) -> x86_64_linux::JitArtifact {
         match self {
             Target::X86_64Linux => x86_64_linux::compile_to_executable(program),
             Target::X86_64Windows => {
@@ -52,20 +52,31 @@ impl Target {
     ///
     /// # Returns
     /// * Result indicating success or IO error
-    pub fn generate_executable(
-        &self,
-        machine_code: &[u8],
-        output_path: &str,
-        heap_init_offset: Option<usize>,
-        string_literals: &[String],
-    ) -> std::io::Result<()> {
+    pub fn compile_to_jit(&self, program: &IRProgram) -> x86_64_linux::JitArtifact {
+        self.compile(program)
+    }
+
+    pub fn compile_object(&self, program: &IRProgram) -> x86_64_linux::ObjectArtifact {
         match self {
-            Target::X86_64Linux => x86_64_linux::executable::generate_executable(
-                machine_code,
-                output_path,
-                heap_init_offset,
-                string_literals,
-            ),
+            Target::X86_64Linux => x86_64_linux::compile_to_object(program),
+            Target::X86_64Windows => {
+                unimplemented!("x86-64 Windows (PE format) not yet implemented")
+            }
+            Target::X86_64MacOS => {
+                unimplemented!("x86-64 macOS (Mach-O format) not yet implemented")
+            }
+            Target::ARM64Linux => {
+                unimplemented!("ARM64 Linux code generation not yet implemented")
+            }
+            Target::RISCV64Linux => {
+                unimplemented!("RISC-V Linux code generation not yet implemented")
+            }
+        }
+    }
+
+    pub fn link_executable(&self, object_bytes: &[u8], output_path: &str, runtime_staticlib: &str) -> std::io::Result<()> {
+        match self {
+            Target::X86_64Linux => x86_64_linux::link_with_runtime(object_bytes, output_path, runtime_staticlib),
             Target::X86_64Windows => {
                 unimplemented!("x86-64 Windows (PE format) not yet implemented")
             }
@@ -82,19 +93,17 @@ impl Target {
     }
 }
 
-/// Compile IR program to machine code for a specific target platform
-///
-/// Currently only x86-64 Linux is implemented. Other targets will panic with
-/// an unimplemented!() error.
-///
-/// # Arguments
-/// * `program` - The IR program to compile
-/// * `target` - The target platform (architecture + OS)
-///
-/// # Returns
-/// * `(machine_code, heap_init_offset)` - Generated machine code and optional heap init offset
-pub fn compile_to_executable(program: &IRProgram, target: Target) -> (Vec<u8>, Option<usize>) {
-    target.compile(program)
+/// Compile IR program to machine code suitable for in-process JIT execution
+pub fn compile_to_executable(program: &IRProgram, target: Target) -> x86_64_linux::JitArtifact {
+    target.compile_to_jit(program)
+}
+
+pub fn compile_to_object(program: &IRProgram, target: Target) -> x86_64_linux::ObjectArtifact {
+    target.compile_object(program)
+}
+
+pub fn link_executable(target: Target, object_bytes: &[u8], output_path: &str, runtime_staticlib: &str) -> std::io::Result<()> {
+    target.link_executable(object_bytes, output_path, runtime_staticlib)
 }
 
 /// Detect the host target platform

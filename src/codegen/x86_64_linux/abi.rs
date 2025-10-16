@@ -42,11 +42,7 @@ pub fn generate_prologue(func_info: &FunctionInfo) -> Vec<u8> {
         &[0x4c, 0x89, 0x4d], // mov [rbp+offset], r9
     ];
 
-    for (i, &reg_code) in param_reg_codes
-        .iter()
-        .enumerate()
-        .take(func_info.param_count.min(6))
-    {
+    for (i, &reg_code) in param_reg_codes.iter().enumerate().take(func_info.param_count.min(6)) {
         let offset = 8 * (i + 1);
         code.extend_from_slice(reg_code);
         code.push((-(offset as i8)) as u8);

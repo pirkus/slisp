@@ -283,23 +283,17 @@ slisp --compile -o test test.slisp
 
 **✅ Completed Implementation:**
 - ✅ **IR instructions** - Added `Allocate(size)`, `InitHeap`, `Free` to IR
-- ✅ **Runtime functions** - Implemented in `codegen/runtime.rs`:
-  - `_heap_init`: Uses mmap syscall to allocate 1MB heap, initializes free list with single block
-  - `_allocate`: First-fit free list allocator (searches free list, removes block, marks as allocated)
-  - `_free`: Returns blocks to free list (clears allocated bit, prepends to free list head)
-- ✅ **ELF multi-segment support** - Conditionally creates data segment when heap is needed:
-  - Program header 1: Code segment (RX) at 0x401000
-  - Program header 2: Data segment (RW) at 0x403000-0x403018 (24 bytes for heap globals, only if heap needed)
-- ✅ **Instruction generation** - Full implementation in `codegen/instructions.rs`:
-  - `generate_call_heap_init()` - Generates call to _heap_init runtime function
-  - `generate_call_allocate()` - Generates call to _allocate runtime function
-  - `generate_allocate_inline()` - Generates size parameter + call
-  - `generate_free_inline()` - Generates pop + call to _free runtime function
-- ✅ **Code generation wiring** - Connected in both single-expression and multi-function paths
-- ✅ **Two-pass compilation** - Pass 1 calculates addresses, Pass 2 generates correct call offsets
-- ✅ **Three runtime functions** - All three (_heap_init, _allocate, _free) appended to code blob
-- ✅ **Entry stub enhancement** - Conditionally calls `_heap_init` before user code when heap is needed
-- ✅ **RuntimeAddresses tracking** - Struct in X86CodeGen tracks all three runtime function locations
+- ✅ **Runtime functions** - Now implemented in the standalone `slisp-runtime` Rust crate:
+  - `_heap_init`, `_allocate`, `_free`, `_string_count`, `_string_concat_2`
+- ✅ **Code generation wiring**
+  - JIT mode resolves runtime calls directly to in-process function pointers
+  - Object mode records relocations for runtime calls and string literals
+- ✅ **Object + linker pipeline**
+  - `compile_to_object()` builds relocatable ELF objects via the `object` crate
+  - `link_with_runtime()` shells out to `ld` to link the object with `libslisp-runtime.a`
+- ✅ **Build integration** - Workspace `build.rs` auto-builds the runtime staticlib per Cargo profile and exposes its path via `SLISP_RUNTIME_LIB`
+- ✅ **Entry stub** - Auto-generated `_start` shim (call `_heap_init` ➜ call entry function ➜ exit syscall)
+- ✅ **Runtime address tracking** - `RuntimeAddresses` retained for JIT execution path
 - ✅ **Function prologue/epilogue** - Fixed single-expression path to use proper stack frames
 - ✅ **Integration tests** - Existing `test_heap_allocation_in_executable` test passes
 - ✅ **All 99 tests passing** - No regressions, heap allocation and deallocation fully working
@@ -346,30 +340,16 @@ slisp --compile -o test test.slisp
 - **Address space:** Rodata at 0x404000, separate from code (0x401000) and data (0x403000)
 **✅ Compiler Mode (String Operations - count operation COMPLETED!):**
 - ✅ **RuntimeCall IR instruction** - Generic instruction for calling runtime functions (extensible for all string ops)
-- ✅ **Compiler integration** - `compile_count()` function generates `RuntimeCall` IR instruction
-- ✅ **Code generation** - `RuntimeCall` handler implemented in both `generate_instruction()` and `generate_code()` methods
-- ✅ **Runtime function** - `_string_count` runtime function implemented in x86-64 assembly
-- ✅ **Runtime address tracking** - `string_count` address wired up in `RuntimeAddresses` with two-pass compilation
-- ✅ **Integration tests** - Full test coverage for compiled count operation
-
-**Implementation Details:**
-- **Runtime function**: `generate_string_count()` generates x86-64 assembly that iterates null-terminated strings
-- **Calling convention**: System V ABI (RDI = string pointer, RAX = return value)
-- **Two-pass compilation**: Calculates runtime function addresses before generating calls
-- **Modular design**: `generate_runtime_call()` supports multiple runtime functions with variable argument counts
+- ✅ **Compiler integration** - `compile_count()` emits `RuntimeCall`
+- ✅ **Code generation** - Runtime calls emit relocations when building objects, direct addresses when JITing
+- ✅ **Runtime function** - `_string_count` lives in the Rust runtime crate
+- ✅ **Integration tests** - Full coverage for compiled count operation
 
 **✅ Compiler Mode (String Operations - str operation COMPLETED!):**
-- ✅ **Infrastructure complete** - `RuntimeCall` for `_string_concat_2`, compiler integration, two-pass compilation
-- ✅ **Runtime function fully implemented** - `generate_string_concat_2()` with heap allocation, string copying, null termination
-- ✅ **Cross-function calls working** - `_string_concat_2` successfully calls `_allocate` with proper relative offsets
+- ✅ **Infrastructure complete** - `_string_concat_2` wired through IR + codegen + runtime crate
+- ✅ **Runtime implementation** - Rust version handles heap allocation, concatenation, and null-termination
 - ✅ **2-argument str working** - `(str "hello" " world")` compiles and produces "hello world" in heap memory
-- ✅ **Testing verified** - Concatenated strings correctly allocated, length = 11, content verified with memory inspection
-
-**Bug Fixed (Session 3):**
-- **Issue**: XOR instruction used wrong encoding (`49 31 f6` = `xor r14, rsi` instead of `4d 31 f6` = `xor r14, r14`)
-- **Impact**: r14 (string length counter) was initialized with garbage, causing allocate to request random sizes
-- **Fix**: Changed byte sequence in `generate_string_concat_2()` line 137 to correct REX prefix
-- **Result**: String concatenation now works perfectly in compiled executables
+- ✅ **Testing verified** - Concatenated strings correctly allocated, length correctness validated
 
 **What Works (Session 3):**
 ```lisp

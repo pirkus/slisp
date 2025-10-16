@@ -24,9 +24,7 @@ pub enum Node {
 
 impl Node {
     pub fn new_number(number: usize) -> Node {
-        Node::Primitive {
-            value: Primitive::Number(number),
-        }
+        Node::Primitive { value: Primitive::Number(number) }
     }
 
     pub fn new_list_from_raw(nodes: Vec<Node>) -> Node {

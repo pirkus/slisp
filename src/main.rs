@@ -26,10 +26,7 @@ fn main() {
         }
 
         match compile_file_to_executable(input_file, output_file) {
-            Ok(()) => println!(
-                "Successfully compiled file '{}' to '{}'",
-                input_file, output_file
-            ),
+            Ok(()) => println!("Successfully compiled file '{}' to '{}'", input_file, output_file),
             Err(e) => println!("Error: {}", e),
         }
     } else if args.len() > 1 && args[1] == "--compile" {
@@ -46,9 +43,7 @@ fn main() {
         println!("  slisp --compile                    - Start compiler REPL (JIT execution)");
         println!("  slisp --compile -o <out> <file>    - Compile .slisp file to executable");
         println!();
-        println!(
-            "Note: Executable compilation requires a .slisp/.lisp file with a -main function."
-        );
+        println!("Note: Executable compilation requires a .slisp/.lisp file with a -main function.");
         println!("      For quick expression testing, use the compiler REPL instead.");
         println!();
         repl_loop(ExecutionMode::Interpret);

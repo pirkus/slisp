@@ -4,42 +4,26 @@ use crate::ast::Node;
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
 
 /// Compile a function definition (defn)
-pub fn compile_defn(
-    args: &[Node],
-    context: &mut CompileContext,
-    program: &mut IRProgram,
-) -> Result<(Vec<IRInstruction>, FunctionInfo), CompileError> {
+pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<(Vec<IRInstruction>, FunctionInfo), CompileError> {
     if args.len() != 3 {
         return Err(CompileError::ArityError("defn".to_string(), 3, args.len()));
     }
 
     let func_name = match &args[0] {
         Node::Symbol { value } => value.clone(),
-        _ => {
-            return Err(CompileError::InvalidExpression(
-                "Function name must be a symbol".to_string(),
-            ))
-        }
+        _ => return Err(CompileError::InvalidExpression("Function name must be a symbol".to_string())),
     };
 
     let params = match &args[1] {
         Node::Vector { root } => root,
-        _ => {
-            return Err(CompileError::InvalidExpression(
-                "Function parameters must be a vector".to_string(),
-            ))
-        }
+        _ => return Err(CompileError::InvalidExpression("Function parameters must be a vector".to_string())),
     };
 
     let mut param_names = Vec::new();
     for param in params {
         match param {
             Node::Symbol { value } => param_names.push(value.clone()),
-            _ => {
-                return Err(CompileError::InvalidExpression(
-                    "Function parameters must be symbols".to_string(),
-                ))
-            }
+            _ => return Err(CompileError::InvalidExpression("Function parameters must be symbols".to_string())),
         }
     }
 
@@ -72,11 +56,7 @@ pub fn compile_defn(
         0, // Will be set by caller
     )];
 
-    instructions.extend(crate::compiler::compile_node(
-        &args[2],
-        &mut func_context,
-        program,
-    )?);
+    instructions.extend(crate::compiler::compile_node(&args[2], &mut func_context, program)?);
     instructions.push(IRInstruction::Return);
 
     let func_info = FunctionInfo {
@@ -90,19 +70,9 @@ pub fn compile_defn(
 }
 
 /// Compile a function call
-pub fn compile_function_call(
-    func_name: &str,
-    args: &[Node],
-    context: &mut CompileContext,
-    program: &mut IRProgram,
-    expected_param_count: usize,
-) -> Result<Vec<IRInstruction>, CompileError> {
+pub fn compile_function_call(func_name: &str, args: &[Node], context: &mut CompileContext, program: &mut IRProgram, expected_param_count: usize) -> Result<Vec<IRInstruction>, CompileError> {
     if args.len() != expected_param_count {
-        return Err(CompileError::ArityError(
-            func_name.to_string(),
-            expected_param_count,
-            args.len(),
-        ));
+        return Err(CompileError::ArityError(func_name.to_string(), expected_param_count, args.len()));
     }
 
     let mut instructions = Vec::new();
