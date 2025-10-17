@@ -72,43 +72,53 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
     Ok(instructions)
 }
 
-/// Compile logical AND operation with short-circuit evaluation
-pub fn compile_logical_and(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+fn compile_variadic_logical(
+    args: &[Node],
+    context: &mut CompileContext,
+    program: &mut IRProgram,
+    default_result: i64,
+    short_circuit_result: i64,
+    short_circuit_on_true: bool,
+) -> Result<Vec<IRInstruction>, CompileError> {
     if args.is_empty() {
-        return Ok(vec![IRInstruction::Push(1)]);
-    }
-
-    if args.len() == 1 {
-        let mut instructions = crate::compiler::compile_node(&args[0], context, program)?;
-        instructions.extend(vec![IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
-        return Ok(instructions);
+        return Ok(vec![IRInstruction::Push(default_result)]);
     }
 
     let mut instructions = crate::compiler::compile_node(&args[0], context, program)?;
 
-    let mut false_jumps = Vec::new();
+    if args.len() == 1 {
+        instructions.extend([IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
+        return Ok(instructions);
+    }
+
+    let mut jump_sites = Vec::new();
 
     for arg in &args[1..] {
-        instructions.extend(vec![IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
-        let false_jump = instructions.len();
+        if short_circuit_on_true {
+            instructions.extend([IRInstruction::Push(0), IRInstruction::Equal]);
+        } else {
+            instructions.extend([IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
+        }
+
+        let jump_site = instructions.len();
         instructions.push(IRInstruction::JumpIfZero(0));
-        false_jumps.push(false_jump);
+        jump_sites.push(jump_site);
 
         instructions.extend(crate::compiler::compile_node(arg, context, program)?);
     }
 
-    instructions.extend(vec![IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
+    instructions.extend([IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
 
     let end_jump = instructions.len();
     instructions.push(IRInstruction::Jump(0));
 
-    let false_label = instructions.len();
-    instructions.push(IRInstruction::Push(0));
+    let short_circuit_label = instructions.len();
+    instructions.push(IRInstruction::Push(short_circuit_result));
 
     let end_label = instructions.len();
 
-    for jump_pos in false_jumps {
-        instructions[jump_pos] = IRInstruction::JumpIfZero(false_label);
+    for jump_site in jump_sites {
+        instructions[jump_site] = IRInstruction::JumpIfZero(short_circuit_label);
     }
 
     instructions[end_jump] = IRInstruction::Jump(end_label);
@@ -116,48 +126,14 @@ pub fn compile_logical_and(args: &[Node], context: &mut CompileContext, program:
     Ok(instructions)
 }
 
+/// Compile logical AND operation with short-circuit evaluation
+pub fn compile_logical_and(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+    compile_variadic_logical(args, context, program, 1, 0, false)
+}
+
 /// Compile logical OR operation with short-circuit evaluation
 pub fn compile_logical_or(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
-    if args.is_empty() {
-        return Ok(vec![IRInstruction::Push(0)]);
-    }
-
-    if args.len() == 1 {
-        let mut instructions = crate::compiler::compile_node(&args[0], context, program)?;
-        instructions.extend(vec![IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
-        return Ok(instructions);
-    }
-
-    let mut instructions = crate::compiler::compile_node(&args[0], context, program)?;
-
-    let mut true_jumps = Vec::new();
-
-    for arg in &args[1..] {
-        instructions.extend(vec![IRInstruction::Push(0), IRInstruction::Equal]);
-        let true_jump = instructions.len();
-        instructions.push(IRInstruction::JumpIfZero(0));
-        true_jumps.push(true_jump);
-
-        instructions.extend(crate::compiler::compile_node(arg, context, program)?);
-    }
-
-    instructions.extend(vec![IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
-
-    let end_jump = instructions.len();
-    instructions.push(IRInstruction::Jump(0));
-
-    let true_label = instructions.len();
-    instructions.push(IRInstruction::Push(1));
-
-    let end_label = instructions.len();
-
-    for jump_pos in true_jumps {
-        instructions[jump_pos] = IRInstruction::JumpIfZero(true_label);
-    }
-
-    instructions[end_jump] = IRInstruction::Jump(end_label);
-
-    Ok(instructions)
+    compile_variadic_logical(args, context, program, 0, 1, true)
 }
 
 /// Compile logical NOT operation
