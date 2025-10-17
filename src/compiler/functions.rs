@@ -39,12 +39,7 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
         context.add_function(func_name.clone(), func_info)?;
     }
 
-    let mut func_context = context.clone();
-    func_context.in_function = true;
-    func_context.parameters.clear();
-    func_context.variables.clear();
-    func_context.next_slot = 0;
-    func_context.free_slots.clear();
+    let mut func_context = context.new_function_scope();
 
     for (i, param_name) in param_names.iter().enumerate() {
         func_context.add_parameter(param_name.clone(), i);
