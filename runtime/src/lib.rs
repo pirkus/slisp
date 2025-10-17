@@ -142,74 +142,84 @@ pub extern "C" fn _allocate(size: u64) -> *mut u8 {
     }
 }
 
+/// # Safety
+///
+/// The caller must ensure that `ptr` either points to memory previously allocated by
+/// `_allocate` (and not yet freed) or is null. Passing arbitrary pointers or freeing
+/// the same allocation twice results in undefined behavior.
 #[no_mangle]
-pub extern "C" fn _free(ptr: *mut u8) {
-    unsafe {
-        if ptr.is_null() {
-            return;
-        }
+pub unsafe extern "C" fn _free(ptr: *mut u8) {
+    if ptr.is_null() {
+        return;
+    }
 
-        if ptr < HEAP_BASE || ptr >= HEAP_END {
-            return;
-        }
+    if ptr < HEAP_BASE || ptr >= HEAP_END {
+        return;
+    }
 
-        let block_ptr = ptr.sub(HEADER_SIZE) as *mut FreeBlock;
-        let size = (*block_ptr).size & !ALLOCATED_BIT;
-        (*block_ptr).size = size;
-        (*block_ptr).next = FREE_LIST_HEAD;
-        FREE_LIST_HEAD = block_ptr;
+    let block_ptr = ptr.sub(HEADER_SIZE) as *mut FreeBlock;
+    let size = (*block_ptr).size & !ALLOCATED_BIT;
+    (*block_ptr).size = size;
+    (*block_ptr).next = FREE_LIST_HEAD;
+    FREE_LIST_HEAD = block_ptr;
+}
+
+/// # Safety
+///
+/// The caller must ensure that `ptr` is either null or points to a valid
+/// NUL-terminated UTF-8 byte sequence. Passing a non-terminated or dangling pointer
+/// causes the function to read beyond the allocation, resulting in undefined behavior.
+#[no_mangle]
+pub unsafe extern "C" fn _string_count(ptr: *const u8) -> u64 {
+    if ptr.is_null() {
+        return 0;
+    }
+
+    let mut offset = 0usize;
+    loop {
+        let byte = *ptr.add(offset);
+        if byte == 0 {
+            return offset as u64;
+        }
+        offset += 1;
     }
 }
 
+/// # Safety
+///
+/// The caller must ensure that both `a` and `b` are either null or point to
+/// NUL-terminated UTF-8 byte sequences allocated within the managed heap. The result
+/// must eventually be released with `_free`. Providing invalid pointers leads to
+/// undefined behavior.
 #[no_mangle]
-pub extern "C" fn _string_count(ptr: *const u8) -> u64 {
-    unsafe {
-        if ptr.is_null() {
-            return 0;
-        }
-
-        let mut offset = 0usize;
-        loop {
-            let byte = *ptr.add(offset);
-            if byte == 0 {
-                return offset as u64;
-            }
-            offset += 1;
-        }
+pub unsafe extern "C" fn _string_concat_2(a: *const u8, b: *const u8) -> *mut u8 {
+    if a.is_null() || b.is_null() {
+        return null_mut();
     }
-}
 
-#[no_mangle]
-pub extern "C" fn _string_concat_2(a: *const u8, b: *const u8) -> *mut u8 {
-    unsafe {
-        if a.is_null() || b.is_null() {
-            return null_mut();
-        }
+    let len_a = _string_count(a) as usize;
+    let len_b = _string_count(b) as usize;
+    let total = len_a.saturating_add(len_b).saturating_add(1);
 
-        let len_a = _string_count(a) as usize;
-        let len_b = _string_count(b) as usize;
-        let total = len_a.saturating_add(len_b).saturating_add(1);
-
-        let dst = _allocate(total as u64);
-        if dst.is_null() {
-            return null_mut();
-        }
-
-        let mut i = 0;
-        while i < len_a {
-            *dst.add(i) = *a.add(i);
-            i += 1;
-        }
-
-        let mut j = 0;
-        while j < len_b {
-            *dst.add(len_a + j) = *b.add(j);
-            j += 1;
-        }
-
-        *dst.add(total - 1) = 0;
-        dst
+    let dst = _allocate(total as u64);
+    if dst.is_null() {
+        return null_mut();
     }
+
+    let mut i = 0;
+    while i < len_a {
+        *dst.add(i) = *a.add(i);
+        i += 1;
+    }
+
+    let mut j = 0;
+    while j < len_b {
+        *dst.add(len_a + j) = *b.add(j);
+        j += 1;
+    }
+
+    *dst.add(total - 1) = 0;
+    dst
 }
 
 #[cfg(not(feature = "std"))]

@@ -782,7 +782,7 @@ pub fn link_with_runtime(object_bytes: &[u8], output_path: &str, runtime_staticl
 
     fs::write(&obj_path, object_bytes)?;
 
-    let obj_path_str = obj_path.to_str().ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Invalid object path"))?.to_string();
+    let obj_path_str = obj_path.to_str().ok_or_else(|| io::Error::other("Invalid object path"))?.to_string();
 
     let status = Command::new("ld").args(["-o", output_path, &obj_path_str, runtime_staticlib, "-static", "-nostdlib"]).status()?;
 
@@ -791,7 +791,7 @@ pub fn link_with_runtime(object_bytes: &[u8], output_path: &str, runtime_staticl
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::new(io::ErrorKind::Other, format!("ld failed with status: {}", status)))
+        Err(io::Error::other(format!("ld failed with status: {}", status)))
     }
 }
 

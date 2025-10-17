@@ -49,11 +49,7 @@ fn main() {
         panic!("Building slisp-runtime failed with status {}", status);
     }
 
-    let profile_dir = match profile.as_str() {
-        "release" => "release",
-        "debug" => "debug",
-        other => other,
-    };
+    let profile_dir = profile.as_str();
 
     let lib_path = runtime_target_dir.join(profile_dir).join("libslisp_runtime.a");
 
