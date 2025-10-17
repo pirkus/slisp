@@ -78,6 +78,7 @@ impl CompileContext {
 
     /// Add a function to the context
     pub fn add_function(&mut self, name: String, info: FunctionInfo) -> Result<(), super::CompileError> {
+        debug_assert!(!self.in_function, "function declarations must be registered on the root context");
         if self.functions.contains_key(&name) {
             return Err(super::CompileError::DuplicateFunction(name));
         }
