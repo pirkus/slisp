@@ -1,0 +1,7 @@
+; Sample program to exercise inline comment parsing
+(defn -main []
+  (let [a 1
+        ; describe binding for b
+        b 2]
+    ; trailing comment after expression
+    (+ a b))) ; end-of-line comment

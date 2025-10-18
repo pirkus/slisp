@@ -156,6 +156,39 @@ fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRPr
     Ok(instructions)
 }
 
+/// Compile get operation (string indexing)
+fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+    if args.len() != 2 {
+        return Err(CompileError::ArityError("get".to_string(), 2, args.len()));
+    }
+
+    let mut instructions = compile_node(&args[0], context, program)?;
+    instructions.extend(compile_node(&args[1], context, program)?);
+    instructions.push(IRInstruction::RuntimeCall("_string_get".to_string(), 2));
+
+    Ok(instructions)
+}
+
+/// Compile subs operation (substring extraction)
+fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(CompileError::ArityError("subs".to_string(), 2, args.len()));
+    }
+
+    let mut instructions = compile_node(&args[0], context, program)?;
+    instructions.extend(compile_node(&args[1], context, program)?);
+
+    if args.len() == 3 {
+        instructions.extend(compile_node(&args[2], context, program)?);
+    } else {
+        instructions.push(IRInstruction::Push(-1));
+    }
+
+    instructions.push(IRInstruction::RuntimeCall("_string_subs".to_string(), 3));
+
+    Ok(instructions)
+}
+
 /// Compile str operation (string concatenation)
 fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
     if args.is_empty() {
@@ -223,6 +256,8 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
             "let" => bindings::compile_let(args, context, program),
             "defn" => Ok(functions::compile_defn(args, context, program)?.0),
             "count" => compile_count(args, context, program),
+            "get" => compile_get(args, context, program),
+            "subs" => compile_subs(args, context, program),
             "str" => compile_str(args, context, program),
             op => {
                 if let Some(func_info) = context.get_function(op) {
@@ -308,6 +343,53 @@ mod tests {
             ]
         );
         assert_eq!(program.string_literals, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn test_compile_get_string_index() {
+        let program = compile_expression("(get \"abc\" 1)").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::PushString(0),
+                IRInstruction::Push(1),
+                IRInstruction::RuntimeCall("_string_get".to_string(), 2),
+                IRInstruction::Return,
+            ]
+        );
+        assert_eq!(program.string_literals, vec!["abc".to_string()]);
+    }
+
+    #[test]
+    fn test_compile_subs_with_end() {
+        let program = compile_expression("(subs \"hello\" 1 3)").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::PushString(0),
+                IRInstruction::Push(1),
+                IRInstruction::Push(3),
+                IRInstruction::RuntimeCall("_string_subs".to_string(), 3),
+                IRInstruction::Return,
+            ]
+        );
+        assert_eq!(program.string_literals, vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn test_compile_subs_without_end() {
+        let program = compile_expression("(subs \"hello\" 2)").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::PushString(0),
+                IRInstruction::Push(2),
+                IRInstruction::Push(-1),
+                IRInstruction::RuntimeCall("_string_subs".to_string(), 3),
+                IRInstruction::Return,
+            ]
+        );
+        assert_eq!(program.string_literals, vec!["hello".to_string()]);
     }
 
     #[test]
