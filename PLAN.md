@@ -45,7 +45,9 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
   - ✅ Interpreter strings with escapes and helpers (`str`, `count`, `get`, `subs`).
   - ✅ Compiler string literals via rodata, runtime-backed `count`/`str` (2-arg) with scoped freeing.
   - ✅ Escaping strings that leave scope by cloning heap values in compiler IR and runtime `_string_clone`.
-  - 🔜 Extend to variadic `str`, safe nested concatenation, and `get`/`subs` via runtime helpers.
+  - ✅ Extend to variadic `str` and safe nested concatenation in the compiler/runtime.
+  - 🔜 Implement `_string_get`/`_string_subs` helpers and wire compiler codegen for `get`/`subs`.
+  - 🔜 Introduce runtime-backed coercions so compiled `str` can accept numbers/booleans/nil (mirroring interpreter conversions).
 - **6.3 Lifetime improvements (planned):** Smarter temporary management, unused allocation elision, block coalescing, and exploration of reference counting or GC for values escaping scope.
 - **6.4 Composite data structures (planned):** Heap-backed vectors, maps, and sets with associated primitives (`vec`, `conj`, `assoc`, etc.).
 

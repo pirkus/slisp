@@ -185,41 +185,83 @@ pub unsafe extern "C" fn _string_count(ptr: *const u8) -> u64 {
     }
 }
 
-/// # Safety
-///
-/// The caller must ensure that both `a` and `b` are either null or point to
-/// NUL-terminated UTF-8 byte sequences allocated within the managed heap. The result
-/// must eventually be released with `_free`. Providing invalid pointers leads to
-/// undefined behavior.
-#[no_mangle]
-pub unsafe extern "C" fn _string_concat_2(a: *const u8, b: *const u8) -> *mut u8 {
-    if a.is_null() || b.is_null() {
+unsafe fn string_concat_impl(parts: *const *const u8, count: usize) -> *mut u8 {
+    if count == 0 {
+        let dst = _allocate(1);
+        if dst.is_null() {
+            return null_mut();
+        }
+        *dst = 0;
+        return dst;
+    }
+
+    if parts.is_null() {
         return null_mut();
     }
 
-    let len_a = _string_count(a) as usize;
-    let len_b = _string_count(b) as usize;
-    let total = len_a.saturating_add(len_b).saturating_add(1);
+    let mut total = 1usize;
+    let mut i = 0;
+    while i < count {
+        let part = *parts.add(i);
+        if part.is_null() {
+            return null_mut();
+        }
+
+        let len = _string_count(part) as usize;
+        match total.checked_add(len) {
+            Some(next) => total = next,
+            None => return null_mut(),
+        }
+
+        i += 1;
+    }
 
     let dst = _allocate(total as u64);
     if dst.is_null() {
         return null_mut();
     }
 
-    let mut i = 0;
-    while i < len_a {
-        *dst.add(i) = *a.add(i);
-        i += 1;
-    }
-
+    let mut offset = 0usize;
     let mut j = 0;
-    while j < len_b {
-        *dst.add(len_a + j) = *b.add(j);
+    while j < count {
+        let part = *parts.add(j);
+        let len = _string_count(part) as usize;
+
+        let mut k = 0usize;
+        while k < len {
+            *dst.add(offset + k) = *part.add(k);
+            k += 1;
+        }
+
+        offset += len;
         j += 1;
     }
 
     *dst.add(total - 1) = 0;
     dst
+}
+
+/// # Safety
+///
+/// The caller must ensure that `parts` is either null or points to an array of
+/// `count` pointers where each pointer references a NUL-terminated UTF-8 string
+/// allocated within the managed heap. The result must be released with `_free`.
+/// Passing invalid pointers results in undefined behavior.
+#[no_mangle]
+pub unsafe extern "C" fn _string_concat_n(parts: *const *const u8, count: u64) -> *mut u8 {
+    if count == 0 {
+        return string_concat_impl(parts, 0);
+    }
+
+    if parts.is_null() {
+        return null_mut();
+    }
+
+    if count > usize::MAX as u64 {
+        return null_mut();
+    }
+
+    string_concat_impl(parts, count as usize)
 }
 
 /// # Safety

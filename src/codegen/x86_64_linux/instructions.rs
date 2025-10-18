@@ -119,6 +119,25 @@ pub fn generate_load_local(slot: usize, func_info: &FunctionInfo) -> Vec<u8> {
     }
 }
 
+/// Generate machine code that pushes the address of a local slot onto the stack
+pub fn generate_push_local_address(slot: usize, func_info: &FunctionInfo) -> Vec<u8> {
+    let offset = 8 * (func_info.param_count + slot + 1);
+    let mut code = Vec::new();
+
+    // Load effective address of [rbp - offset] into RAX (LEA), then push it.
+    // We mirror the addressing scheme used by Store/Load to stay consistent
+    // with how locals are laid out beneath the base pointer.
+    if offset <= 127 {
+        code.extend_from_slice(&[0x48, 0x8d, 0x45, (-(offset as i8)) as u8]);
+    } else {
+        code.extend_from_slice(&[0x48, 0x8d, 0x85]);
+        code.extend_from_slice(&(-(offset as i32)).to_le_bytes());
+    }
+
+    code.push(0x50); // push rax
+    code
+}
+
 /// Generate machine code for a function call
 pub fn generate_call(func_name: &str, function_addresses: &HashMap<String, usize>, current_pos: usize) -> Vec<u8> {
     let mut code = Vec::new();
