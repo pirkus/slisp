@@ -1,6 +1,5 @@
 /// System V ABI implementation for x86-64
 /// Handles calling convention, stack frame management, and register usage
-
 use crate::ir::FunctionInfo;
 
 /// Generate function prologue following System V ABI
@@ -69,12 +68,12 @@ pub fn generate_epilogue() -> Vec<u8> {
 /// Following System V ABI: RDI, RSI, RDX, RCX, R8, R9
 pub fn generate_call_setup(arg_count: usize) -> Vec<u8> {
     let arg_regs: Vec<&[u8]> = vec![
-        &[0x5f],             // pop rdi
-        &[0x5e],             // pop rsi
-        &[0x5a],             // pop rdx
-        &[0x59],             // pop rcx
-        &[0x41, 0x58],       // pop r8
-        &[0x41, 0x59],       // pop r9
+        &[0x5f],       // pop rdi
+        &[0x5e],       // pop rsi
+        &[0x5a],       // pop rdx
+        &[0x59],       // pop rcx
+        &[0x41, 0x58], // pop r8
+        &[0x41, 0x59], // pop r9
     ];
 
     let mut code = Vec::new();

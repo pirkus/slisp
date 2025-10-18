@@ -1,6 +1,5 @@
 /// Instruction size calculation for position-independent code generation
 /// Used in the first pass to determine instruction addresses
-
 use crate::ir::IRInstruction;
 
 /// Calculate the size of an instruction in bytes
@@ -39,6 +38,23 @@ pub fn instruction_size(instruction: &IRInstruction, has_locals: bool) -> usize 
         // Function operations
         IRInstruction::DefineFunction(_, _, _) => 0, // No code generated, just metadata
         IRInstruction::Call(_, _) => 6,              // call + push rax (varies with offset)
+        // String operations
+        IRInstruction::PushString(_) => 10, // movabs rax, <address> + push rax
+        // Memory allocation
+        IRInstruction::InitHeap => 0,      // Generated as runtime function, not inline
+        IRInstruction::Allocate(_) => 10,  // mov rdi, size + call _allocate + push rax
+        IRInstruction::Free => 6,          // pop rdi + call _free
+        IRInstruction::FreeLocal(_) => 11, // push rax (1) + mov rdi,[rbp-N] (4) + call _free (5) + pop rax (1)
+        // Runtime function calls
+        IRInstruction::RuntimeCall(_, arg_count) => {
+            let pop_size = match arg_count {
+                0 => 0,
+                1 => 1, // pop rdi
+                2 => 2, // pop rsi + pop rdi
+                _ => 3, // conservative estimate
+            };
+            pop_size + 5 + 1 // pops + call (5 bytes) + push rax (1 byte)
+        }
     }
 }
 

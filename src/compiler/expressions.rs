@@ -1,261 +1,149 @@
-/// Expression compilation - arithmetic, comparisons, conditionals, logical operations
-
-use crate::domain::{Node, Primitive};
-use crate::ir::{IRInstruction, IRProgram};
 use super::{CompileContext, CompileError};
+/// Expression compilation - arithmetic, comparisons, conditionals, logical operations
+use crate::ast::{Node, Primitive};
+use crate::ir::{IRInstruction, IRProgram};
 
 /// Compile a primitive value (numbers, strings)
-pub fn compile_primitive(primitive: &Primitive, program: &mut IRProgram) -> Result<(), CompileError> {
+pub fn compile_primitive(primitive: &Primitive, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
     match primitive {
-        Primitive::Number(n) => {
-            program.add_instruction(IRInstruction::Push(*n as i64));
-            Ok(())
+        Primitive::Number(n) => Ok(vec![IRInstruction::Push(*n as i64)]),
+        Primitive::String(s) => {
+            let string_index = program.add_string(s.clone());
+            Ok(vec![IRInstruction::PushString(string_index)])
         }
-        Primitive::_Str(_) => Err(CompileError::UnsupportedOperation(
-            "String literals not supported".to_string(),
-        )),
     }
 }
 
 /// Compile arithmetic operations (+, -, *, /)
-pub fn compile_arithmetic_op(
-    args: &[Node],
-    program: &mut IRProgram,
-    context: &mut CompileContext,
-    instruction: IRInstruction,
-    op_name: &str,
-) -> Result<(), CompileError> {
+pub fn compile_arithmetic_op(args: &[Node], context: &mut CompileContext, program: &mut IRProgram, instruction: IRInstruction, op_name: &str) -> Result<Vec<IRInstruction>, CompileError> {
     if args.len() < 2 {
         return Err(CompileError::ArityError(op_name.to_string(), 2, args.len()));
     }
 
-    // Compile first operand
-    crate::compiler::compile_node(&args[0], program, context)?;
+    let mut instructions = crate::compiler::compile_node(&args[0], context, program)?;
 
-    // Compile and apply remaining operands
     for arg in &args[1..] {
-        crate::compiler::compile_node(arg, program, context)?;
-        program.add_instruction(instruction.clone());
+        instructions.extend(crate::compiler::compile_node(arg, context, program)?);
+        instructions.push(instruction.clone());
     }
 
-    Ok(())
+    Ok(instructions)
 }
 
 /// Compile comparison operations (=, <, >, <=, >=)
-pub fn compile_comparison_op(
-    args: &[Node],
-    program: &mut IRProgram,
-    context: &mut CompileContext,
-    instruction: IRInstruction,
-    op_name: &str,
-) -> Result<(), CompileError> {
+pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, program: &mut IRProgram, instruction: IRInstruction, op_name: &str) -> Result<Vec<IRInstruction>, CompileError> {
     if args.len() != 2 {
         return Err(CompileError::ArityError(op_name.to_string(), 2, args.len()));
     }
 
-    crate::compiler::compile_node(&args[0], program, context)?;
-    crate::compiler::compile_node(&args[1], program, context)?;
-    program.add_instruction(instruction);
+    let mut instructions = crate::compiler::compile_node(&args[0], context, program)?;
+    instructions.extend(crate::compiler::compile_node(&args[1], context, program)?);
+    instructions.push(instruction);
 
-    Ok(())
+    Ok(instructions)
 }
 
 /// Compile if expression
-pub fn compile_if(
-    args: &[Node],
-    program: &mut IRProgram,
-    context: &mut CompileContext,
-) -> Result<(), CompileError> {
+pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
     if args.len() != 3 {
         return Err(CompileError::ArityError("if".to_string(), 3, args.len()));
     }
 
-    // Compile condition
-    crate::compiler::compile_node(&args[0], program, context)?;
+    let mut instructions = crate::compiler::compile_node(&args[0], context, program)?;
 
-    // Jump to else clause if condition is false (0)
-    let else_jump_pos = program.len();
-    program.add_instruction(IRInstruction::JumpIfZero(0)); // Will be patched
+    let else_jump_pos = instructions.len();
+    instructions.push(IRInstruction::JumpIfZero(0));
 
-    // Compile then clause
-    crate::compiler::compile_node(&args[1], program, context)?;
+    let then_instructions = crate::compiler::compile_node(&args[1], context, program)?;
+    instructions.extend(then_instructions);
 
-    // Jump over else clause
-    let end_jump_pos = program.len();
-    program.add_instruction(IRInstruction::Jump(0)); // Will be patched
+    let end_jump_pos = instructions.len();
+    instructions.push(IRInstruction::Jump(0));
 
-    // Patch else jump target
-    let else_start = program.len();
-    if let IRInstruction::JumpIfZero(ref mut target) = &mut program.instructions[else_jump_pos] {
-        *target = else_start;
+    let else_start = instructions.len();
+    instructions[else_jump_pos] = IRInstruction::JumpIfZero(else_start);
+
+    let else_instructions = crate::compiler::compile_node(&args[2], context, program)?;
+    instructions.extend(else_instructions);
+
+    let end_pos = instructions.len();
+    instructions[end_jump_pos] = IRInstruction::Jump(end_pos);
+
+    Ok(instructions)
+}
+
+fn compile_variadic_logical(
+    args: &[Node],
+    context: &mut CompileContext,
+    program: &mut IRProgram,
+    default_result: i64,
+    short_circuit_result: i64,
+    short_circuit_on_true: bool,
+) -> Result<Vec<IRInstruction>, CompileError> {
+    if args.is_empty() {
+        return Ok(vec![IRInstruction::Push(default_result)]);
     }
 
-    // Compile else clause
-    crate::compiler::compile_node(&args[2], program, context)?;
+    let mut instructions = crate::compiler::compile_node(&args[0], context, program)?;
 
-    // Patch end jump target
-    let end_pos = program.len();
-    if let IRInstruction::Jump(ref mut target) = &mut program.instructions[end_jump_pos] {
-        *target = end_pos;
+    if args.len() == 1 {
+        instructions.extend([IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
+        return Ok(instructions);
     }
 
-    Ok(())
+    let mut jump_sites = Vec::new();
+
+    for arg in &args[1..] {
+        if short_circuit_on_true {
+            instructions.extend([IRInstruction::Push(0), IRInstruction::Equal]);
+        } else {
+            instructions.extend([IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
+        }
+
+        let jump_site = instructions.len();
+        instructions.push(IRInstruction::JumpIfZero(0));
+        jump_sites.push(jump_site);
+
+        instructions.extend(crate::compiler::compile_node(arg, context, program)?);
+    }
+
+    instructions.extend([IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
+
+    let end_jump = instructions.len();
+    instructions.push(IRInstruction::Jump(0));
+
+    let short_circuit_label = instructions.len();
+    instructions.push(IRInstruction::Push(short_circuit_result));
+
+    let end_label = instructions.len();
+
+    for jump_site in jump_sites {
+        instructions[jump_site] = IRInstruction::JumpIfZero(short_circuit_label);
+    }
+
+    instructions[end_jump] = IRInstruction::Jump(end_label);
+
+    Ok(instructions)
 }
 
 /// Compile logical AND operation with short-circuit evaluation
-pub fn compile_logical_and(
-    args: &[Node],
-    program: &mut IRProgram,
-    context: &mut CompileContext,
-) -> Result<(), CompileError> {
-    if args.is_empty() {
-        program.add_instruction(IRInstruction::Push(1)); // true
-        return Ok(());
-    }
-
-    if args.len() == 1 {
-        crate::compiler::compile_node(&args[0], program, context)?;
-        // Convert to boolean (0 or 1)
-        program.add_instruction(IRInstruction::Push(0));
-        program.add_instruction(IRInstruction::Equal);
-        program.add_instruction(IRInstruction::Not);
-        return Ok(());
-    }
-
-    // Compile first argument
-    super::compile_node(&args[0], program, context)?;
-
-    // For each additional argument, short-circuit if current result is false
-    let mut false_jumps = Vec::new();
-
-    for arg in &args[1..] {
-        // Test if current value is false (0) - if so, short-circuit to false
-        program.add_instruction(IRInstruction::Push(0));
-        program.add_instruction(IRInstruction::Equal);
-
-        // If current value is false (Equal result will be 1), we need to NOT jump
-        // So we invert the test: jump if Equal result is 0 (meaning value was NOT 0)
-        program.add_instruction(IRInstruction::Not);
-        let false_jump = program.len();
-        program.add_instruction(IRInstruction::JumpIfZero(0)); // Will be patched
-        false_jumps.push(false_jump);
-
-        // Current value is true, so evaluate next argument
-        crate::compiler::compile_node(arg, program, context)?;
-    }
-
-    // Convert final result to boolean and jump to end
-    program.add_instruction(IRInstruction::Push(0));
-    program.add_instruction(IRInstruction::Equal);
-    program.add_instruction(IRInstruction::Not);
-
-    let end_jump = program.len();
-    program.add_instruction(IRInstruction::Jump(0)); // Will be patched
-
-    // False result path: push 0
-    let false_label = program.len();
-    program.add_instruction(IRInstruction::Push(0));
-
-    // Patch all jumps
-    let end_label = program.len();
-
-    // Patch false jumps to false result
-    for jump_pos in false_jumps {
-        if let IRInstruction::JumpIfZero(ref mut target) = &mut program.instructions[jump_pos] {
-            *target = false_label;
-        }
-    }
-
-    // Patch end jump
-    if let IRInstruction::Jump(ref mut target) = &mut program.instructions[end_jump] {
-        *target = end_label;
-    }
-
-    Ok(())
+pub fn compile_logical_and(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+    compile_variadic_logical(args, context, program, 1, 0, false)
 }
 
 /// Compile logical OR operation with short-circuit evaluation
-pub fn compile_logical_or(
-    args: &[Node],
-    program: &mut IRProgram,
-    context: &mut CompileContext,
-) -> Result<(), CompileError> {
-    if args.is_empty() {
-        program.add_instruction(IRInstruction::Push(0)); // false
-        return Ok(());
-    }
-
-    if args.len() == 1 {
-        crate::compiler::compile_node(&args[0], program, context)?;
-        // Convert to boolean (0 or 1)
-        program.add_instruction(IRInstruction::Push(0));
-        program.add_instruction(IRInstruction::Equal);
-        program.add_instruction(IRInstruction::Not);
-        return Ok(());
-    }
-
-    // Compile first argument
-    super::compile_node(&args[0], program, context)?;
-
-    // For each additional argument, short-circuit if current result is true
-    let mut true_jumps = Vec::new();
-
-    for arg in &args[1..] {
-        // Test if current value is true (non-zero) - if so, short-circuit to true
-        program.add_instruction(IRInstruction::Push(0));
-        program.add_instruction(IRInstruction::Equal);
-
-        // If current value is true (Equal result will be 0), jump to true result
-        let true_jump = program.len();
-        program.add_instruction(IRInstruction::JumpIfZero(0)); // Will be patched
-        true_jumps.push(true_jump);
-
-        // Current value is false, so evaluate next argument
-        crate::compiler::compile_node(arg, program, context)?;
-    }
-
-    // Convert final result to boolean and jump to end
-    program.add_instruction(IRInstruction::Push(0));
-    program.add_instruction(IRInstruction::Equal);
-    program.add_instruction(IRInstruction::Not);
-
-    let end_jump = program.len();
-    program.add_instruction(IRInstruction::Jump(0)); // Will be patched
-
-    // True result path: push 1
-    let true_label = program.len();
-    program.add_instruction(IRInstruction::Push(1));
-
-    // Patch all jumps
-    let end_label = program.len();
-
-    // Patch true jumps to true result
-    for jump_pos in true_jumps {
-        if let IRInstruction::JumpIfZero(ref mut target) = &mut program.instructions[jump_pos] {
-            *target = true_label;
-        }
-    }
-
-    // Patch end jump
-    if let IRInstruction::Jump(ref mut target) = &mut program.instructions[end_jump] {
-        *target = end_label;
-    }
-
-    Ok(())
+pub fn compile_logical_or(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+    compile_variadic_logical(args, context, program, 0, 1, true)
 }
 
 /// Compile logical NOT operation
-pub fn compile_logical_not(
-    args: &[Node],
-    program: &mut IRProgram,
-    context: &mut CompileContext,
-) -> Result<(), CompileError> {
+pub fn compile_logical_not(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
     if args.len() != 1 {
         return Err(CompileError::ArityError("not".to_string(), 1, args.len()));
     }
 
-    super::compile_node(&args[0], program, context)?;
-    program.add_instruction(IRInstruction::Not);
+    let mut instructions = crate::compiler::compile_node(&args[0], context, program)?;
+    instructions.push(IRInstruction::Not);
 
-    Ok(())
+    Ok(instructions)
 }

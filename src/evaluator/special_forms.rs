@@ -1,7 +1,6 @@
+use super::{Environment, EvalError, Value};
 /// Special forms - if, let, fn, def, defn
-
-use crate::domain::Node;
-use super::{Value, EvalError, Environment};
+use crate::ast::Node;
 
 /// Evaluate if conditional
 pub fn eval_if(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
@@ -15,6 +14,7 @@ pub fn eval_if(args: &[Node], env: &mut Environment) -> Result<Value, EvalError>
         Value::Number(n) => n != 0,
         Value::Nil => false,
         Value::Function { .. } => true, // Functions are always truthy
+        Value::String(s) => !s.is_empty(),
     };
 
     if is_truthy {
@@ -33,17 +33,11 @@ pub fn eval_let(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
     // Bindings format: [var1 val1 var2 val2 ...]
     let bindings = match &args[0] {
         Node::Vector { root } => root,
-        _ => {
-            return Err(EvalError::TypeError(
-                "let requires a vector of bindings".to_string(),
-            ))
-        }
+        _ => return Err(EvalError::TypeError("let requires a vector of bindings".to_string())),
     };
 
     if bindings.len() % 2 != 0 {
-        return Err(EvalError::TypeError(
-            "let bindings must have even number of elements".to_string(),
-        ));
+        return Err(EvalError::TypeError("let bindings must have even number of elements".to_string()));
     }
 
     let mut new_env = env.clone();
@@ -54,11 +48,7 @@ pub fn eval_let(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
 
         let var_name = match var_node {
             Node::Symbol { value } => value,
-            _ => {
-                return Err(EvalError::TypeError(
-                    "let binding variables must be symbols".to_string(),
-                ))
-            }
+            _ => return Err(EvalError::TypeError("let binding variables must be symbols".to_string())),
         };
 
         // Sequential binding: later bindings can reference earlier ones
@@ -82,49 +72,25 @@ pub fn eval_fn(args: &[Node], env: &Environment) -> Result<Value, EvalError> {
             for param_node in root {
                 match param_node {
                     Node::Symbol { value } => param_names.push(value.clone()),
-                    _ => {
-                        return Err(EvalError::TypeError(
-                            "fn parameters must be symbols".to_string(),
-                        ))
-                    }
+                    _ => return Err(EvalError::TypeError("fn parameters must be symbols".to_string())),
                 }
             }
             param_names
         }
-        _ => {
-            return Err(EvalError::TypeError(
-                "fn requires a vector of parameters".to_string(),
-            ))
-        }
+        _ => return Err(EvalError::TypeError("fn requires a vector of parameters".to_string())),
     };
 
     let body = Box::new(args[1].clone());
 
-    Ok(Value::Function {
-        params,
-        body,
-        closure: env.clone(),
-    })
+    Ok(Value::Function { params, body, closure: env.clone() })
 }
 
 /// Evaluate function call
-pub fn eval_function_call(
-    func_value: Value,
-    args: &[Node],
-    env: &mut Environment,
-) -> Result<Value, EvalError> {
+pub fn eval_function_call(func_value: Value, args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
     match func_value {
-        Value::Function {
-            params,
-            body,
-            closure,
-        } => {
+        Value::Function { params, body, closure } => {
             if args.len() != params.len() {
-                return Err(EvalError::ArityError(
-                    "function call".to_string(),
-                    params.len(),
-                    args.len(),
-                ));
+                return Err(EvalError::ArityError("function call".to_string(), params.len(), args.len()));
             }
 
             let mut func_env = closure;
@@ -135,9 +101,7 @@ pub fn eval_function_call(
 
             crate::evaluator::eval_with_env(&body, &mut func_env)
         }
-        _ => Err(EvalError::TypeError(
-            "Cannot call non-function value".to_string(),
-        )),
+        _ => Err(EvalError::TypeError("Cannot call non-function value".to_string())),
     }
 }
 
@@ -149,11 +113,7 @@ pub fn eval_def(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
 
     let _name = match &args[0] {
         Node::Symbol { value } => value,
-        _ => {
-            return Err(EvalError::TypeError(
-                "def requires a symbol as first argument".to_string(),
-            ))
-        }
+        _ => return Err(EvalError::TypeError("def requires a symbol as first argument".to_string())),
     };
 
     let value = crate::evaluator::eval_with_env(&args[1], env)?;
@@ -173,11 +133,7 @@ pub fn eval_defn(args: &[Node], env: &mut Environment) -> Result<Value, EvalErro
 
     let _name = match &args[0] {
         Node::Symbol { value } => value,
-        _ => {
-            return Err(EvalError::TypeError(
-                "defn requires a symbol as first argument".to_string(),
-            ))
-        }
+        _ => return Err(EvalError::TypeError("defn requires a symbol as first argument".to_string())),
     };
 
     // Parameters format: [param1 param2 ...]
@@ -187,36 +143,22 @@ pub fn eval_defn(args: &[Node], env: &mut Environment) -> Result<Value, EvalErro
             for param_node in root {
                 match param_node {
                     Node::Symbol { value } => param_names.push(value.clone()),
-                    _ => {
-                        return Err(EvalError::TypeError(
-                            "defn parameters must be symbols".to_string(),
-                        ))
-                    }
+                    _ => return Err(EvalError::TypeError("defn parameters must be symbols".to_string())),
                 }
             }
             param_names
         }
-        _ => {
-            return Err(EvalError::TypeError(
-                "defn requires a vector of parameters".to_string(),
-            ))
-        }
+        _ => return Err(EvalError::TypeError("defn requires a vector of parameters".to_string())),
     };
 
     let body = if args.len() == 3 {
         Box::new(args[2].clone())
     } else {
         // TODO: Multiple body expressions - wrap in an implicit do
-        return Err(EvalError::InvalidOperation(
-            "Multiple body expressions not supported yet".to_string(),
-        ));
+        return Err(EvalError::InvalidOperation("Multiple body expressions not supported yet".to_string()));
     };
 
-    let func_value = Value::Function {
-        params,
-        body,
-        closure: env.clone(),
-    };
+    let func_value = Value::Function { params, body, closure: env.clone() };
 
     if let Node::Symbol { value: name } = &args[0] {
         env.insert(name.clone(), func_value.clone());

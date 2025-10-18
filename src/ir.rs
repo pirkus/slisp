@@ -1,7 +1,9 @@
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)] // InitHeap and Allocate variants are used but clippy doesn't track through derived traits
 pub enum IRInstruction {
     // Stack operations
-    Push(i64), // Push immediate value
+    Push(i64),         // Push immediate value
+    PushString(usize), // Push string address (index into string table)
 
     // Arithmetic operations
     Add, // Pop two values, push sum
@@ -32,6 +34,15 @@ pub enum IRInstruction {
     Call(String, usize),                  // (function_name, arg_count)
     LoadParam(usize),                     // Load parameter from current frame
 
+    // Memory allocation
+    InitHeap,         // Initialize heap (mmap syscall to get memory region)
+    Allocate(usize),  // Allocate N bytes, push address onto stack
+    Free,             // Pop address from stack and free it
+    FreeLocal(usize), // Free local variable at slot without affecting stack
+
+    // Runtime function calls
+    RuntimeCall(String, usize), // (function_name, arg_count) - Call a runtime support function
+
     // Program flow
     Return, // Return top of stack as program result
 }
@@ -48,7 +59,8 @@ pub struct FunctionInfo {
 pub struct IRProgram {
     pub instructions: Vec<IRInstruction>,
     pub functions: Vec<FunctionInfo>,
-    pub entry_point: Option<String>, // Name of the main function
+    pub entry_point: Option<String>,  // Name of the main function
+    pub string_literals: Vec<String>, // String literals in the program
 }
 
 impl IRProgram {
@@ -57,6 +69,7 @@ impl IRProgram {
             instructions: Vec::new(),
             functions: Vec::new(),
             entry_point: None,
+            string_literals: Vec::new(),
         }
     }
 
@@ -70,6 +83,17 @@ impl IRProgram {
 
     pub fn set_entry_point(&mut self, name: String) {
         self.entry_point = Some(name);
+    }
+
+    /// Add a string literal and return its index
+    pub fn add_string(&mut self, s: String) -> usize {
+        if let Some(index) = self.string_literals.iter().position(|existing| existing == &s) {
+            return index;
+        }
+
+        let index = self.string_literals.len();
+        self.string_literals.push(s);
+        index
     }
 
     pub fn len(&self) -> usize {

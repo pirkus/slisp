@@ -1,0 +1,2 @@
+(defn -main []
+  (count (get "ABC" 0)))

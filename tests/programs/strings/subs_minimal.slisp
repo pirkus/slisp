@@ -1,0 +1,4 @@
+(defn identity [x] x)
+
+(defn -main []
+  (identity 5))
