@@ -41,6 +41,8 @@ pub struct RuntimeAddresses {
     pub string_count: Option<usize>,
     pub string_concat_n: Option<usize>,
     pub string_clone: Option<usize>,
+    pub string_get: Option<usize>,
+    pub string_subs: Option<usize>,
 }
 
 /// Code generation backend trait for different target architectures

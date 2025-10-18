@@ -293,6 +293,89 @@ pub unsafe extern "C" fn _string_clone(src: *const u8) -> *mut u8 {
     dst
 }
 
+/// # Safety
+///
+/// The caller must ensure that `src` is either null or points to a NUL-terminated UTF-8 string
+/// allocated by the managed heap. `index` must represent a valid character position. When the
+/// index is out of bounds or allocation fails, the function returns null. The caller owns the
+/// returned pointer and must release it with `_free`.
+#[no_mangle]
+pub unsafe extern "C" fn _string_get(src: *const u8, index: i64) -> *mut u8 {
+    if src.is_null() || index < 0 {
+        return null_mut();
+    }
+
+    let len = _string_count(src) as usize;
+    let idx = index as usize;
+    if idx >= len {
+        return null_mut();
+    }
+
+    let dst = _allocate(2);
+    if dst.is_null() {
+        return null_mut();
+    }
+
+    *dst = *src.add(idx);
+    *dst.add(1) = 0;
+    dst
+}
+
+/// # Safety
+///
+/// The caller must ensure that `src` is either null or points to a NUL-terminated UTF-8 string
+/// allocated within the managed heap. `start` and `end` describe the byte range to slice. If `end`
+/// is negative, the range extends to the end of the string. When the indices are invalid or
+/// allocation fails, the function returns null. The caller owns the returned pointer and must
+/// release it with `_free`.
+#[no_mangle]
+pub unsafe extern "C" fn _string_subs(src: *const u8, start: i64, end: i64) -> *mut u8 {
+    if src.is_null() || start < 0 {
+        return null_mut();
+    }
+
+    let len = _string_count(src) as usize;
+    let start_idx = start as usize;
+
+    if start_idx > len {
+        return null_mut();
+    }
+
+    let end_idx = if end < 0 {
+        len
+    } else if end < start {
+        return null_mut();
+    } else {
+        let end_usize = end as usize;
+        if end_usize > len {
+            return null_mut();
+        }
+        end_usize
+    };
+
+    if start_idx > end_idx {
+        return null_mut();
+    }
+
+    let slice_len = end_idx - start_idx;
+    let total = slice_len.saturating_add(1);
+
+    let dst = _allocate(total as u64);
+    if dst.is_null() {
+        return null_mut();
+    }
+
+    let mut i = 0;
+    while i < slice_len {
+        *dst.add(i) = *src.add(start_idx + i);
+        i += 1;
+    }
+
+    *dst.add(slice_len) = 0;
+
+    dst
+}
+
 #[cfg(not(feature = "std"))]
 #[no_mangle]
 pub unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {

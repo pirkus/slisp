@@ -51,6 +51,8 @@ impl X86CodeGen {
                 string_count: Some(slisp_runtime::_string_count as usize),
                 string_concat_n: Some(slisp_runtime::_string_concat_n as usize),
                 string_clone: Some(slisp_runtime::_string_clone as usize),
+                string_get: Some(slisp_runtime::_string_get as usize),
+                string_subs: Some(slisp_runtime::_string_subs as usize),
             },
             LinkMode::ObjFile => RuntimeAddresses {
                 heap_init: None,
@@ -59,6 +61,8 @@ impl X86CodeGen {
                 string_count: None,
                 string_concat_n: None,
                 string_clone: None,
+                string_get: None,
+                string_subs: None,
             },
         };
 
@@ -231,6 +235,8 @@ impl X86CodeGen {
             "_string_count" => self.runtime_addresses.string_count,
             "_string_concat_n" => self.runtime_addresses.string_concat_n,
             "_string_clone" => self.runtime_addresses.string_clone,
+            "_string_get" => self.runtime_addresses.string_get,
+            "_string_subs" => self.runtime_addresses.string_subs,
             _ => None,
         };
 
@@ -241,6 +247,7 @@ impl X86CodeGen {
                         0 => 0,
                         1 => 1,
                         2 => 2,
+                        3 => 3,
                         _ => panic!("Unsupported arg_count"),
                     };
                     let offset = (addr as i32) - ((current_pos + pop_size + 5) as i32);
