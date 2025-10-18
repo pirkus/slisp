@@ -44,7 +44,8 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
 - **6.2 Strings (done/remaining):**
   - ✅ Interpreter strings with escapes and helpers (`str`, `count`, `get`, `subs`).
   - ✅ Compiler string literals via rodata, runtime-backed `count`/`str` (2-arg) with scoped freeing.
-  - 🔜 Extend to variadic `str`, safe nested concatenation, `get`/`subs` via runtime functions, and escaping strings that leave scope.
+  - ✅ Escaping strings that leave scope by cloning heap values in compiler IR and runtime `_string_clone`.
+  - 🔜 Extend to variadic `str`, safe nested concatenation, and `get`/`subs` via runtime helpers.
 - **6.3 Lifetime improvements (planned):** Smarter temporary management, unused allocation elision, block coalescing, and exploration of reference counting or GC for values escaping scope.
 - **6.4 Composite data structures (planned):** Heap-backed vectors, maps, and sets with associated primitives (`vec`, `conj`, `assoc`, etc.).
 
@@ -61,12 +62,12 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
 ### Phase 9 – Tooling & Developer Experience 🧰
 - **9.1 Debugging:** Stack traces, breakpoint support in interpreter, and environment inspection commands.
 - **9.2 Diagnostics:** Source locations, syntax highlighting, and typo suggestions.
-- **9.3 Build system:** Multi-file projects, incremental compilation cache, and release/optimised build profiles.
+- **9.3 Build system:** Multi-file projects, incremental compilation cache, release/optimised build profiles, and CLI ergonomics (e.g., `--keep-obj` flag for retaining AOT object files).
 
 ## Quality & Testing Safeguards
 - Unit/integration coverage across parser, evaluator, compiler, runtime, and executable outputs.
 - CircleCI workflow enforces warnings-as-errors and runs the full cargo test suite.
-- Use sample programs in `tests/programs/` to validate new runtime or compiler capabilities.
+- Use sample programs in `tests/programs/` to validate new runtime or compiler capabilities; memory-specific cases live under `tests/programs/memory/` with `scripts/run_valgrind_memory.sh` for leak checks.
 
 ## Working Agreements
 - Prioritise interpreter implementations before porting features to the compiler.

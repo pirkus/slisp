@@ -73,7 +73,13 @@ pub fn compile_function_call(func_name: &str, args: &[Node], context: &mut Compi
     let mut instructions = Vec::new();
 
     for arg in args {
-        instructions.extend(crate::compiler::compile_node(arg, context, program)?);
+        let mut arg_instructions = crate::compiler::compile_node(arg, context, program)?;
+        if let Node::Symbol { value } = arg {
+            if crate::compiler::is_heap_allocated_symbol(value, context) {
+                arg_instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+            }
+        }
+        instructions.extend(arg_instructions);
     }
 
     instructions.push(IRInstruction::Call(func_name.to_string(), args.len()));

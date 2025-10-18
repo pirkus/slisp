@@ -18,7 +18,7 @@ cargo run          # Start the default interpreter REPL
 
 - `slisp` – Launch the interpreter REPL.
 - `slisp --compile` – Launch the compiler REPL which JITs expressions to machine code before running them.
-- `slisp --compile -o <output> <file.slisp>` – Compile a `.slisp`/`.lisp` file that defines `(-main ...)` into a native executable.
+- `slisp --compile [--keep-obj] -o <output> <file.slisp>` – Compile a `.slisp`/`.lisp` file that defines `(-main ...)` into a native executable; pass `--keep-obj` to retain the intermediate object file for inspection.
 
 ## Supported Functionality
 
@@ -68,9 +68,13 @@ slisp-compile> (add 3 4)
 To compile a file with a `-main` function into a native executable:
 
 ```text
-$ cargo run -- --compile -o hello tests/programs/functions/simple_add.slisp
+$ cargo run -- --compile --keep-obj -o hello tests/programs/functions/simple_add.slisp
 Successfully compiled file 'tests/programs/functions/simple_add.slisp' to 'hello'
 ```
+
+## Developer Utilities
+
+- `scripts/run_valgrind_memory.sh` – Builds the `tests/programs/memory/escaping_strings.slisp` workload, runs it under Valgrind with leak checking, and retains the object file for further inspection.
 
 ## Project Structure
 
@@ -79,7 +83,7 @@ Successfully compiled file 'tests/programs/functions/simple_add.slisp' to 'hello
 - `src/compiler` – High-level IR generation
 - `src/codegen` – x86-64 code generation and ELF output
 - `src/repl.rs` – Shared REPL implementation
-- `runtime/` – Support library linked into compiled executables
+- `targets/x86_64_linux/runtime/` – Support library linked into compiled executables
 
 ## Roadmap
 

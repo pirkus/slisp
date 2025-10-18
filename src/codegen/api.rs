@@ -74,9 +74,9 @@ impl Target {
         }
     }
 
-    pub fn link_executable(&self, object_bytes: &[u8], output_path: &str, runtime_staticlib: &str) -> std::io::Result<()> {
+    pub fn link_executable(&self, object_bytes: &[u8], output_path: &str, runtime_staticlib: &str, keep_object: bool) -> std::io::Result<()> {
         match self {
-            Target::X86_64Linux => x86_64_linux::link_with_runtime(object_bytes, output_path, runtime_staticlib),
+            Target::X86_64Linux => x86_64_linux::link_with_runtime(object_bytes, output_path, runtime_staticlib, keep_object),
             Target::X86_64Windows => {
                 unimplemented!("x86-64 Windows (PE format) not yet implemented")
             }
@@ -102,8 +102,8 @@ pub fn compile_to_object(program: &IRProgram, target: Target) -> x86_64_linux::O
     target.compile_object(program)
 }
 
-pub fn link_executable(target: Target, object_bytes: &[u8], output_path: &str, runtime_staticlib: &str) -> std::io::Result<()> {
-    target.link_executable(object_bytes, output_path, runtime_staticlib)
+pub fn link_executable(target: Target, object_bytes: &[u8], output_path: &str, runtime_staticlib: &str, keep_object: bool) -> std::io::Result<()> {
+    target.link_executable(object_bytes, output_path, runtime_staticlib, keep_object)
 }
 
 /// Detect the host target platform

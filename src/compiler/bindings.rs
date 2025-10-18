@@ -33,20 +33,38 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
         // Check if the value expression produces a heap-allocated result
         let is_heap_allocated = is_heap_allocating_expression(val_node);
 
-        instructions.extend(crate::compiler::compile_node(val_node, context, program)?);
+        let mut value_instructions = crate::compiler::compile_node(val_node, context, program)?;
+
+        let mut cloned_from_existing = false;
+        if let Node::Symbol { value } = val_node {
+            if crate::compiler::is_heap_allocated_symbol(value, context) {
+                value_instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+                cloned_from_existing = true;
+            }
+        }
+
+        instructions.extend(value_instructions);
 
         let slot = context.add_variable(var_name.clone());
         instructions.push(IRInstruction::StoreLocal(slot));
 
         // Mark variable as heap-allocated if needed
-        if is_heap_allocated {
+        if is_heap_allocated || cloned_from_existing {
             context.mark_heap_allocated(var_name);
         }
 
         added_variables.push(var_name.clone());
     }
 
-    instructions.extend(crate::compiler::compile_node(&args[1], context, program)?);
+    let mut body_instructions = crate::compiler::compile_node(&args[1], context, program)?;
+
+    if let Node::Symbol { value } = &args[1] {
+        if added_variables.iter().any(|name| name == value) && crate::compiler::is_heap_allocated_symbol(value, context) {
+            body_instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+        }
+    }
+
+    instructions.extend(body_instructions);
 
     // Free heap-allocated variables before removing them from scope
     // Use FreeLocal to avoid pushing values onto stack and preserve return value in RAX

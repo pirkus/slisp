@@ -222,6 +222,35 @@ pub unsafe extern "C" fn _string_concat_2(a: *const u8, b: *const u8) -> *mut u8
     dst
 }
 
+/// # Safety
+///
+/// The caller must ensure that `src` is either null or points to a
+/// NUL-terminated UTF-8 string allocated within the managed heap. The result
+/// must be released with `_free`. Passing an invalid pointer leads to undefined
+/// behavior.
+#[no_mangle]
+pub unsafe extern "C" fn _string_clone(src: *const u8) -> *mut u8 {
+    if src.is_null() {
+        return null_mut();
+    }
+
+    let len = _string_count(src) as usize;
+    let total = len.saturating_add(1);
+
+    let dst = _allocate(total as u64);
+    if dst.is_null() {
+        return null_mut();
+    }
+
+    let mut i = 0;
+    while i < total {
+        *dst.add(i) = *src.add(i);
+        i += 1;
+    }
+
+    dst
+}
+
 #[cfg(not(feature = "std"))]
 #[no_mangle]
 pub unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {

@@ -6,8 +6,8 @@ fn main() {
     // These directives tell Cargo to rerun this build script whenever the specified files change.
     // This ensures that if the runtime crate's Cargo.toml or main library file is modified,
     // this build script will be executed again to rebuild the runtime dependency.
-    println!("cargo:rerun-if-changed=runtime/Cargo.toml");
-    println!("cargo:rerun-if-changed=runtime/src/lib.rs");
+    println!("cargo:rerun-if-changed=targets/x86_64_linux/runtime/Cargo.toml");
+    println!("cargo:rerun-if-changed=targets/x86_64_linux/runtime/src/lib.rs");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());

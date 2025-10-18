@@ -15,6 +15,11 @@ pub use context::CompileContext;
 use crate::ast::Node;
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
 
+/// Determine if a symbol refers to a heap-allocated local variable in the current context.
+pub(crate) fn is_heap_allocated_symbol(name: &str, context: &CompileContext) -> bool {
+    context.get_variable(name).is_some() && context.is_heap_allocated(name)
+}
+
 #[derive(Debug, PartialEq)]
 pub enum CompileError {
     UnsupportedOperation(String),
@@ -391,6 +396,42 @@ mod tests {
 
         // Should push argument before call
         assert!(program.instructions.contains(&IRInstruction::Push(5)));
+    }
+
+    #[test]
+    fn test_clone_returned_local_string() {
+        let program = compile_expression("(let [s (str \"a\" \"b\")] s)").unwrap();
+        let clone_pos = program
+            .instructions
+            .iter()
+            .position(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 1) if name == "_string_clone"));
+        assert!(clone_pos.is_some(), "expected clone runtime call in instructions: {:?}", program.instructions);
+
+        let free_pos = program
+            .instructions
+            .iter()
+            .position(|inst| matches!(inst, IRInstruction::FreeLocal(_)))
+            .expect("expected FreeLocal instruction");
+        assert!(clone_pos.unwrap() < free_pos, "clone should occur before FreeLocal");
+    }
+
+    #[test]
+    fn test_clone_argument_for_function_call() {
+        let expressions = vec![
+            AstParser::parse_sexp_new_domain("(defn id [x] x)".as_bytes(), &mut 0),
+            AstParser::parse_sexp_new_domain("(let [s (str \"a\" \"b\")] (id s))".as_bytes(), &mut 0),
+        ];
+
+        let program = compile_program(&expressions).unwrap();
+        let clone_pos = program
+            .instructions
+            .iter()
+            .position(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 1) if name == "_string_clone"));
+        let call_pos = program.instructions.iter().position(|inst| matches!(inst, IRInstruction::Call(name, 1) if name == "id"));
+
+        assert!(clone_pos.is_some(), "expected clone runtime call for argument");
+        assert!(call_pos.is_some(), "expected call instruction for id");
+        assert!(clone_pos.unwrap() < call_pos.unwrap(), "clone should happen before function call");
     }
 
     #[test]

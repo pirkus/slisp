@@ -14,6 +14,7 @@ pub struct RuntimeAddresses {
     pub free: Option<usize>,
     pub string_count: Option<usize>,
     pub string_concat_2: Option<usize>,
+    pub string_clone: Option<usize>,
 }
 
 /// Code generation backend trait for different target architectures

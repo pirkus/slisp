@@ -88,6 +88,7 @@ impl X86CodeGen {
                 free: Some(slisp_runtime::_free as usize),
                 string_count: Some(slisp_runtime::_string_count as usize),
                 string_concat_2: Some(slisp_runtime::_string_concat_2 as usize),
+                string_clone: Some(slisp_runtime::_string_clone as usize),
             },
             LinkMode::ObjFile => RuntimeAddresses {
                 heap_init: None,
@@ -95,6 +96,7 @@ impl X86CodeGen {
                 free: None,
                 string_count: None,
                 string_concat_2: None,
+                string_clone: None,
             },
         };
 
@@ -267,6 +269,7 @@ impl X86CodeGen {
         let runtime_addr = match func_name {
             "_string_count" => self.runtime_addresses.string_count,
             "_string_concat_2" => self.runtime_addresses.string_concat_2,
+            "_string_clone" => self.runtime_addresses.string_clone,
             _ => None,
         };
 
@@ -341,10 +344,14 @@ impl X86CodeGen {
             self.function_addresses.insert(func_info.name.clone(), current_address);
 
             let saved_code = self.code.clone();
+            let saved_symbol_relocs_len = self.symbol_relocations.len();
+            let saved_string_relocs_len = self.string_relocations.len();
             self.code.clear();
             self.generate_function(program, func_info);
             let func_size = self.code.len();
             self.code = saved_code;
+            self.symbol_relocations.truncate(saved_symbol_relocs_len);
+            self.string_relocations.truncate(saved_string_relocs_len);
 
             current_address += func_size;
         }
@@ -681,7 +688,7 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
     }
 
     // External runtime symbols
-    for runtime_symbol in ["_heap_init", "_allocate", "_free", "_string_count", "_string_concat_2"] {
+    for runtime_symbol in ["_heap_init", "_allocate", "_free", "_string_count", "_string_concat_2", "_string_clone"] {
         let id = obj.add_symbol(Symbol {
             name: runtime_symbol.as_bytes().to_vec(),
             value: 0,
@@ -776,7 +783,7 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
     ObjectArtifact { bytes }
 }
 
-pub fn link_with_runtime(object_bytes: &[u8], output_path: &str, runtime_staticlib: &str) -> io::Result<()> {
+pub fn link_with_runtime(object_bytes: &[u8], output_path: &str, runtime_staticlib: &str, keep_object: bool) -> io::Result<()> {
     let mut obj_path = PathBuf::from(output_path);
     obj_path.set_extension("o");
 
@@ -786,7 +793,9 @@ pub fn link_with_runtime(object_bytes: &[u8], output_path: &str, runtime_staticl
 
     let status = Command::new("ld").args(["-o", output_path, &obj_path_str, runtime_staticlib, "-static", "-nostdlib"]).status()?;
 
-    let _ = fs::remove_file(&obj_path);
+    if !keep_object {
+        let _ = fs::remove_file(&obj_path);
+    }
 
     if status.success() {
         Ok(())
