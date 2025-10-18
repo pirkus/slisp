@@ -108,6 +108,26 @@ impl CompileContext {
         }
     }
 
+    /// Allocate an anonymous temporary slot.
+    ///
+    /// Temps share the same slot pool as named locals; callers must
+    /// release the slot via `release_temp_slot` once the temporary value is
+    /// no longer needed so it can be reused.
+    pub fn allocate_temp_slot(&mut self) -> usize {
+        if let Some(slot) = self.free_slots.pop() {
+            slot
+        } else {
+            let slot = self.next_slot;
+            self.next_slot += 1;
+            slot
+        }
+    }
+
+    /// Return a temporary slot to the pool for reuse.
+    pub fn release_temp_slot(&mut self, slot: usize) {
+        self.free_slots.push(slot);
+    }
+
     /// Mark a variable as holding a heap-allocated pointer
     pub fn mark_heap_allocated(&mut self, name: &str) {
         self.heap_allocated_vars.insert(name.to_string(), true);

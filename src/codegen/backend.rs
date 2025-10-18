@@ -39,7 +39,7 @@ pub struct RuntimeAddresses {
     pub allocate: Option<usize>,
     pub free: Option<usize>,
     pub string_count: Option<usize>,
-    pub string_concat_2: Option<usize>,
+    pub string_concat_n: Option<usize>,
     pub string_clone: Option<usize>,
 }
 

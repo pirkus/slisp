@@ -1,11 +1,12 @@
 (defn make-greeting [name]
-  (str "hello, " name))
+  (str "hello, " name "!"))
 
 (defn greet-twice [name]
   (let [first (make-greeting name)
         second (make-greeting name)]
-    (str first second)))
+    (str "first=" first ", second=" second)))
 
 (defn -main []
-  (let [prefix (str "world" "!")]
-    (count (greet-twice prefix))))
+  (let [prefix (str "wor" "ld")
+        suffix (str "-ok" "!")]
+    (count (greet-twice (str prefix suffix)))))

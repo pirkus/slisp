@@ -157,20 +157,41 @@ fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRPr
 }
 
 /// Compile str operation (string concatenation)
-/// For now, only supports 2 arguments (will expand to N later)
 fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
-    if args.len() != 2 {
-        return Err(CompileError::ArityError("str".to_string(), 2, args.len()));
+    if args.is_empty() {
+        return Ok(vec![IRInstruction::Push(0), IRInstruction::Push(0), IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2)]);
     }
 
+    let count = args.len();
     let mut instructions = Vec::new();
+    let mut temp_slots = Vec::with_capacity(count);
 
-    // Compile both arguments (should be strings)
-    instructions.extend(compile_node(&args[0], context, program)?);
-    instructions.extend(compile_node(&args[1], context, program)?);
+    for _ in 0..count {
+        temp_slots.push(context.allocate_temp_slot());
+    }
 
-    // Call _string_concat_2 runtime function (takes 2 args: str1, str2)
-    instructions.push(IRInstruction::RuntimeCall("_string_concat_2".to_string(), 2));
+    for (index, arg) in args.iter().enumerate() {
+        let mut arg_instructions = compile_node(arg, context, program)?;
+        if let Node::Symbol { value } = arg {
+            if is_heap_allocated_symbol(value, context) {
+                arg_instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+            }
+        }
+        instructions.extend(arg_instructions);
+
+        let slot_index = count - 1 - index;
+        let slot = temp_slots[slot_index];
+        instructions.push(IRInstruction::StoreLocal(slot));
+    }
+
+    let base_slot = temp_slots[count - 1];
+    instructions.push(IRInstruction::PushLocalAddress(base_slot));
+    instructions.push(IRInstruction::Push(count as i64));
+    instructions.push(IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2));
+
+    for slot in temp_slots {
+        context.release_temp_slot(slot);
+    }
 
     Ok(instructions)
 }
@@ -235,6 +256,58 @@ mod tests {
     fn test_compile_arithmetic() {
         let program = compile_expression("(+ 2 3)").unwrap();
         assert_eq!(program.instructions, vec![IRInstruction::Push(2), IRInstruction::Push(3), IRInstruction::Add, IRInstruction::Return]);
+    }
+
+    #[test]
+    fn test_compile_str_zero_args() {
+        let program = compile_expression("(str)").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
+                IRInstruction::Return,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_compile_str_single_arg() {
+        let program = compile_expression("(str \"hi\")").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::PushString(0),
+                IRInstruction::StoreLocal(0),
+                IRInstruction::PushLocalAddress(0),
+                IRInstruction::Push(1),
+                IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
+                IRInstruction::Return,
+            ]
+        );
+        assert_eq!(program.string_literals, vec!["hi".to_string()]);
+    }
+
+    #[test]
+    fn test_compile_str_three_args() {
+        let program = compile_expression("(str \"a\" \"b\" \"c\")").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::PushString(0),
+                IRInstruction::StoreLocal(2),
+                IRInstruction::PushString(1),
+                IRInstruction::StoreLocal(1),
+                IRInstruction::PushString(2),
+                IRInstruction::StoreLocal(0),
+                IRInstruction::PushLocalAddress(2),
+                IRInstruction::Push(3),
+                IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
+                IRInstruction::Return,
+            ]
+        );
+        assert_eq!(program.string_literals, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
     }
 
     #[test]

@@ -26,8 +26,9 @@ pub enum IRInstruction {
     Jump(usize),       // Unconditional jump to instruction index
 
     // Variable operations
-    StoreLocal(usize), // Pop value and store in local variable slot
-    LoadLocal(usize),  // Push value from local variable slot
+    StoreLocal(usize),       // Pop value and store in local variable slot
+    LoadLocal(usize),        // Push value from local variable slot
+    PushLocalAddress(usize), // Push address of local variable slot
 
     // Function operations
     DefineFunction(String, usize, usize), // (name, param_count, start_address)
