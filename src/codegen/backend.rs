@@ -5,6 +5,32 @@
 /// with a unified interface.
 use crate::ir::IRProgram;
 
+/// Resulting machine code buffer for in-process execution.
+#[derive(Debug)]
+pub struct JitArtifact {
+    pub code: Vec<u8>,
+    #[allow(dead_code)]
+    pub _string_buffers: Vec<Box<[u8]>>,
+}
+
+impl JitArtifact {
+    pub fn as_code(&self) -> &[u8] {
+        &self.code
+    }
+}
+
+/// Serialized object file bytes suitable for further linking.
+#[derive(Debug)]
+pub struct ObjectArtifact {
+    pub bytes: Vec<u8>,
+}
+
+/// High-level interface each target backend must implement.
+pub trait TargetBackend {
+    fn compile_jit(&mut self, program: &IRProgram) -> JitArtifact;
+    fn compile_object(&mut self, program: &IRProgram) -> ObjectArtifact;
+}
+
 /// Runtime support function addresses (architecture-agnostic)
 #[derive(Debug, Clone)]
 #[allow(dead_code)]

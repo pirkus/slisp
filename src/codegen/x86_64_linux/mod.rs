@@ -15,7 +15,7 @@ mod abi;
 mod instructions;
 mod sizing;
 
-use crate::codegen::backend::{CodeGenBackend, RuntimeAddresses};
+use crate::codegen::backend::{CodeGenBackend, JitArtifact, ObjectArtifact, RuntimeAddresses, TargetBackend};
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
 use object::write::{Object, Relocation as ObjectRelocation, StandardSection, Symbol, SymbolSection};
 use object::{Architecture, BinaryFormat, Endianness, RelocationEncoding, RelocationFlags, RelocationKind, SymbolFlags, SymbolKind, SymbolScope};
@@ -52,19 +52,23 @@ struct GeneratedCode {
     function_addresses: HashMap<String, usize>,
 }
 
-pub struct JitArtifact {
-    pub code: Vec<u8>,
-    _string_buffers: Vec<Box<[u8]>>,
-}
+#[derive(Default)]
+pub struct X86_64LinuxBackend;
 
-impl JitArtifact {
-    pub fn as_code(&self) -> &[u8] {
-        &self.code
+impl X86_64LinuxBackend {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-pub struct ObjectArtifact {
-    pub bytes: Vec<u8>,
+impl TargetBackend for X86_64LinuxBackend {
+    fn compile_jit(&mut self, program: &IRProgram) -> JitArtifact {
+        compile_to_executable(program)
+    }
+
+    fn compile_object(&mut self, program: &IRProgram) -> ObjectArtifact {
+        compile_to_object(program)
+    }
 }
 
 pub struct X86CodeGen {

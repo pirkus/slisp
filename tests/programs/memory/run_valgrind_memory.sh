@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 PROGRAM_PATH="${REPO_ROOT}/tests/programs/memory/escaping_strings.slisp"
 OUTPUT_DIR="${REPO_ROOT}/target/valgrind"
 OUTPUT_BIN="${OUTPUT_DIR}/escaping_strings"

@@ -1,9 +1,11 @@
-use super::x86_64_linux;
+use super::x86_64_linux::{self, X86_64LinuxBackend};
 /// Public API for code generation
 ///
 /// This module provides the high-level functions for compiling IR to machine code
 /// and generating executables for different target platforms.
+use crate::codegen::backend::{JitArtifact, ObjectArtifact, TargetBackend};
 use crate::ir::IRProgram;
+use std::io;
 
 /// Supported target platforms (architecture + OS)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,16 +19,9 @@ pub enum Target {
 }
 
 impl Target {
-    /// Compile IR program to machine code for this target
-    ///
-    /// # Arguments
-    /// * `program` - The IR program to compile
-    ///
-    /// # Returns
-    /// * `(machine_code, heap_init_offset)` - Generated machine code and optional heap init offset
-    pub fn compile(&self, program: &IRProgram) -> x86_64_linux::JitArtifact {
+    fn create_backend(&self) -> Box<dyn TargetBackend> {
         match self {
-            Target::X86_64Linux => x86_64_linux::compile_to_executable(program),
+            Target::X86_64Linux => Box::new(X86_64LinuxBackend::new()),
             Target::X86_64Windows => {
                 unimplemented!("x86-64 Windows (PE format) not yet implemented")
             }
@@ -42,39 +37,7 @@ impl Target {
         }
     }
 
-    /// Generate an executable file for this target from machine code
-    ///
-    /// # Arguments
-    /// * `machine_code` - The compiled machine code
-    /// * `output_path` - Path to write the executable
-    /// * `heap_init_offset` - Optional offset to heap initialization function
-    /// * `string_literals` - String literals to embed in rodata segment
-    ///
-    /// # Returns
-    /// * Result indicating success or IO error
-    pub fn compile_to_jit(&self, program: &IRProgram) -> x86_64_linux::JitArtifact {
-        self.compile(program)
-    }
-
-    pub fn compile_object(&self, program: &IRProgram) -> x86_64_linux::ObjectArtifact {
-        match self {
-            Target::X86_64Linux => x86_64_linux::compile_to_object(program),
-            Target::X86_64Windows => {
-                unimplemented!("x86-64 Windows (PE format) not yet implemented")
-            }
-            Target::X86_64MacOS => {
-                unimplemented!("x86-64 macOS (Mach-O format) not yet implemented")
-            }
-            Target::ARM64Linux => {
-                unimplemented!("ARM64 Linux code generation not yet implemented")
-            }
-            Target::RISCV64Linux => {
-                unimplemented!("RISC-V Linux code generation not yet implemented")
-            }
-        }
-    }
-
-    pub fn link_executable(&self, object_bytes: &[u8], output_path: &str, runtime_staticlib: &str, keep_object: bool) -> std::io::Result<()> {
+    fn link_object(&self, object_bytes: &[u8], output_path: &str, runtime_staticlib: &str, keep_object: bool) -> io::Result<()> {
         match self {
             Target::X86_64Linux => x86_64_linux::link_with_runtime(object_bytes, output_path, runtime_staticlib, keep_object),
             Target::X86_64Windows => {
@@ -94,16 +57,18 @@ impl Target {
 }
 
 /// Compile IR program to machine code suitable for in-process JIT execution
-pub fn compile_to_executable(program: &IRProgram, target: Target) -> x86_64_linux::JitArtifact {
-    target.compile_to_jit(program)
+pub fn compile_to_executable(program: &IRProgram, target: Target) -> JitArtifact {
+    let mut backend = target.create_backend();
+    backend.compile_jit(program)
 }
 
-pub fn compile_to_object(program: &IRProgram, target: Target) -> x86_64_linux::ObjectArtifact {
-    target.compile_object(program)
+pub fn compile_to_object(program: &IRProgram, target: Target) -> ObjectArtifact {
+    let mut backend = target.create_backend();
+    backend.compile_object(program)
 }
 
-pub fn link_executable(target: Target, object_bytes: &[u8], output_path: &str, runtime_staticlib: &str, keep_object: bool) -> std::io::Result<()> {
-    target.link_executable(object_bytes, output_path, runtime_staticlib, keep_object)
+pub fn link_executable(target: Target, object_bytes: &[u8], output_path: &str, runtime_staticlib: &str, keep_object: bool) -> io::Result<()> {
+    target.link_object(object_bytes, output_path, runtime_staticlib, keep_object)
 }
 
 /// Detect the host target platform
