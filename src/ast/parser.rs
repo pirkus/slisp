@@ -66,6 +66,14 @@ impl AstParser {
                     }
                     return Node::new_vector_from_raw(sexp);
                 }
+                ';' => {
+                    if !buffer.is_empty() {
+                        sexp.push(Self::parse_atom(&buffer));
+                        buffer = String::new();
+                    }
+                    *offset = skip_comment(input, *offset);
+                    continue;
+                }
                 c if c.is_whitespace() => {
                     if !buffer.is_empty() {
                         sexp.push(Self::parse_atom(&buffer));
@@ -197,6 +205,21 @@ mod tests {
             parsed,
             Node::new_list_from_raw(vec![Node::Symbol { value: String::from("+") }, Node::new_number(2), Node::new_number(3)])
         );
+    }
+
+    #[test]
+    fn parse_list_with_inline_comment() {
+        let parsed = AstParser::parse_sexp_new_domain(b"(+ 1 ; comment\n 2)", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::new_list_from_raw(vec![Node::Symbol { value: String::from("+") }, Node::new_number(1), Node::new_number(2)])
+        );
+    }
+
+    #[test]
+    fn parse_vector_with_inline_comment() {
+        let parsed = AstParser::parse_sexp_new_domain(b"[1 ; comment\n 2]", &mut 0);
+        assert_eq!(parsed, Node::new_vector_from_raw(vec![Node::new_number(1), Node::new_number(2)]));
     }
 
     #[test]
@@ -403,8 +426,17 @@ pub fn parse_file(file_content: &str) -> Result<Vec<Node>, String> {
 
 /// Skip whitespace characters and return the next non-whitespace position
 fn skip_whitespace(bytes: &[u8], mut offset: usize) -> usize {
-    while offset < bytes.len() && is_whitespace(bytes[offset]) {
-        offset += 1;
+    while offset < bytes.len() {
+        let b = bytes[offset];
+        if is_whitespace(b) {
+            offset += 1;
+            continue;
+        }
+        if b == b';' {
+            offset = skip_comment(bytes, offset);
+            continue;
+        }
+        break;
     }
     offset
 }
@@ -564,5 +596,13 @@ mod file_parser_tests {
         let result = parse_file(input);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_parse_only_comments() {
+        let input = "; first comment\n; second comment";
+        let result = parse_file(input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "No expressions found in file");
     }
 }
