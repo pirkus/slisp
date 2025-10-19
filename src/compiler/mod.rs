@@ -13,8 +13,10 @@ mod liveness;
 
 pub use context::CompileContext;
 
+use self::liveness::{apply_liveness_plan, compute_liveness_plan};
 use crate::ast::Node;
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
+use std::collections::HashSet;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ValueKind {
@@ -212,11 +214,30 @@ fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRPr
         return Err(CompileError::ArityError("count".to_string(), 1, args.len()));
     }
 
-    // Compile the argument (should be a string)
-    let mut instructions = compile_node(&args[0], context, program)?.instructions;
+    let arg_result = compile_node(&args[0], context, program)?;
+    let mut instructions = arg_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut temp_slots = Vec::new();
+
+    if arg_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        temp_slots.push(slot);
+    }
 
     // Call _string_count runtime function (takes 1 arg: string pointer)
     instructions.push(IRInstruction::RuntimeCall("_string_count".to_string(), 1));
+
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    for slot in temp_slots {
+        context.release_temp_slot(slot);
+    }
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Number))
 }
@@ -227,9 +248,30 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
         return Err(CompileError::ArityError("get".to_string(), 2, args.len()));
     }
 
-    let mut instructions = compile_node(&args[0], context, program)?.instructions;
+    let arg_result = compile_node(&args[0], context, program)?;
+    let mut instructions = arg_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut temp_slots = Vec::new();
+
+    if arg_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        temp_slots.push(slot);
+    }
+
     instructions.extend(compile_node(&args[1], context, program)?.instructions);
     instructions.push(IRInstruction::RuntimeCall("_string_get".to_string(), 2));
+
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    for slot in temp_slots {
+        context.release_temp_slot(slot);
+    }
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(HeapOwnership::Owned))
 }
@@ -240,7 +282,19 @@ fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRPro
         return Err(CompileError::ArityError("subs".to_string(), 2, args.len()));
     }
 
-    let mut instructions = compile_node(&args[0], context, program)?.instructions;
+    let arg_result = compile_node(&args[0], context, program)?;
+    let mut instructions = arg_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut temp_slots = Vec::new();
+
+    if arg_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        temp_slots.push(slot);
+    }
+
     instructions.extend(compile_node(&args[1], context, program)?.instructions);
 
     if args.len() == 3 {
@@ -250,6 +304,15 @@ fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRPro
     }
 
     instructions.push(IRInstruction::RuntimeCall("_string_subs".to_string(), 3));
+
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    for slot in temp_slots {
+        context.release_temp_slot(slot);
+    }
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(HeapOwnership::Owned))
 }
@@ -569,6 +632,75 @@ mod tests {
             ]
         );
         assert_eq!(program.string_literals, vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn test_count_frees_owned_argument() {
+        let program = compile_expression("(count (str 42))").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::Push(42),
+                IRInstruction::RuntimeCall("_string_from_number".to_string(), 1),
+                IRInstruction::StoreLocal(0),
+                IRInstruction::PushLocalAddress(0),
+                IRInstruction::Push(1),
+                IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
+                IRInstruction::FreeLocal(0),
+                IRInstruction::StoreLocal(0),
+                IRInstruction::LoadLocal(0),
+                IRInstruction::RuntimeCall("_string_count".to_string(), 1),
+                IRInstruction::FreeLocal(0),
+                IRInstruction::Return,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_get_frees_owned_argument() {
+        let program = compile_expression("(get (str 42) 0)").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::Push(42),
+                IRInstruction::RuntimeCall("_string_from_number".to_string(), 1),
+                IRInstruction::StoreLocal(0),
+                IRInstruction::PushLocalAddress(0),
+                IRInstruction::Push(1),
+                IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
+                IRInstruction::FreeLocal(0),
+                IRInstruction::StoreLocal(0),
+                IRInstruction::LoadLocal(0),
+                IRInstruction::Push(0),
+                IRInstruction::RuntimeCall("_string_get".to_string(), 2),
+                IRInstruction::FreeLocal(0),
+                IRInstruction::Return,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_subs_frees_owned_argument() {
+        let program = compile_expression("(subs (str 42) 0 1)").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::Push(42),
+                IRInstruction::RuntimeCall("_string_from_number".to_string(), 1),
+                IRInstruction::StoreLocal(0),
+                IRInstruction::PushLocalAddress(0),
+                IRInstruction::Push(1),
+                IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
+                IRInstruction::FreeLocal(0),
+                IRInstruction::StoreLocal(0),
+                IRInstruction::LoadLocal(0),
+                IRInstruction::Push(0),
+                IRInstruction::Push(1),
+                IRInstruction::RuntimeCall("_string_subs".to_string(), 3),
+                IRInstruction::FreeLocal(0),
+                IRInstruction::Return,
+            ]
+        );
     }
 
     #[test]

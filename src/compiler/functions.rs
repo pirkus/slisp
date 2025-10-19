@@ -1,7 +1,9 @@
 use super::{CompileContext, CompileError, CompileResult, HeapOwnership, ValueKind};
 /// Function definition and call compilation
 use crate::ast::Node;
+use crate::compiler::liveness::{apply_liveness_plan, compute_liveness_plan};
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
+use std::collections::HashSet;
 
 /// Compile a function definition (defn)
 pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<(Vec<IRInstruction>, FunctionInfo), CompileError> {
@@ -94,7 +96,7 @@ pub fn compile_function_call(func_name: &str, args: &[Node], context: &mut Compi
     }
 
     let mut instructions = Vec::new();
-    let mut owned_argument_slots: Vec<Option<usize>> = Vec::with_capacity(args.len());
+    let mut owned_argument_slots: Vec<usize> = Vec::new();
 
     for (index, arg) in args.iter().enumerate() {
         let arg_result = crate::compiler::compile_node(arg, context, program)?;
@@ -104,16 +106,19 @@ pub fn compile_function_call(func_name: &str, args: &[Node], context: &mut Compi
             let slot = context.allocate_temp_slot();
             instructions.push(IRInstruction::StoreLocal(slot));
             instructions.push(IRInstruction::LoadLocal(slot));
-            owned_argument_slots.push(Some(slot));
-        } else {
-            owned_argument_slots.push(None);
+            owned_argument_slots.push(slot);
         }
     }
 
     instructions.push(IRInstruction::Call(func_name.to_string(), args.len()));
 
-    for slot in owned_argument_slots.into_iter().flatten() {
-        instructions.push(IRInstruction::FreeLocal(slot));
+    if !owned_argument_slots.is_empty() {
+        let tracked_slots: HashSet<usize> = owned_argument_slots.iter().copied().collect();
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    for slot in owned_argument_slots {
         context.release_temp_slot(slot);
     }
 
