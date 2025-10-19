@@ -28,6 +28,7 @@ pub(super) struct GeneratedCode {
     pub symbol_relocations: Vec<SymbolRelocation>,
     pub string_relocations: Vec<StringRelocation>,
     pub function_addresses: HashMap<String, usize>,
+    pub runtime_addresses: RuntimeAddresses,
 }
 
 pub(super) struct X86CodeGen {
@@ -99,68 +100,23 @@ impl X86CodeGen {
 
     /// Generate code to call _heap_init runtime function
     pub fn generate_heap_init_code(&mut self, current_pos: usize) -> Vec<u8> {
-        match self.link_mode {
-            LinkMode::Jit => {
-                if let Some(heap_init_addr) = self.runtime_addresses.heap_init {
-                    let offset = (heap_init_addr as i32) - ((current_pos + 5) as i32);
-                    let (code, _) = instructions::generate_call_heap_init(Some(offset));
-                    code
-                } else {
-                    let (code, disp) = instructions::generate_call_heap_init(None);
-                    self.record_runtime_relocation(current_pos + disp, "_heap_init");
-                    code
-                }
-            }
-            LinkMode::ObjFile => {
-                let (code, disp) = instructions::generate_call_heap_init(None);
-                self.record_runtime_relocation(current_pos + disp, "_heap_init");
-                code
-            }
-        }
+        let (code, disp) = instructions::generate_call_heap_init(None);
+        self.record_runtime_relocation(current_pos + disp, "_heap_init");
+        code
     }
 
     /// Generate code to call _allocate runtime function
     pub fn generate_allocate_code(&mut self, size: usize, current_pos: usize) -> Vec<u8> {
-        match self.link_mode {
-            LinkMode::Jit => {
-                if let Some(allocate_addr) = self.runtime_addresses.allocate {
-                    let offset = (allocate_addr as i32) - ((current_pos + 7 + 5) as i32);
-                    let (code, _) = instructions::generate_allocate_inline(size, Some(offset));
-                    code
-                } else {
-                    let (code, disp) = instructions::generate_allocate_inline(size, None);
-                    self.record_runtime_relocation(current_pos + disp, "_allocate");
-                    code
-                }
-            }
-            LinkMode::ObjFile => {
-                let (code, disp) = instructions::generate_allocate_inline(size, None);
-                self.record_runtime_relocation(current_pos + disp, "_allocate");
-                code
-            }
-        }
+        let (code, disp) = instructions::generate_allocate_inline(size, None);
+        self.record_runtime_relocation(current_pos + disp, "_allocate");
+        code
     }
 
     /// Generate code to call _free runtime function
     pub fn generate_free_code(&mut self, current_pos: usize) -> Vec<u8> {
-        match self.link_mode {
-            LinkMode::Jit => {
-                if let Some(free_addr) = self.runtime_addresses.free {
-                    let offset = (free_addr as i32) - ((current_pos + 1 + 5) as i32);
-                    let (code, _) = instructions::generate_free_inline(Some(offset));
-                    code
-                } else {
-                    let (code, disp) = instructions::generate_free_inline(None);
-                    self.record_runtime_relocation(current_pos + disp, "_free");
-                    code
-                }
-            }
-            LinkMode::ObjFile => {
-                let (code, disp) = instructions::generate_free_inline(None);
-                self.record_runtime_relocation(current_pos + disp, "_free");
-                code
-            }
-        }
+        let (code, disp) = instructions::generate_free_inline(None);
+        self.record_runtime_relocation(current_pos + disp, "_free");
+        code
     }
 
     pub fn generate_free_local_code(&mut self, slot: usize, current_pos: usize) -> Vec<u8> {
@@ -183,23 +139,8 @@ impl X86CodeGen {
 
         // Call _free (this will clobber RAX, but we saved it above)
         let call_disp_offset = code.len() + 1;
-        match self.link_mode {
-            LinkMode::Jit => {
-                if let Some(free_addr) = self.runtime_addresses.free {
-                    let call_pos = current_pos + code.len();
-                    let offset = (free_addr as i32) - ((call_pos + 5) as i32);
-                    code.push(0xe8); // call
-                    code.extend_from_slice(&offset.to_le_bytes());
-                } else {
-                    code.extend_from_slice(&[0xe8, 0x00, 0x00, 0x00, 0x00]);
-                    self.record_runtime_relocation(current_pos + call_disp_offset, "_free");
-                }
-            }
-            LinkMode::ObjFile => {
-                code.extend_from_slice(&[0xe8, 0x00, 0x00, 0x00, 0x00]);
-                self.record_runtime_relocation(current_pos + call_disp_offset, "_free");
-            }
-        }
+        code.extend_from_slice(&[0xe8, 0x00, 0x00, 0x00, 0x00]);
+        self.record_runtime_relocation(current_pos + call_disp_offset, "_free");
 
         // Restore RAX
         code.push(0x58); // pop rax
@@ -208,9 +149,7 @@ impl X86CodeGen {
     }
 
     pub fn record_runtime_relocation(&mut self, offset: usize, symbol: &str) {
-        if let LinkMode::ObjFile = self.link_mode {
-            self.symbol_relocations.push(SymbolRelocation { offset, symbol: symbol.to_string() });
-        }
+        self.symbol_relocations.push(SymbolRelocation { offset, symbol: symbol.to_string() });
     }
 
     pub fn record_string_relocation(&mut self, offset: usize, index: usize) {
@@ -226,45 +165,15 @@ impl X86CodeGen {
             symbol_relocations: self.symbol_relocations,
             string_relocations: self.string_relocations,
             function_addresses: self.function_addresses,
+            runtime_addresses: self.runtime_addresses,
         }
     }
 
     /// Generate code to call a runtime function
     pub fn generate_runtime_call_code(&mut self, func_name: &str, arg_count: usize, current_pos: usize) -> Vec<u8> {
-        let runtime_addr = match func_name {
-            "_string_count" => self.runtime_addresses.string_count,
-            "_string_concat_n" => self.runtime_addresses.string_concat_n,
-            "_string_clone" => self.runtime_addresses.string_clone,
-            "_string_get" => self.runtime_addresses.string_get,
-            "_string_subs" => self.runtime_addresses.string_subs,
-            _ => None,
-        };
-
-        match self.link_mode {
-            LinkMode::Jit => {
-                if let Some(addr) = runtime_addr {
-                    let pop_size = match arg_count {
-                        0 => 0,
-                        1 => 1,
-                        2 => 2,
-                        3 => 3,
-                        _ => panic!("Unsupported arg_count"),
-                    };
-                    let offset = (addr as i32) - ((current_pos + pop_size + 5) as i32);
-                    let (code, _) = instructions::generate_runtime_call(Some(offset), arg_count);
-                    code
-                } else {
-                    let (code, disp) = instructions::generate_runtime_call(None, arg_count);
-                    self.record_runtime_relocation(current_pos + disp, func_name);
-                    code
-                }
-            }
-            LinkMode::ObjFile => {
-                let (code, disp) = instructions::generate_runtime_call(None, arg_count);
-                self.record_runtime_relocation(current_pos + disp, func_name);
-                code
-            }
-        }
+        let (code, disp) = instructions::generate_runtime_call(None, arg_count);
+        self.record_runtime_relocation(current_pos + disp, func_name);
+        code
     }
 
     /// Generate x86-64 machine code from IR program
@@ -507,7 +416,7 @@ impl CodeGenBackend for X86CodeGen {
 mod tests {
     use crate::codegen::x86_64_linux::{compile_to_executable, compile_to_object};
     use crate::ir::{IRInstruction, IRProgram};
-    use crate::jit_runner::{JitRunner, JitRunnerTrt};
+    use crate::jit_runner::JitRunner;
 
     #[test]
     fn jit_compiles_simple_number() {
@@ -517,10 +426,7 @@ mod tests {
 
         let artifact = compile_to_executable(&program);
 
-        let mut jit_code = artifact.code.clone();
-        jit_code.push(0xc3); // ret
-
-        let result = JitRunner::exec(&jit_code);
+        let result = JitRunner::exec_artifact(&artifact);
         assert_eq!(result, 42);
     }
 
@@ -534,10 +440,7 @@ mod tests {
 
         let artifact = compile_to_executable(&program);
 
-        let mut jit_code = artifact.code.clone();
-        jit_code.push(0xc3); // ret
-
-        let result = JitRunner::exec(&jit_code);
+        let result = JitRunner::exec_artifact(&artifact);
         assert_eq!(result, 5);
     }
 
@@ -583,6 +486,20 @@ mod tests {
 
         let artifact_without_free = compile_to_executable(&program_without_free);
         assert!(artifact.code.len() > artifact_without_free.code.len());
+    }
+
+    #[test]
+    fn jit_executes_runtime_calls() {
+        let mut program = IRProgram::new();
+        program.add_instruction(IRInstruction::InitHeap);
+        program.add_instruction(IRInstruction::Allocate(32));
+        program.add_instruction(IRInstruction::Free);
+        program.add_instruction(IRInstruction::Push(7));
+        program.add_instruction(IRInstruction::Return);
+
+        let artifact = compile_to_executable(&program);
+        let result = JitRunner::exec_artifact(&artifact);
+        assert_eq!(result, 7);
     }
 
     #[test]

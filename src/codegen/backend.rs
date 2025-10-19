@@ -6,17 +6,26 @@
 use crate::ir::IRProgram;
 
 /// Resulting machine code buffer for in-process execution.
+#[derive(Debug, Clone)]
+pub struct RuntimeRelocation {
+    pub offset: usize,
+    pub symbol: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeStub {
+    pub symbol: String,
+    pub offset: usize,
+}
+
 #[derive(Debug)]
 pub struct JitArtifact {
     pub code: Vec<u8>,
+    pub runtime_relocations: Vec<RuntimeRelocation>,
+    pub runtime_addresses: RuntimeAddresses,
+    pub runtime_stubs: Vec<RuntimeStub>,
     #[allow(dead_code)]
     pub _string_buffers: Vec<Box<[u8]>>,
-}
-
-impl JitArtifact {
-    pub fn as_code(&self) -> &[u8] {
-        &self.code
-    }
 }
 
 /// Serialized object file bytes suitable for further linking.

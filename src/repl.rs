@@ -3,7 +3,7 @@ use crate::ast::{AstParser, AstParserTrt};
 use crate::codegen::{compile_to_executable, detect_host_target};
 use crate::compiler::{compile_to_ir, CompileError};
 use crate::evaluator::{eval_node, EvalError, Value};
-use crate::jit_runner::{JitRunner, JitRunnerTrt};
+use crate::jit_runner::JitRunner;
 use std::io::{self, Write};
 
 pub enum ExecutionMode {
@@ -77,7 +77,7 @@ fn parse_compile_and_execute(input: &str) -> Result<i64, String> {
     let target = detect_host_target();
     let artifact = compile_to_executable(&ir_program, target);
 
-    let result = JitRunner::exec(artifact.as_code());
+    let result = JitRunner::exec_artifact(&artifact);
     Ok(result as i64)
 }
 
