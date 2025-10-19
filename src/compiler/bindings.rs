@@ -1,7 +1,17 @@
-use super::{CompileContext, CompileError, CompileResult, ValueKind};
+use super::{CompileContext, CompileError, CompileResult, HeapOwnership, ValueKind};
 /// Variable binding compilation (let expressions)
 use crate::ast::Node;
+use crate::compiler::liveness::{apply_liveness_plan, compute_liveness_plan};
 use crate::ir::{IRInstruction, IRProgram};
+use std::collections::HashSet;
+
+#[derive(Clone, Debug)]
+struct BindingInfo {
+    slot: usize,
+    owns_heap: bool,
+    store_index: usize,
+    freed_immediately: bool,
+}
 
 /// Compile a let binding expression
 pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
@@ -20,6 +30,7 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
 
     let mut instructions = Vec::new();
     let mut added_variables = Vec::new();
+    let mut binding_infos: Vec<BindingInfo> = Vec::new();
 
     for chunk in bindings.chunks(2) {
         let var_node = &chunk[0];
@@ -36,7 +47,7 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
         if let Node::Symbol { value } = val_node {
             if crate::compiler::is_heap_allocated_symbol(value, context) {
                 value_result.instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
-                value_result.owns_heap = true;
+                value_result.heap_ownership = HeapOwnership::Owned;
                 cloned_from_existing = true;
             }
         }
@@ -53,11 +64,17 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
         context.set_variable_type(var_name, value_kind);
 
         // Mark variable as heap-allocated if needed
-        if value_result.owns_heap || cloned_from_existing {
+        if value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing {
             context.mark_heap_allocated(var_name);
         }
 
         added_variables.push(var_name.clone());
+        binding_infos.push(BindingInfo {
+            slot,
+            owns_heap: value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing,
+            store_index: instructions.len() - 1,
+            freed_immediately: false,
+        });
     }
 
     let mut body_result = crate::compiler::compile_node(&args[1], context, program)?;
@@ -66,24 +83,60 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
     if let Node::Symbol { value } = &args[1] {
         if added_variables.iter().any(|name| name == value) && crate::compiler::is_heap_allocated_symbol(value, context) {
             body_result.instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
-            body_result.owns_heap = true;
+            body_result.heap_ownership = HeapOwnership::Owned;
             body_kind = ValueKind::String;
         }
     }
 
-    let body_owns_heap = body_result.owns_heap;
-    instructions.extend(body_result.instructions);
+    let mut body_instructions = body_result.instructions;
 
-    // Free heap-allocated variables before removing them from scope
-    // Use FreeLocal to avoid pushing values onto stack and preserve return value in RAX
-    let heap_vars = context.get_heap_allocated_vars(&added_variables);
-    for var_name in &heap_vars {
-        if let Some(slot) = context.get_variable(var_name) {
-            instructions.push(IRInstruction::FreeLocal(slot));
+    let owned_slots: HashSet<usize> = binding_infos.iter().filter(|info| info.owns_heap).map(|info| info.slot).collect();
+
+    let slots_used = collect_slot_usage_basic(&body_instructions, &owned_slots);
+
+    for info in binding_infos.iter_mut().filter(|info| info.owns_heap) {
+        if !slots_used.contains(&info.slot) {
+            // Value never used; free immediately instead of storing in a local slot.
+            instructions[info.store_index] = IRInstruction::Free;
+            info.freed_immediately = true;
         }
+    }
+
+    let mut freed_on_all_paths: HashSet<usize> = binding_infos.iter().filter(|info| info.owns_heap && info.freed_immediately).map(|info| info.slot).collect();
+
+    let tracked_slots_for_plan: HashSet<usize> = binding_infos.iter().filter(|info| info.owns_heap && !info.freed_immediately).map(|info| info.slot).collect();
+
+    if !tracked_slots_for_plan.is_empty() {
+        let plan = compute_liveness_plan(&body_instructions, &tracked_slots_for_plan);
+        if !plan.insert_after.is_empty() {
+            body_instructions = apply_liveness_plan(body_instructions, &plan);
+        }
+        freed_on_all_paths.extend(plan.freed_everywhere.iter().copied());
+    }
+
+    instructions.extend(body_instructions);
+
+    // Fallback to scope-exit frees for any owned locals not handled by liveness or immediate free.
+    for info in binding_infos.iter().filter(|info| info.owns_heap) {
+        if freed_on_all_paths.contains(&info.slot) {
+            continue;
+        }
+        instructions.push(IRInstruction::FreeLocal(info.slot));
     }
 
     context.remove_variables(&added_variables);
 
-    Ok(CompileResult::with_instructions(instructions, body_kind).with_heap_ownership(body_owns_heap))
+    Ok(CompileResult::with_instructions(instructions, body_kind).with_heap_ownership(body_result.heap_ownership))
+}
+
+fn collect_slot_usage_basic(instructions: &[IRInstruction], tracked: &HashSet<usize>) -> HashSet<usize> {
+    let mut used = HashSet::new();
+    for inst in instructions {
+        if let IRInstruction::LoadLocal(slot) | IRInstruction::PushLocalAddress(slot) = inst {
+            if tracked.contains(slot) {
+                used.insert(*slot);
+            }
+        }
+    }
+    used
 }

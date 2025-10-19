@@ -9,6 +9,7 @@ mod bindings;
 mod context;
 mod expressions;
 mod functions;
+mod liveness;
 
 pub use context::CompileContext;
 
@@ -24,20 +25,43 @@ pub enum ValueKind {
     Nil,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum HeapOwnership {
+    None,
+    Borrowed,
+    Owned,
+}
+
+impl HeapOwnership {
+    pub fn combine(self, other: Self) -> Self {
+        use HeapOwnership::*;
+        match (self, other) {
+            (Owned, Owned) => Owned,
+            (None, None) => None,
+            (None, Borrowed) | (Borrowed, None) | (Borrowed, Borrowed) => Borrowed,
+            _ => Borrowed,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CompileResult {
     pub instructions: Vec<IRInstruction>,
     pub kind: ValueKind,
-    pub owns_heap: bool,
+    pub heap_ownership: HeapOwnership,
 }
 
 impl CompileResult {
     pub fn with_instructions(instructions: Vec<IRInstruction>, kind: ValueKind) -> Self {
-        Self { instructions, kind, owns_heap: false }
+        Self {
+            instructions,
+            kind,
+            heap_ownership: HeapOwnership::None,
+        }
     }
 
-    pub fn with_heap_ownership(mut self, owns_heap: bool) -> Self {
-        self.owns_heap = owns_heap;
+    pub fn with_heap_ownership(mut self, ownership: HeapOwnership) -> Self {
+        self.heap_ownership = ownership;
         self
     }
 }
@@ -159,10 +183,20 @@ pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &
                 Ok(CompileResult::with_instructions(vec![IRInstruction::Push(0)], ValueKind::Nil))
             } else if let Some(slot) = context.get_parameter(value) {
                 let kind = context.get_parameter_type(value).unwrap_or(ValueKind::Any);
-                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadParam(slot)], kind))
+                let ownership = if kind == ValueKind::String && context.is_heap_allocated(value) {
+                    HeapOwnership::Borrowed
+                } else {
+                    HeapOwnership::None
+                };
+                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadParam(slot)], kind).with_heap_ownership(ownership))
             } else if let Some(slot) = context.get_variable(value) {
                 let kind = context.get_variable_type(value).unwrap_or(ValueKind::Any);
-                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadLocal(slot)], kind))
+                let ownership = if kind == ValueKind::String && context.is_heap_allocated(value) {
+                    HeapOwnership::Borrowed
+                } else {
+                    HeapOwnership::None
+                };
+                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadLocal(slot)], kind).with_heap_ownership(ownership))
             } else {
                 Err(CompileError::UndefinedVariable(value.clone()))
             }
@@ -197,7 +231,7 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
     instructions.extend(compile_node(&args[1], context, program)?.instructions);
     instructions.push(IRInstruction::RuntimeCall("_string_get".to_string(), 2));
 
-    Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(true))
+    Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(HeapOwnership::Owned))
 }
 
 /// Compile subs operation (substring extraction)
@@ -217,7 +251,7 @@ fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRPro
 
     instructions.push(IRInstruction::RuntimeCall("_string_subs".to_string(), 3));
 
-    Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(true))
+    Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(HeapOwnership::Owned))
 }
 
 /// Compile str operation (string concatenation)
@@ -227,7 +261,7 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
             vec![IRInstruction::Push(0), IRInstruction::Push(0), IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2)],
             ValueKind::String,
         )
-        .with_heap_ownership(true));
+        .with_heap_ownership(HeapOwnership::Owned));
     }
 
     let count = args.len();
@@ -246,7 +280,7 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
         let slot_index = count - 1 - index;
         let slot = temp_slots[slot_index];
 
-        let mut slot_needs_free = arg_result.owns_heap;
+        let mut slot_needs_free = arg_result.heap_ownership == HeapOwnership::Owned;
 
         match arg_result.kind {
             ValueKind::String => {
@@ -299,7 +333,7 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
         context.release_temp_slot(slot);
     }
 
-    Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(true))
+    Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(HeapOwnership::Owned))
 }
 
 /// Compile a list (function call or special form) to IR
@@ -723,15 +757,33 @@ mod tests {
         ];
 
         let program = compile_program(&expressions).unwrap();
-        let clone_pos = program
+
+        let call_pos = program
             .instructions
             .iter()
-            .position(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 1) if name == "_string_clone"));
-        let call_pos = program.instructions.iter().position(|inst| matches!(inst, IRInstruction::Call(name, 1) if name == "id"));
+            .position(|inst| matches!(inst, IRInstruction::Call(name, 1) if name == "id"))
+            .expect("expected call instruction for id");
 
-        assert!(clone_pos.is_some(), "expected clone runtime call for argument");
-        assert!(call_pos.is_some(), "expected call instruction for id");
-        assert!(clone_pos.unwrap() < call_pos.unwrap(), "clone should happen before function call");
+        assert!(
+            !program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 1) if name == "_string_clone")),
+            "arguments should be passed by borrowing without cloning"
+        );
+
+        assert!(call_pos >= 2, "call should have preceding store/load for borrowed arg");
+        let store_slot = match &program.instructions[call_pos - 2] {
+            IRInstruction::StoreLocal(slot) => *slot,
+            other => panic!("expected StoreLocal before call, found {:?}", other),
+        };
+
+        match &program.instructions[call_pos - 1] {
+            IRInstruction::LoadLocal(slot) if *slot == store_slot => {}
+            other => panic!("expected LoadLocal for slot {} before call, found {:?}", store_slot, other),
+        }
+
+        match &program.instructions[call_pos + 1] {
+            IRInstruction::FreeLocal(slot) if *slot == store_slot => {}
+            other => panic!("expected FreeLocal for slot {} after call, found {:?}", store_slot, other),
+        }
     }
 
     #[test]

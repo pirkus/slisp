@@ -82,7 +82,9 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
         ValueKind::Any
     };
 
-    Ok(CompileResult::with_instructions(instructions, resulting_kind))
+    let ownership = then_result.heap_ownership.combine(else_result.heap_ownership);
+
+    Ok(CompileResult::with_instructions(instructions, resulting_kind).with_heap_ownership(ownership))
 }
 
 fn compile_variadic_logical(

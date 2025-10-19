@@ -1,5 +1,5 @@
 /// Compilation context for tracking variables, parameters, and functions
-use super::ValueKind;
+use super::{HeapOwnership, ValueKind};
 use crate::ir::FunctionInfo;
 use std::collections::HashMap;
 
@@ -15,6 +15,7 @@ pub struct CompileContext {
     pub functions: HashMap<String, FunctionInfo>,                  // function name -> function info
     pub function_return_types: HashMap<String, ValueKind>,         // function name -> return kind
     pub function_parameter_types: HashMap<String, Vec<ValueKind>>, // function name -> parameter kinds
+    pub function_return_ownership: HashMap<String, HeapOwnership>, // function name -> heap ownership semantics
     pub next_slot: usize,
     pub free_slots: Vec<usize>, // stack of freed slots for reuse
     pub in_function: bool,      // true when compiling inside a function
@@ -31,6 +32,7 @@ impl CompileContext {
             functions: HashMap::new(),
             function_return_types: HashMap::new(),
             function_parameter_types: HashMap::new(),
+            function_return_ownership: HashMap::new(),
             next_slot: 0,
             free_slots: Vec::new(),
             in_function: false,
@@ -54,6 +56,7 @@ impl CompileContext {
             functions: self.functions.clone(),
             function_return_types: self.function_return_types.clone(),
             function_parameter_types: self.function_parameter_types.clone(),
+            function_return_ownership: self.function_return_ownership.clone(),
             next_slot: 0,
             free_slots: Vec::new(),
             in_function: true,
@@ -133,9 +136,18 @@ impl CompileContext {
         }
     }
 
+    pub fn set_function_return_ownership(&mut self, name: &str, ownership: HeapOwnership) {
+        self.function_return_ownership.insert(name.to_string(), ownership);
+    }
+
     /// Retrieve the inferred return type for a function if one is known
     pub fn get_function_return_type(&self, name: &str) -> Option<ValueKind> {
         self.function_return_types.get(name).copied()
+    }
+
+    /// Retrieve the heap ownership semantics of a function return if known
+    pub fn get_function_return_ownership(&self, name: &str) -> Option<HeapOwnership> {
+        self.function_return_ownership.get(name).copied()
     }
 
     /// Update the inferred parameter type for a function at a specific position
@@ -213,11 +225,6 @@ impl CompileContext {
     /// Check if a variable holds a heap-allocated pointer
     pub fn is_heap_allocated(&self, name: &str) -> bool {
         self.heap_allocated_vars.get(name).copied().unwrap_or(false)
-    }
-
-    /// Get list of heap-allocated variables from a list of names
-    pub fn get_heap_allocated_vars(&self, names: &[String]) -> Vec<String> {
-        names.iter().filter(|name| self.is_heap_allocated(name)).cloned().collect()
     }
 }
 

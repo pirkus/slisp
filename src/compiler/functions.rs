@@ -1,4 +1,4 @@
-use super::{CompileContext, CompileError, CompileResult, ValueKind};
+use super::{CompileContext, CompileError, CompileResult, HeapOwnership, ValueKind};
 /// Function definition and call compilation
 use crate::ast::Node;
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
@@ -57,8 +57,19 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
         0, // Will be set by caller
     )];
 
-    let body_result = crate::compiler::compile_node(&args[2], &mut func_context, program)?;
-    let body_kind = body_result.kind;
+    let mut body_result = crate::compiler::compile_node(&args[2], &mut func_context, program)?;
+    let mut body_kind = body_result.kind;
+
+    if body_result.heap_ownership == HeapOwnership::Borrowed {
+        body_result.instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+        body_result.heap_ownership = HeapOwnership::Owned;
+        if body_kind == ValueKind::Any {
+            body_kind = ValueKind::String;
+        }
+    }
+
+    let body_ownership = body_result.heap_ownership;
+
     instructions.extend(body_result.instructions);
     instructions.push(IRInstruction::Return);
 
@@ -69,8 +80,9 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
         local_count: func_context.next_slot,
     };
 
-    // Propagate inferred return type back to parent context
+    // Propagate inferred return metadata back to parent context
     context.set_function_return_type(&func_info.name, body_kind);
+    context.set_function_return_ownership(&func_info.name, body_ownership);
 
     Ok((instructions, func_info))
 }
@@ -82,21 +94,32 @@ pub fn compile_function_call(func_name: &str, args: &[Node], context: &mut Compi
     }
 
     let mut instructions = Vec::new();
+    let mut owned_argument_slots: Vec<Option<usize>> = Vec::with_capacity(args.len());
 
     for (index, arg) in args.iter().enumerate() {
-        let mut arg_result = crate::compiler::compile_node(arg, context, program)?;
-        if let Node::Symbol { value } = arg {
-            if crate::compiler::is_heap_allocated_symbol(value, context) {
-                arg_result.instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
-                arg_result.owns_heap = true;
-            }
-        }
+        let arg_result = crate::compiler::compile_node(arg, context, program)?;
         context.record_function_parameter_type(func_name, index, arg_result.kind);
         instructions.extend(arg_result.instructions);
+        if arg_result.heap_ownership == HeapOwnership::Owned {
+            let slot = context.allocate_temp_slot();
+            instructions.push(IRInstruction::StoreLocal(slot));
+            instructions.push(IRInstruction::LoadLocal(slot));
+            owned_argument_slots.push(Some(slot));
+        } else {
+            owned_argument_slots.push(None);
+        }
     }
 
     instructions.push(IRInstruction::Call(func_name.to_string(), args.len()));
 
+    for slot in owned_argument_slots.into_iter().flatten() {
+        instructions.push(IRInstruction::FreeLocal(slot));
+        context.release_temp_slot(slot);
+    }
+
     // Without full type inference, assume any return kind for user-defined functions.
-    Ok(CompileResult::with_instructions(instructions, context.get_function_return_type(func_name).unwrap_or(ValueKind::Any)))
+    let return_kind = context.get_function_return_type(func_name).unwrap_or(ValueKind::Any);
+    let return_ownership = context.get_function_return_ownership(func_name).unwrap_or(HeapOwnership::None);
+
+    Ok(CompileResult::with_instructions(instructions, return_kind).with_heap_ownership(return_ownership))
 }

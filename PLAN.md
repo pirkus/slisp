@@ -48,7 +48,14 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
   - ✅ Extend to variadic `str` and safe nested concatenation in the compiler/runtime.
   - ✅ Implement `_string_get`/`_string_subs` helpers and wire compiler codegen for `get`/`subs`.
   - ✅ Introduce runtime-backed coercions so compiled `str` can accept numbers/booleans/nil (mirroring interpreter conversions).
-- **6.3 Lifetime improvements (planned):** Smarter temporary management, unused allocation elision, block coalescing, and exploration of reference counting or GC for values escaping scope.
+- **6.3 Lifetime improvements (in progress):**
+  - ✅ Adopt "borrowed argument, owned return" semantics so callees receive pointers without cloning while callers stay responsible for frees.
+  - ✅ Insert liveness-aware `FreeLocal` emission to ensure the last user of each allocation performs the release and skip `Allocate` for dead temporaries (covers straight-line and branched `let` bodies with shared liveness helpers).
+  - ⏳ Wire the shared liveness planner into other heap-owning sites (e.g., string helpers outside `let`) so redundant frees disappear across the compiler.
+  - ⏳ Require closures (interpreter/JIT only for now) to clone any captured values up front, keeping borrow rules simple while preventing dangling references when frames unwind.
+  - ⏳ Expand `tests/programs/` to exercise branch-heavy lets, unused bindings, and nested frees so the new lifetime semantics stay regression-tested.
+  - ⏳ Prototype allocator telemetry (build flag + CLI toggle) to trace allocations/frees and validate reuse with new stress cases under `tests/programs/memory/`.
+  - ⏳ Continue investigating lightweight shared ownership (e.g., ref counting) for future features that demand longer-lived sharing beyond clone-on-capture.
 - **6.4 Composite data structures (planned):** Heap-backed vectors, maps, and sets with associated primitives (`vec`, `conj`, `assoc`, etc.).
 - **6.5 Type inference pass (planned):** Introduce a dedicated analysis stage that walks the AST/IR to propagate `ValueKind`, reconcile function signatures, and emit diagnostics for ambiguous or unsupported combinations before code generation.
 
