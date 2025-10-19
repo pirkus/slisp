@@ -425,7 +425,8 @@ pub fn parse_file(file_content: &str) -> Result<Vec<Node>, String> {
 }
 
 /// Skip whitespace characters and return the next non-whitespace position
-fn skip_whitespace(bytes: &[u8], mut offset: usize) -> usize {
+fn skip_whitespace(bytes: &[u8], offset: usize) -> usize {
+    let mut offset = offset;
     while offset < bytes.len() {
         let b = bytes[offset];
         if is_whitespace(b) {
@@ -462,7 +463,8 @@ fn find_expression_end(bytes: &[u8], offset: usize) -> Result<usize, String> {
 }
 
 /// Find the end of a list expression (parenthesized form)
-fn find_list_end(bytes: &[u8], mut offset: usize) -> Result<usize, String> {
+fn find_list_end(bytes: &[u8], offset: usize) -> Result<usize, String> {
+    let mut offset = offset;
     let mut depth = 0;
 
     while offset < bytes.len() {
@@ -501,7 +503,8 @@ fn find_list_end(bytes: &[u8], mut offset: usize) -> Result<usize, String> {
 }
 
 /// Find the end of an atom (number, symbol, or other non-list token)
-fn find_atom_end(bytes: &[u8], mut offset: usize) -> Result<usize, String> {
+fn find_atom_end(bytes: &[u8], offset: usize) -> Result<usize, String> {
+    let mut offset = offset;
     while offset < bytes.len() {
         let b = bytes[offset];
         if is_whitespace(b) || b == b'(' || b == b')' || b == b';' {
@@ -514,7 +517,8 @@ fn find_atom_end(bytes: &[u8], mut offset: usize) -> Result<usize, String> {
 
 /// Skip a string literal boundary (for finding expression ends)
 /// This is different from parse_string_literal - it just skips past the string
-fn skip_string_literal_boundary(bytes: &[u8], mut offset: usize) -> Result<usize, String> {
+fn skip_string_literal_boundary(bytes: &[u8], offset: usize) -> Result<usize, String> {
+    let mut offset = offset;
     // Skip opening quote
     offset += 1;
 
@@ -542,7 +546,8 @@ fn skip_string_literal_boundary(bytes: &[u8], mut offset: usize) -> Result<usize
 }
 
 /// Skip a comment (from ';' to end of line)
-fn skip_comment(bytes: &[u8], mut offset: usize) -> usize {
+fn skip_comment(bytes: &[u8], offset: usize) -> usize {
+    let mut offset = offset;
     while offset < bytes.len() && bytes[offset] != b'\n' {
         offset += 1;
     }
