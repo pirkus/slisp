@@ -4,6 +4,7 @@ use memmap2::MmapMut;
 pub struct JitRunner;
 
 impl JitRunner {
+    #[cfg(test)]
     pub fn exec(instructions: &[u8]) -> u8 {
         let mut m = MmapMut::map_anon(instructions.len()).unwrap();
         m.copy_from_slice(instructions);
@@ -76,7 +77,7 @@ fn patch_runtime_stubs(code: Vec<u8>, stubs: &[RuntimeStub], addresses: &Runtime
 
         // Ensure the tail bytes encode `jmp rax`
         let jump_slice = &mut new_code[stub.offset + 10..stub.offset + 12];
-        if jump_slice.as_ref() != [0xff, 0xe0] {
+        if jump_slice != [0xff, 0xe0] {
             jump_slice.copy_from_slice(&[0xff, 0xe0]);
         }
     }
