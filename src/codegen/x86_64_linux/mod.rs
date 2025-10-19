@@ -16,7 +16,7 @@ mod codegen;
 mod instructions;
 
 use self::codegen::{generate_entry_stub, LinkMode, X86CodeGen};
-use crate::codegen::backend::{JitArtifact, ObjectArtifact, TargetBackend};
+use crate::codegen::backend::{JitArtifact, ObjectArtifact, RuntimeRelocation, RuntimeStub, TargetBackend};
 use crate::ir::IRProgram;
 use object::write::{Object, Relocation as ObjectRelocation, StandardSection, Symbol, SymbolSection};
 use object::{Architecture, BinaryFormat, Endianness, RelocationEncoding, RelocationFlags, RelocationKind, SymbolFlags, SymbolKind, SymbolScope};
@@ -51,8 +51,43 @@ pub fn compile_to_executable(program: &IRProgram) -> JitArtifact {
     codegen.set_string_addresses(program);
     let _ = codegen.generate(program);
     let generated = codegen.into_generated_code();
+
+    let mut code = generated.code;
+    let mut unique_symbols = Vec::new();
+    for reloc in &generated.symbol_relocations {
+        if !unique_symbols.contains(&reloc.symbol) {
+            unique_symbols.push(reloc.symbol.clone());
+        }
+    }
+
+    let mut runtime_stubs = Vec::new();
+    for symbol in &unique_symbols {
+        let stub_offset = code.len();
+        // movabs rax, imm64
+        code.extend_from_slice(&[0x48, 0xb8]);
+        code.extend_from_slice(&0u64.to_le_bytes());
+        // jmp rax (tail-call into runtime function)
+        code.extend_from_slice(&[0xff, 0xe0]);
+
+        runtime_stubs.push(RuntimeStub {
+            symbol: symbol.clone(),
+            offset: stub_offset,
+        });
+    }
+
+    let runtime_relocations = generated
+        .symbol_relocations
+        .into_iter()
+        .map(|reloc| RuntimeRelocation {
+            offset: reloc.offset,
+            symbol: reloc.symbol,
+        })
+        .collect();
     JitArtifact {
-        code: generated.code,
+        code,
+        runtime_relocations,
+        runtime_addresses: generated.runtime_addresses,
+        runtime_stubs,
         _string_buffers: generated.string_buffers,
     }
 }

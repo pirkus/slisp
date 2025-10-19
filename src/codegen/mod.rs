@@ -26,4 +26,4 @@ pub use api::{compile_to_executable, compile_to_object, detect_host_target, link
 
 // Export backend trait for future use with multiple architecture backends
 #[allow(unused_imports)]
-pub use backend::{CodeGenBackend, JitArtifact, ObjectArtifact, RuntimeAddresses, TargetBackend};
+pub use backend::{CodeGenBackend, JitArtifact, ObjectArtifact, RuntimeAddresses, RuntimeRelocation, RuntimeStub, TargetBackend};
