@@ -3,12 +3,8 @@ use memmap2::MmapMut;
 
 pub struct JitRunner;
 
-pub trait JitRunnerTrt {
-    fn exec(instructions: &[u8]) -> u8;
-}
-
-impl JitRunnerTrt for JitRunner {
-    fn exec(instructions: &[u8]) -> u8 {
+impl JitRunner {
+    pub fn exec(instructions: &[u8]) -> u8 {
         let mut m = MmapMut::map_anon(instructions.len()).unwrap();
         m.copy_from_slice(instructions);
         let m = m.make_exec().unwrap();
@@ -19,9 +15,7 @@ impl JitRunnerTrt for JitRunner {
             func()
         }
     }
-}
 
-impl JitRunner {
     pub fn exec_artifact(artifact: &JitArtifact) -> u8 {
         let patched_code = if artifact.runtime_relocations.is_empty() && artifact.runtime_stubs.is_empty() {
             artifact.code.clone()
