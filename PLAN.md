@@ -50,6 +50,7 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
   - 🔜 Introduce runtime-backed coercions so compiled `str` can accept numbers/booleans/nil (mirroring interpreter conversions).
 - **6.3 Lifetime improvements (planned):** Smarter temporary management, unused allocation elision, block coalescing, and exploration of reference counting or GC for values escaping scope.
 - **6.4 Composite data structures (planned):** Heap-backed vectors, maps, and sets with associated primitives (`vec`, `conj`, `assoc`, etc.).
+- **6.5 Type inference pass (planned):** Introduce a dedicated analysis stage that walks the AST/IR to propagate `ValueKind`, reconcile function signatures, and emit diagnostics for ambiguous or unsupported combinations before code generation.
 
 ### Phase 7 – I/O and System Interaction 🗂️
 - **7.1 Terminal I/O:** `print`/`println`, stderr helpers, and simple formatting.

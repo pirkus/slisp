@@ -50,6 +50,7 @@ pub(crate) fn eval_with_env(node: &Node, env: &mut Environment) -> Result<Value,
 fn eval_primitive(primitive: &Primitive) -> Result<Value, EvalError> {
     match primitive {
         Primitive::Number(n) => Ok(Value::Number(*n as isize)),
+        Primitive::Boolean(b) => Ok(Value::Boolean(*b)),
         Primitive::String(s) => Ok(Value::String(s.clone())),
     }
 }
@@ -198,6 +199,9 @@ mod tests {
     fn test_primitives() {
         assert_eq!(parse_and_eval("42"), Ok(Value::Number(42)));
         assert_eq!(parse_and_eval("0"), Ok(Value::Number(0)));
+        assert_eq!(parse_and_eval("true"), Ok(Value::Boolean(true)));
+        assert_eq!(parse_and_eval("false"), Ok(Value::Boolean(false)));
+        assert_eq!(parse_and_eval("\"hello\""), Ok(Value::String("hello".to_string())));
     }
 
     #[test]

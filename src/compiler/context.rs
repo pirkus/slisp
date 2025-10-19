@@ -1,4 +1,5 @@
 /// Compilation context for tracking variables, parameters, and functions
+use super::ValueKind;
 use crate::ir::FunctionInfo;
 use std::collections::HashMap;
 
@@ -6,10 +7,14 @@ use std::collections::HashMap;
 /// Tracks variables, parameters, and function definitions
 #[derive(Debug, Clone)]
 pub struct CompileContext {
-    pub variables: HashMap<String, usize>,          // variable name -> local slot index
-    pub heap_allocated_vars: HashMap<String, bool>, // tracks if variable holds heap pointer
-    pub parameters: HashMap<String, usize>,         // parameter name -> param slot index
-    pub functions: HashMap<String, FunctionInfo>,   // function name -> function info
+    pub variables: HashMap<String, usize>,                         // variable name -> local slot index
+    pub heap_allocated_vars: HashMap<String, bool>,                // tracks if variable holds heap pointer
+    pub variable_types: HashMap<String, ValueKind>,                // tracks inferred variable types
+    pub parameters: HashMap<String, usize>,                        // parameter name -> param slot index
+    pub parameter_types: HashMap<String, ValueKind>,               // inferred parameter types
+    pub functions: HashMap<String, FunctionInfo>,                  // function name -> function info
+    pub function_return_types: HashMap<String, ValueKind>,         // function name -> return kind
+    pub function_parameter_types: HashMap<String, Vec<ValueKind>>, // function name -> parameter kinds
     pub next_slot: usize,
     pub free_slots: Vec<usize>, // stack of freed slots for reuse
     pub in_function: bool,      // true when compiling inside a function
@@ -20,8 +25,12 @@ impl CompileContext {
         Self {
             variables: HashMap::new(),
             heap_allocated_vars: HashMap::new(),
+            variable_types: HashMap::new(),
             parameters: HashMap::new(),
+            parameter_types: HashMap::new(),
             functions: HashMap::new(),
+            function_return_types: HashMap::new(),
+            function_parameter_types: HashMap::new(),
             next_slot: 0,
             free_slots: Vec::new(),
             in_function: false,
@@ -39,8 +48,12 @@ impl CompileContext {
         Self {
             variables: HashMap::new(),
             heap_allocated_vars: HashMap::new(),
+            variable_types: HashMap::new(),
             parameters: HashMap::new(),
+            parameter_types: HashMap::new(),
             functions: self.functions.clone(),
+            function_return_types: self.function_return_types.clone(),
+            function_parameter_types: self.function_parameter_types.clone(),
             next_slot: 0,
             free_slots: Vec::new(),
             in_function: true,
@@ -61,6 +74,16 @@ impl CompileContext {
         slot
     }
 
+    /// Set the inferred type for a variable
+    pub fn set_variable_type(&mut self, name: &str, kind: ValueKind) {
+        self.variable_types.insert(name.to_string(), kind);
+    }
+
+    /// Get the inferred type for a variable
+    pub fn get_variable_type(&self, name: &str) -> Option<ValueKind> {
+        self.variable_types.get(name).copied()
+    }
+
     /// Get the slot index for a variable
     pub fn get_variable(&self, name: &str) -> Option<usize> {
         self.variables.get(name).copied()
@@ -68,12 +91,24 @@ impl CompileContext {
 
     /// Add a parameter to the context
     pub fn add_parameter(&mut self, name: String, slot: usize) {
-        self.parameters.insert(name, slot);
+        self.parameters.insert(name.clone(), slot);
+        self.parameter_types.insert(name.clone(), ValueKind::Any);
+        self.heap_allocated_vars.entry(name).or_insert(false);
     }
 
     /// Get the slot index for a parameter
     pub fn get_parameter(&self, name: &str) -> Option<usize> {
         self.parameters.get(name).copied()
+    }
+
+    /// Get the inferred type for a parameter
+    pub fn get_parameter_type(&self, name: &str) -> Option<ValueKind> {
+        self.parameter_types.get(name).copied()
+    }
+
+    /// Set the inferred type for a parameter
+    pub fn set_parameter_type(&mut self, name: &str, kind: ValueKind) {
+        self.parameter_types.insert(name.to_string(), kind);
     }
 
     /// Add a function to the context
@@ -91,10 +126,47 @@ impl CompileContext {
         self.functions.get(name)
     }
 
+    /// Record the return type inferred for a function
+    pub fn set_function_return_type(&mut self, name: &str, kind: ValueKind) {
+        if kind != ValueKind::Any {
+            self.function_return_types.insert(name.to_string(), kind);
+        }
+    }
+
+    /// Retrieve the inferred return type for a function if one is known
+    pub fn get_function_return_type(&self, name: &str) -> Option<ValueKind> {
+        self.function_return_types.get(name).copied()
+    }
+
+    /// Update the inferred parameter type for a function at a specific position
+    pub fn record_function_parameter_type(&mut self, name: &str, index: usize, kind: ValueKind) {
+        if kind == ValueKind::Any {
+            return;
+        }
+
+        let entry = self.function_parameter_types.entry(name.to_string()).or_insert_with(Vec::new);
+        if entry.len() <= index {
+            entry.resize(index + 1, ValueKind::Any);
+        }
+
+        let slot = &mut entry[index];
+        if *slot == ValueKind::Any {
+            *slot = kind;
+        } else if *slot != kind {
+            *slot = ValueKind::Any;
+        }
+    }
+
+    /// Get the recorded parameter types for a function if available
+    pub fn get_function_parameter_type(&self, name: &str, index: usize) -> Option<ValueKind> {
+        self.function_parameter_types.get(name).and_then(|params| params.get(index)).copied()
+    }
+
     /// Remove a variable and free its slot for reuse
     pub fn remove_variable(&mut self, name: &str) -> Option<usize> {
         if let Some(slot) = self.variables.remove(name) {
             self.free_slots.push(slot);
+            self.variable_types.remove(name);
             Some(slot)
         } else {
             None
@@ -131,6 +203,11 @@ impl CompileContext {
     /// Mark a variable as holding a heap-allocated pointer
     pub fn mark_heap_allocated(&mut self, name: &str) {
         self.heap_allocated_vars.insert(name.to_string(), true);
+        if self.variables.contains_key(name) {
+            self.variable_types.insert(name.to_string(), ValueKind::String);
+        } else if self.parameters.contains_key(name) {
+            self.parameter_types.insert(name.to_string(), ValueKind::String);
+        }
     }
 
     /// Check if a variable holds a heap-allocated pointer
@@ -175,6 +252,8 @@ mod tests {
         assert!(function_context.variables.is_empty());
         assert!(function_context.parameters.is_empty());
         assert!(function_context.heap_allocated_vars.is_empty());
+        assert!(function_context.variable_types.is_empty());
+        assert!(function_context.parameter_types.is_empty());
         assert!(function_context.free_slots.is_empty());
         assert_eq!(function_context.next_slot, 0);
         assert_eq!(function_context.functions, context.functions);

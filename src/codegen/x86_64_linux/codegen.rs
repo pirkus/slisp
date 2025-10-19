@@ -54,6 +54,9 @@ impl X86CodeGen {
                 string_clone: Some(slisp_runtime::_string_clone as usize),
                 string_get: Some(slisp_runtime::_string_get as usize),
                 string_subs: Some(slisp_runtime::_string_subs as usize),
+                string_normalize: Some(slisp_runtime::_string_normalize as usize),
+                string_from_number: Some(slisp_runtime::_string_from_number as usize),
+                string_from_boolean: Some(slisp_runtime::_string_from_boolean as usize),
             },
             LinkMode::ObjFile => RuntimeAddresses {
                 heap_init: None,
@@ -64,6 +67,9 @@ impl X86CodeGen {
                 string_clone: None,
                 string_get: None,
                 string_subs: None,
+                string_normalize: None,
+                string_from_number: None,
+                string_from_boolean: None,
             },
         };
 

@@ -11,6 +11,7 @@ pub use parser::{parse_file, AstParser, AstParserTrt};
 #[derive(PartialEq, Debug, Clone)]
 pub enum Primitive {
     Number(usize),
+    Boolean(bool),
     String(String),
 }
 
@@ -25,6 +26,10 @@ pub enum Node {
 impl Node {
     pub fn new_number(number: usize) -> Node {
         Node::Primitive { value: Primitive::Number(number) }
+    }
+
+    pub fn new_boolean(value: bool) -> Node {
+        Node::Primitive { value: Primitive::Boolean(value) }
     }
 
     pub fn new_list_from_raw(nodes: Vec<Node>) -> Node {

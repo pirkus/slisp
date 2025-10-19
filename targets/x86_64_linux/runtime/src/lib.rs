@@ -25,6 +25,9 @@ static mut HEAP_BASE: *mut u8 = null_mut();
 static mut HEAP_END: *mut u8 = null_mut();
 static mut FREE_LIST_HEAD: *mut FreeBlock = null_mut();
 static mut HEAP_INITIALIZED: bool = false;
+static TRUE_LITERAL: [u8; 5] = *b"true\0";
+static FALSE_LITERAL: [u8; 6] = *b"false\0";
+static NIL_LITERAL: [u8; 4] = *b"nil\0";
 
 #[cfg(not(feature = "std"))]
 #[panic_handler]
@@ -68,6 +71,15 @@ unsafe fn mmap(addr: usize, length: usize, prot: usize, flags: usize, fd: usize,
 #[inline(always)]
 fn align_up_8(value: usize) -> usize {
     (value + 7) & !7
+}
+
+fn count_decimal_digits(mut value: u64) -> usize {
+    let mut digits = 1;
+    while value >= 10 {
+        value /= 10;
+        digits += 1;
+    }
+    digits
 }
 
 unsafe fn ensure_heap() -> bool {
@@ -120,18 +132,39 @@ pub extern "C" fn _allocate(size: u64) -> *mut u8 {
 
         while !current.is_null() {
             let block_size = (*current).size & !ALLOCATED_BIT;
-            if block_size >= (needed + HEADER_SIZE) as u64 {
-                let next = (*current).next;
-                if prev.is_null() {
-                    FREE_LIST_HEAD = next;
+            if block_size >= needed as u64 {
+                let remaining = block_size - needed as u64;
+
+                if remaining > HEADER_SIZE as u64 {
+                    // Split the block: current serves the allocation, remainder becomes a new free block
+                    let split_ptr = (current as *mut u8).add(HEADER_SIZE + needed) as *mut FreeBlock;
+                    (*split_ptr).size = (remaining - HEADER_SIZE as u64) & !ALLOCATED_BIT;
+                    (*split_ptr).next = (*current).next;
+
+                    if prev.is_null() {
+                        FREE_LIST_HEAD = split_ptr;
+                    } else {
+                        (*prev).next = split_ptr;
+                    }
+
+                    (*current).size = (needed as u64) | ALLOCATED_BIT;
+                    (*current).next = null_mut();
+
+                    return (current as *mut u8).add(HEADER_SIZE);
                 } else {
-                    (*prev).next = next;
+                    // Not enough space to split; consume entire block
+                    let next = (*current).next;
+                    if prev.is_null() {
+                        FREE_LIST_HEAD = next;
+                    } else {
+                        (*prev).next = next;
+                    }
+
+                    (*current).size = block_size | ALLOCATED_BIT;
+                    (*current).next = null_mut();
+
+                    return (current as *mut u8).add(HEADER_SIZE);
                 }
-
-                (*current).size = block_size | ALLOCATED_BIT;
-                (*current).next = null_mut();
-
-                return (current as *mut u8).add(HEADER_SIZE);
             }
 
             prev = current;
@@ -293,6 +326,75 @@ pub unsafe extern "C" fn _string_clone(src: *const u8) -> *mut u8 {
     dst
 }
 
+#[no_mangle]
+pub extern "C" fn _string_from_boolean(value: i64) -> *mut u8 {
+    if value == 0 {
+        FALSE_LITERAL.as_ptr() as *mut u8
+    } else {
+        TRUE_LITERAL.as_ptr() as *mut u8
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn _string_normalize(ptr: *const u8, clone_flag: i64) -> *mut u8 {
+    unsafe {
+        if ptr.is_null() {
+            return NIL_LITERAL.as_ptr() as *mut u8;
+        }
+
+        if clone_flag != 0 {
+            let cloned = _string_clone(ptr);
+            if cloned.is_null() {
+                return NIL_LITERAL.as_ptr() as *mut u8;
+            }
+            cloned
+        } else {
+            ptr as *mut u8
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn _string_from_number(value: i64) -> *mut u8 {
+    unsafe {
+        let negative = value < 0;
+        let mut magnitude = if negative { value.wrapping_neg() as u64 } else { value as u64 };
+
+        let mut digits = count_decimal_digits(magnitude);
+        if magnitude == 0 {
+            digits = 1;
+        }
+
+        let len = digits + if negative { 1 } else { 0 };
+        let dst = _allocate((len as u64) + 1);
+        if dst.is_null() {
+            return null_mut();
+        }
+
+        let mut write_index = len;
+        *dst.add(write_index) = 0;
+
+        if magnitude == 0 {
+            write_index -= 1;
+            *dst.add(write_index) = b'0';
+        } else {
+            while magnitude > 0 {
+                let digit = (magnitude % 10) as u8;
+                magnitude /= 10;
+                write_index -= 1;
+                *dst.add(write_index) = b'0' + digit;
+            }
+        }
+
+        if negative {
+            write_index -= 1;
+            *dst.add(write_index) = b'-';
+        }
+
+        dst
+    }
+}
+
 /// # Safety
 ///
 /// The caller must ensure that `src` is either null or points to a NUL-terminated UTF-8 string
@@ -438,3 +540,27 @@ pub unsafe extern "C" fn bcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
 #[cfg(not(feature = "std"))]
 #[no_mangle]
 pub extern "C" fn rust_eh_personality() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn string_from_number_returns_pointer() {
+        unsafe {
+            let ptr = _string_from_number(42);
+            assert!(!ptr.is_null());
+            assert_eq!(_string_count(ptr), 2);
+            let extra = _allocate(16);
+            assert!(!extra.is_null());
+            let literal: &[u8] = b"Result: \0";
+            let parts = [literal.as_ptr(), ptr];
+            let combined = _string_concat_n(parts.as_ptr(), 2);
+            assert!(!combined.is_null());
+            assert_eq!(_string_count(combined), 10);
+            _free(ptr as *mut u8);
+            _free(extra);
+            _free(combined);
+        }
+    }
+}

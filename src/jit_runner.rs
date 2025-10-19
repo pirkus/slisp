@@ -95,6 +95,9 @@ fn resolve_runtime_symbol(addresses: &RuntimeAddresses, symbol: &str) -> Option<
         "_string_clone" => addresses.string_clone,
         "_string_get" => addresses.string_get,
         "_string_subs" => addresses.string_subs,
+        "_string_normalize" => addresses.string_normalize,
+        "_string_from_number" => addresses.string_from_number,
+        "_string_from_boolean" => addresses.string_from_boolean,
         _ => None,
     }
 }

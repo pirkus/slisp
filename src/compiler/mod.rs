@@ -15,9 +15,36 @@ pub use context::CompileContext;
 use crate::ast::Node;
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ValueKind {
+    Any,
+    Number,
+    Boolean,
+    String,
+    Nil,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompileResult {
+    pub instructions: Vec<IRInstruction>,
+    pub kind: ValueKind,
+    pub owns_heap: bool,
+}
+
+impl CompileResult {
+    pub fn with_instructions(instructions: Vec<IRInstruction>, kind: ValueKind) -> Self {
+        Self { instructions, kind, owns_heap: false }
+    }
+
+    pub fn with_heap_ownership(mut self, owns_heap: bool) -> Self {
+        self.owns_heap = owns_heap;
+        self
+    }
+}
+
 /// Determine if a symbol refers to a heap-allocated local variable in the current context.
 pub(crate) fn is_heap_allocated_symbol(name: &str, context: &CompileContext) -> bool {
-    context.get_variable(name).is_some() && context.is_heap_allocated(name)
+    (context.get_variable(name).is_some() || context.get_parameter(name).is_some()) && context.is_heap_allocated(name)
 }
 
 #[derive(Debug, PartialEq)]
@@ -33,8 +60,8 @@ pub enum CompileError {
 pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
     let mut program = IRProgram::new();
     let mut context = CompileContext::new();
-    let instructions = compile_node(node, &mut context, &mut program)?;
-    for instruction in instructions {
+    let result = compile_node(node, &mut context, &mut program)?;
+    for instruction in result.instructions {
         program.add_instruction(instruction);
     }
     program.add_instruction(IRInstruction::Return);
@@ -110,8 +137,8 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
             }
         }
 
-        let instructions = compile_node(expr, &mut context, &mut program)?;
-        for instruction in instructions {
+        let result = compile_node(expr, &mut context, &mut program)?;
+        for instruction in result.instructions {
             program.add_instruction(instruction);
         }
     }
@@ -124,14 +151,18 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
 }
 
 /// Compile a single AST node to IR
-pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
     match node {
         Node::Primitive { value } => expressions::compile_primitive(value, program),
         Node::Symbol { value } => {
-            if let Some(slot) = context.get_parameter(value) {
-                Ok(vec![IRInstruction::LoadParam(slot)])
+            if value == "nil" {
+                Ok(CompileResult::with_instructions(vec![IRInstruction::Push(0)], ValueKind::Nil))
+            } else if let Some(slot) = context.get_parameter(value) {
+                let kind = context.get_parameter_type(value).unwrap_or(ValueKind::Any);
+                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadParam(slot)], kind))
             } else if let Some(slot) = context.get_variable(value) {
-                Ok(vec![IRInstruction::LoadLocal(slot)])
+                let kind = context.get_variable_type(value).unwrap_or(ValueKind::Any);
+                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadLocal(slot)], kind))
             } else {
                 Err(CompileError::UndefinedVariable(value.clone()))
             }
@@ -142,79 +173,115 @@ pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &
 }
 
 /// Compile count operation (string length)
-fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
     if args.len() != 1 {
         return Err(CompileError::ArityError("count".to_string(), 1, args.len()));
     }
 
     // Compile the argument (should be a string)
-    let mut instructions = compile_node(&args[0], context, program)?;
+    let mut instructions = compile_node(&args[0], context, program)?.instructions;
 
     // Call _string_count runtime function (takes 1 arg: string pointer)
     instructions.push(IRInstruction::RuntimeCall("_string_count".to_string(), 1));
 
-    Ok(instructions)
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Number))
 }
 
 /// Compile get operation (string indexing)
-fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
     if args.len() != 2 {
         return Err(CompileError::ArityError("get".to_string(), 2, args.len()));
     }
 
-    let mut instructions = compile_node(&args[0], context, program)?;
-    instructions.extend(compile_node(&args[1], context, program)?);
+    let mut instructions = compile_node(&args[0], context, program)?.instructions;
+    instructions.extend(compile_node(&args[1], context, program)?.instructions);
     instructions.push(IRInstruction::RuntimeCall("_string_get".to_string(), 2));
 
-    Ok(instructions)
+    Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(true))
 }
 
 /// Compile subs operation (substring extraction)
-fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
     if args.len() < 2 || args.len() > 3 {
         return Err(CompileError::ArityError("subs".to_string(), 2, args.len()));
     }
 
-    let mut instructions = compile_node(&args[0], context, program)?;
-    instructions.extend(compile_node(&args[1], context, program)?);
+    let mut instructions = compile_node(&args[0], context, program)?.instructions;
+    instructions.extend(compile_node(&args[1], context, program)?.instructions);
 
     if args.len() == 3 {
-        instructions.extend(compile_node(&args[2], context, program)?);
+        instructions.extend(compile_node(&args[2], context, program)?.instructions);
     } else {
         instructions.push(IRInstruction::Push(-1));
     }
 
     instructions.push(IRInstruction::RuntimeCall("_string_subs".to_string(), 3));
 
-    Ok(instructions)
+    Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(true))
 }
 
 /// Compile str operation (string concatenation)
-fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
     if args.is_empty() {
-        return Ok(vec![IRInstruction::Push(0), IRInstruction::Push(0), IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2)]);
+        return Ok(CompileResult::with_instructions(
+            vec![IRInstruction::Push(0), IRInstruction::Push(0), IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2)],
+            ValueKind::String,
+        )
+        .with_heap_ownership(true));
     }
 
     let count = args.len();
     let mut instructions = Vec::new();
     let mut temp_slots = Vec::with_capacity(count);
+    let mut needs_free = vec![false; count];
 
     for _ in 0..count {
         temp_slots.push(context.allocate_temp_slot());
     }
 
     for (index, arg) in args.iter().enumerate() {
-        let mut arg_instructions = compile_node(arg, context, program)?;
-        if let Node::Symbol { value } = arg {
-            if is_heap_allocated_symbol(value, context) {
-                arg_instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
-            }
-        }
-        instructions.extend(arg_instructions);
+        let arg_result = compile_node(arg, context, program)?;
+        instructions.extend(arg_result.instructions);
 
         let slot_index = count - 1 - index;
         let slot = temp_slots[slot_index];
+
+        let mut slot_needs_free = arg_result.owns_heap;
+
+        match arg_result.kind {
+            ValueKind::String => {
+                let clone_flag = if let Node::Symbol { value } = arg {
+                    if is_heap_allocated_symbol(value, context) {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+                instructions.push(IRInstruction::Push(clone_flag));
+                instructions.push(IRInstruction::RuntimeCall("_string_normalize".to_string(), 2));
+                if clone_flag != 0 {
+                    slot_needs_free = true;
+                }
+            }
+            ValueKind::Nil => {
+                instructions.push(IRInstruction::Push(0));
+                instructions.push(IRInstruction::RuntimeCall("_string_normalize".to_string(), 2));
+                slot_needs_free = false;
+            }
+            ValueKind::Boolean => {
+                instructions.push(IRInstruction::RuntimeCall("_string_from_boolean".to_string(), 1));
+                slot_needs_free = false;
+            }
+            ValueKind::Number | ValueKind::Any => {
+                instructions.push(IRInstruction::RuntimeCall("_string_from_number".to_string(), 1));
+                slot_needs_free = true;
+            }
+        }
+
         instructions.push(IRInstruction::StoreLocal(slot));
+        needs_free[slot_index] = slot_needs_free;
     }
 
     let base_slot = temp_slots[count - 1];
@@ -222,17 +289,23 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
     instructions.push(IRInstruction::Push(count as i64));
     instructions.push(IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2));
 
+    for (slot, free) in temp_slots.iter().zip(needs_free.iter()) {
+        if *free {
+            instructions.push(IRInstruction::FreeLocal(*slot));
+        }
+    }
+
     for slot in temp_slots {
         context.release_temp_slot(slot);
     }
 
-    Ok(instructions)
+    Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(true))
 }
 
 /// Compile a list (function call or special form) to IR
-fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
     if nodes.is_empty() {
-        return Ok(vec![IRInstruction::Push(0)]);
+        return Ok(CompileResult::with_instructions(vec![IRInstruction::Push(0)], ValueKind::Nil));
     }
 
     let operator = &nodes[0];
@@ -254,7 +327,10 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
             "or" => expressions::compile_logical_or(args, context, program),
             "not" => expressions::compile_logical_not(args, context, program),
             "let" => bindings::compile_let(args, context, program),
-            "defn" => Ok(functions::compile_defn(args, context, program)?.0),
+            "defn" => {
+                let (instructions, _) = functions::compile_defn(args, context, program)?;
+                Ok(CompileResult::with_instructions(instructions, ValueKind::Nil))
+            }
             "count" => compile_count(args, context, program),
             "get" => compile_get(args, context, program),
             "subs" => compile_subs(args, context, program),
@@ -288,6 +364,12 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_boolean_literal() {
+        let program = compile_expression("true").unwrap();
+        assert_eq!(program.instructions, vec![IRInstruction::Push(1), IRInstruction::Return]);
+    }
+
+    #[test]
     fn test_compile_arithmetic() {
         let program = compile_expression("(+ 2 3)").unwrap();
         assert_eq!(program.instructions, vec![IRInstruction::Push(2), IRInstruction::Push(3), IRInstruction::Add, IRInstruction::Return]);
@@ -314,6 +396,8 @@ mod tests {
             program.instructions,
             vec![
                 IRInstruction::PushString(0),
+                IRInstruction::Push(0),
+                IRInstruction::RuntimeCall("_string_normalize".to_string(), 2),
                 IRInstruction::StoreLocal(0),
                 IRInstruction::PushLocalAddress(0),
                 IRInstruction::Push(1),
@@ -331,10 +415,16 @@ mod tests {
             program.instructions,
             vec![
                 IRInstruction::PushString(0),
+                IRInstruction::Push(0),
+                IRInstruction::RuntimeCall("_string_normalize".to_string(), 2),
                 IRInstruction::StoreLocal(2),
                 IRInstruction::PushString(1),
+                IRInstruction::Push(0),
+                IRInstruction::RuntimeCall("_string_normalize".to_string(), 2),
                 IRInstruction::StoreLocal(1),
                 IRInstruction::PushString(2),
+                IRInstruction::Push(0),
+                IRInstruction::RuntimeCall("_string_normalize".to_string(), 2),
                 IRInstruction::StoreLocal(0),
                 IRInstruction::PushLocalAddress(2),
                 IRInstruction::Push(3),
@@ -343,6 +433,61 @@ mod tests {
             ]
         );
         assert_eq!(program.string_literals, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn test_compile_str_with_number() {
+        let program = compile_expression("(str 42)").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::Push(42),
+                IRInstruction::RuntimeCall("_string_from_number".to_string(), 1),
+                IRInstruction::StoreLocal(0),
+                IRInstruction::PushLocalAddress(0),
+                IRInstruction::Push(1),
+                IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
+                IRInstruction::FreeLocal(0),
+                IRInstruction::Return,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_compile_str_with_boolean() {
+        let program = compile_expression("(str (= 1 1))").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::Push(1),
+                IRInstruction::Push(1),
+                IRInstruction::Equal,
+                IRInstruction::RuntimeCall("_string_from_boolean".to_string(), 1),
+                IRInstruction::StoreLocal(0),
+                IRInstruction::PushLocalAddress(0),
+                IRInstruction::Push(1),
+                IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
+                IRInstruction::Return,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_compile_str_with_nil() {
+        let program = compile_expression("(str ())").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::RuntimeCall("_string_normalize".to_string(), 2),
+                IRInstruction::StoreLocal(0),
+                IRInstruction::PushLocalAddress(0),
+                IRInstruction::Push(1),
+                IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
+                IRInstruction::Return,
+            ]
+        );
     }
 
     #[test]

@@ -142,7 +142,11 @@ impl AstParser {
         if let Ok(num) = buffer.parse::<usize>() {
             Node::new_number(num)
         } else {
-            Node::Symbol { value: buffer.to_string() }
+            match buffer {
+                "true" => Node::new_boolean(true),
+                "false" => Node::new_boolean(false),
+                _ => Node::Symbol { value: buffer.to_string() },
+            }
         }
     }
 }
@@ -190,6 +194,15 @@ mod tests {
     fn parse_single_symbol() {
         let parsed = AstParser::parse_sexp_new_domain(b"hello", &mut 0);
         assert_eq!(parsed, Node::Symbol { value: "hello".to_string() });
+    }
+
+    #[test]
+    fn parse_boolean_literal() {
+        let parsed_true = AstParser::parse_sexp_new_domain(b"true", &mut 0);
+        assert_eq!(parsed_true, Node::new_boolean(true));
+
+        let parsed_false = AstParser::parse_sexp_new_domain(b"false", &mut 0);
+        assert_eq!(parsed_false, Node::new_boolean(false));
     }
 
     #[test]

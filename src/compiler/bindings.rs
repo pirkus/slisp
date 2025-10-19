@@ -1,10 +1,10 @@
-use super::{CompileContext, CompileError};
+use super::{CompileContext, CompileError, CompileResult, ValueKind};
 /// Variable binding compilation (let expressions)
 use crate::ast::Node;
 use crate::ir::{IRInstruction, IRProgram};
 
 /// Compile a let binding expression
-pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<Vec<IRInstruction>, CompileError> {
+pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
     if args.len() != 2 {
         return Err(CompileError::ArityError("let".to_string(), 2, args.len()));
     }
@@ -30,41 +30,49 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
             _ => return Err(CompileError::InvalidExpression("let binding variables must be symbols".to_string())),
         };
 
-        // Check if the value expression produces a heap-allocated result
-        let is_heap_allocated = is_heap_allocating_expression(val_node);
-
-        let mut value_instructions = crate::compiler::compile_node(val_node, context, program)?;
+        let mut value_result = crate::compiler::compile_node(val_node, context, program)?;
 
         let mut cloned_from_existing = false;
         if let Node::Symbol { value } = val_node {
             if crate::compiler::is_heap_allocated_symbol(value, context) {
-                value_instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+                value_result.instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+                value_result.owns_heap = true;
                 cloned_from_existing = true;
             }
         }
 
-        instructions.extend(value_instructions);
+        instructions.extend(value_result.instructions);
 
         let slot = context.add_variable(var_name.clone());
         instructions.push(IRInstruction::StoreLocal(slot));
 
+        let value_kind = match value_result.kind {
+            ValueKind::Any if cloned_from_existing => ValueKind::String,
+            other => other,
+        };
+        context.set_variable_type(var_name, value_kind);
+
         // Mark variable as heap-allocated if needed
-        if is_heap_allocated || cloned_from_existing {
+        if value_result.owns_heap || cloned_from_existing {
             context.mark_heap_allocated(var_name);
         }
 
         added_variables.push(var_name.clone());
     }
 
-    let mut body_instructions = crate::compiler::compile_node(&args[1], context, program)?;
+    let mut body_result = crate::compiler::compile_node(&args[1], context, program)?;
+    let mut body_kind = body_result.kind;
 
     if let Node::Symbol { value } = &args[1] {
         if added_variables.iter().any(|name| name == value) && crate::compiler::is_heap_allocated_symbol(value, context) {
-            body_instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+            body_result.instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+            body_result.owns_heap = true;
+            body_kind = ValueKind::String;
         }
     }
 
-    instructions.extend(body_instructions);
+    let body_owns_heap = body_result.owns_heap;
+    instructions.extend(body_result.instructions);
 
     // Free heap-allocated variables before removing them from scope
     // Use FreeLocal to avoid pushing values onto stack and preserve return value in RAX
@@ -77,20 +85,5 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
 
     context.remove_variables(&added_variables);
 
-    Ok(instructions)
-}
-
-/// Check if an expression produces a heap-allocated result
-fn is_heap_allocating_expression(node: &Node) -> bool {
-    match node {
-        Node::List { root } if !root.is_empty() => {
-            // Check if it's a call to a heap-allocating function
-            if let Node::Symbol { value } = &root[0] {
-                matches!(value.as_str(), "str")
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
+    Ok(CompileResult::with_instructions(instructions, body_kind).with_heap_ownership(body_owns_heap))
 }

@@ -173,7 +173,19 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
     }
 
     // External runtime symbols
-    for runtime_symbol in ["_heap_init", "_allocate", "_free", "_string_count", "_string_concat_n", "_string_clone", "_string_get", "_string_subs"] {
+    for runtime_symbol in [
+        "_heap_init",
+        "_allocate",
+        "_free",
+        "_string_count",
+        "_string_concat_n",
+        "_string_clone",
+        "_string_get",
+        "_string_subs",
+        "_string_normalize",
+        "_string_from_number",
+        "_string_from_boolean",
+    ] {
         let id = obj.add_symbol(Symbol {
             name: runtime_symbol.as_bytes().to_vec(),
             value: 0,

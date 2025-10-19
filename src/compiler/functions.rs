@@ -1,4 +1,4 @@
-use super::{CompileContext, CompileError};
+use super::{CompileContext, CompileError, CompileResult, ValueKind};
 /// Function definition and call compilation
 use crate::ast::Node;
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
@@ -43,6 +43,12 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
 
     for (i, param_name) in param_names.iter().enumerate() {
         func_context.add_parameter(param_name.clone(), i);
+        if let Some(kind) = context.get_function_parameter_type(&func_name, i) {
+            func_context.set_parameter_type(param_name, kind);
+            if kind == ValueKind::String {
+                func_context.mark_heap_allocated(param_name);
+            }
+        }
     }
 
     let mut instructions = vec![IRInstruction::DefineFunction(
@@ -51,7 +57,9 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
         0, // Will be set by caller
     )];
 
-    instructions.extend(crate::compiler::compile_node(&args[2], &mut func_context, program)?);
+    let body_result = crate::compiler::compile_node(&args[2], &mut func_context, program)?;
+    let body_kind = body_result.kind;
+    instructions.extend(body_result.instructions);
     instructions.push(IRInstruction::Return);
 
     let func_info = FunctionInfo {
@@ -61,28 +69,34 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
         local_count: func_context.next_slot,
     };
 
+    // Propagate inferred return type back to parent context
+    context.set_function_return_type(&func_info.name, body_kind);
+
     Ok((instructions, func_info))
 }
 
 /// Compile a function call
-pub fn compile_function_call(func_name: &str, args: &[Node], context: &mut CompileContext, program: &mut IRProgram, expected_param_count: usize) -> Result<Vec<IRInstruction>, CompileError> {
+pub fn compile_function_call(func_name: &str, args: &[Node], context: &mut CompileContext, program: &mut IRProgram, expected_param_count: usize) -> Result<CompileResult, CompileError> {
     if args.len() != expected_param_count {
         return Err(CompileError::ArityError(func_name.to_string(), expected_param_count, args.len()));
     }
 
     let mut instructions = Vec::new();
 
-    for arg in args {
-        let mut arg_instructions = crate::compiler::compile_node(arg, context, program)?;
+    for (index, arg) in args.iter().enumerate() {
+        let mut arg_result = crate::compiler::compile_node(arg, context, program)?;
         if let Node::Symbol { value } = arg {
             if crate::compiler::is_heap_allocated_symbol(value, context) {
-                arg_instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+                arg_result.instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+                arg_result.owns_heap = true;
             }
         }
-        instructions.extend(arg_instructions);
+        context.record_function_parameter_type(func_name, index, arg_result.kind);
+        instructions.extend(arg_result.instructions);
     }
 
     instructions.push(IRInstruction::Call(func_name.to_string(), args.len()));
 
-    Ok(instructions)
+    // Without full type inference, assume any return kind for user-defined functions.
+    Ok(CompileResult::with_instructions(instructions, context.get_function_return_type(func_name).unwrap_or(ValueKind::Any)))
 }

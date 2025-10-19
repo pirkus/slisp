@@ -52,6 +52,9 @@ pub struct RuntimeAddresses {
     pub string_clone: Option<usize>,
     pub string_get: Option<usize>,
     pub string_subs: Option<usize>,
+    pub string_normalize: Option<usize>,
+    pub string_from_number: Option<usize>,
+    pub string_from_boolean: Option<usize>,
 }
 
 /// Code generation backend trait for different target architectures
