@@ -56,7 +56,11 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
   - ⏳ Expand `tests/programs/` to exercise branch-heavy lets, unused bindings, and nested frees so the new lifetime semantics stay regression-tested.
   - ✅ Prototype allocator telemetry (build flag + CLI toggle) to trace allocations/frees and validate reuse with new stress cases under `tests/programs/memory/`.
   - ⏳ Continue investigating lightweight shared ownership (e.g., ref counting) for future features that demand longer-lived sharing beyond clone-on-capture.
-- **6.4 Composite data structures (planned):** Heap-backed vectors, maps, and sets with associated primitives (`vec`, `conj`, `assoc`, etc.).
+- **6.4 Composite data structures (planned):**
+  - **6.4.1 Vector runtime primitives:** Design a heap-backed vector layout, add runtime helpers for create/access/clone/free, and surface interpreter support for `vec`, `count`, `get`, and `subs`-style slicing. Mirror string semantics: borrow on parameter/input paths, clone on return values so ownership stays explicit.
+  - **6.4.2 Compiler integration for vectors:** Extend IR/codegen to allocate vectors, lower vector literals, and emit ownership-aware frees while preserving the borrow-on-pass/clone-on-return rule; add regression programs that stress element churn and cross-function passes.
+  - **6.4.3 Maps and sets groundwork:** Establish common entry APIs (`assoc`, `dissoc`, `contains?`), choose hashing/equality semantics, and prototype interpreter implementations before porting to the compiler.
+  - **6.4.4 Spillover ergonomics:** Introduce destructuring helpers or higher-order utilities that lean on the new containers, and wire telemetry harnesses to capture allocator pressure under mixed workloads.
 - **6.5 Type inference pass (planned):** Introduce a dedicated analysis stage that walks the AST/IR to propagate `ValueKind`, reconcile function signatures, and emit diagnostics for ambiguous or unsupported combinations before code generation.
 
 ### Phase 7 – I/O and System Interaction 🗂️
@@ -77,7 +81,7 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
 ## Quality & Testing Safeguards
 - Unit/integration coverage across parser, evaluator, compiler, runtime, and executable outputs.
 - CircleCI workflow enforces warnings-as-errors and runs the full cargo test suite.
-- Use sample programs in `tests/programs/` to validate new runtime or compiler capabilities; memory-specific cases live under `tests/programs/memory/` with `scripts/run_valgrind_memory.sh` for leak checks.
+- Use sample programs in `tests/programs/` to validate new runtime or compiler capabilities; memory-specific cases live under `tests/programs/memory/` with `tests/programs/memory/run_allocator_telemetry.sh` capturing allocator traces.
 
 ## Working Agreements
 - Prioritise interpreter implementations before porting features to the compiler.

@@ -12,7 +12,7 @@
 - `cargo run` — start the interpreter REPL (`slisp` binary).
 - `cargo run -- --compile` — launch the compiler REPL with JIT evaluation.
 - `cargo run -- --compile [--keep-obj] -o <out> <file.slisp>` — emit an ELF executable; `--keep-obj` preserves the intermediate `.o` file.
-- `tests/programs/memory/run_valgrind_memory.sh` — compile the escaping-strings workload and execute it under Valgrind for leak checks.
+- `tests/programs/memory/run_allocator_telemetry.sh` — compile every memory workload with allocator telemetry enabled, run them under a timeout, and capture the runtime allocator report for each binary in `target/allocator_runs/logs/`.
 
 ## Coding Style & Naming Conventions
 - Rust 2021 edition with `rustfmt`; use the project’s `rustfmt.toml`. Run `cargo fmt` before committing.
@@ -24,7 +24,7 @@
 ## Testing Guidelines
 - Primary harness: `cargo test`. Add focused tests under `src/{module}/tests` or new fixtures in `tests/programs/`.
 - Name tests after the behaviour they assert (e.g., `test_clone_argument_for_function_call`).
-- For memory regressions, update or extend `tests/programs/memory/` and re-run `run_valgrind_memory.sh`.
+- For memory regressions, update or extend `tests/programs/memory/` and re-run `run_allocator_telemetry.sh` to generate fresh allocator traces.
 
 ## Commit & Pull Request Guidelines
 - Commit messages follow a single concise line in imperative voice (e.g., `Add runtime clone helper`), optionally amended with detailed body text.
