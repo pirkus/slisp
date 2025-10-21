@@ -61,7 +61,12 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
   - **6.4.2 Compiler integration for vectors:** Extend IR/codegen to allocate vectors, lower vector literals, and emit ownership-aware frees while preserving the borrow-on-pass/clone-on-return rule; add regression programs that stress element churn and cross-function passes.
   - **6.4.3 Maps and sets groundwork:** Establish common entry APIs (`assoc`, `dissoc`, `contains?`), choose hashing/equality semantics, and prototype interpreter implementations before porting to the compiler.
   - **6.4.4 Spillover ergonomics:** Introduce destructuring helpers or higher-order utilities that lean on the new containers, and wire telemetry harnesses to capture allocator pressure under mixed workloads.
-- **6.5 Type inference pass (planned):** Introduce a dedicated analysis stage that walks the AST/IR to propagate `ValueKind`, reconcile function signatures, and emit diagnostics for ambiguous or unsupported combinations before code generation.
+- **6.5 Type inference pass (planned):**
+  - **6.5.1 Analysis scaffolding:** Build a reusable analysis pipeline over the AST/IR that iterates until stable `ValueKind` assignments emerge for locals, parameters, and returns.
+  - **6.5.2 Constraint solving & propagation:** Encode primitive operations, runtime helpers, and composite data semantics as constraints; ensure borrowed/owned markers survive the pass so codegen can keep clone/free behaviour correct.
+  - **6.5.3 Diagnostics & UX:** Surface actionable errors for mismatched arity/types, ambiguous branches, and unsupported coercions, with location info that plugs into existing formatter/output.
+  - **6.5.4 Compiler integration:** Feed inferred kinds back into lowering (skipping redundant runtime conversions, tightening liveness frees) and gate code paths that still require fallbacks.
+  - **6.5.5 Test harness:** Add focused unit tests for the solver plus integration fixtures in `tests/programs/` that cover polymorphic functions, nested lets, and composite containers introduced in 6.4.
 
 ### Phase 7 – I/O and System Interaction 🗂️
 - **7.1 Terminal I/O:** `print`/`println`, stderr helpers, and simple formatting.

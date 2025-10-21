@@ -12,7 +12,7 @@
 - `cargo run` — start the interpreter REPL (`slisp` binary).
 - `cargo run -- --compile` — launch the compiler REPL with JIT evaluation.
 - `cargo run -- --compile [--keep-obj] -o <out> <file.slisp>` — emit an ELF executable; `--keep-obj` preserves the intermediate `.o` file.
-- `tests/programs/memory/run_allocator_telemetry.sh` — compile every memory workload with allocator telemetry enabled, run them under a timeout, and capture the runtime allocator report for each binary in `target/allocator_runs/logs/`.
+- `tests/programs/memory/run_allocator_telemetry.sh` — compile all memory workloads with allocator telemetry enabled and capture logs under `target/allocator_runs/logs/`.
 
 ## Coding Style & Naming Conventions
 - Rust 2021 edition with `rustfmt`; use the project’s `rustfmt.toml`. Run `cargo fmt` before committing.
@@ -32,4 +32,4 @@
   - Reference related issues or tasks when available.
   - Describe functional changes, testing performed, and any follow-up work.
   - Include screenshots or CLI transcripts only when behaviour is user-visible.
-- Ensure `cargo fmt` and `cargo test` pass locally before requesting review.
+- Document any new user-facing functionality in `README.md`, and ensure `cargo fmt` and `cargo test` pass locally before requesting review.
