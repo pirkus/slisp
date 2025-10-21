@@ -24,7 +24,7 @@
 ## Testing Guidelines
 - Primary harness: `cargo test`. Add focused tests under `src/{module}/tests` or new fixtures in `tests/programs/`.
 - Name tests after the behaviour they assert (e.g., `test_clone_argument_for_function_call`).
-- For memory regressions, update or extend `tests/programs/memory/` and re-run `run_allocator_telemetry.sh`.
+- For memory regressions, update or extend `tests/programs/memory/` and re-run `run_allocator_telemetry.sh` to generate fresh allocator traces.
 
 ## Commit & Pull Request Guidelines
 - Commit messages follow a single concise line in imperative voice (e.g., `Add runtime clone helper`), optionally amended with detailed body text.

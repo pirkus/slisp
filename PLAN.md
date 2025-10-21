@@ -86,7 +86,7 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
 ## Quality & Testing Safeguards
 - Unit/integration coverage across parser, evaluator, compiler, runtime, and executable outputs.
 - CircleCI workflow enforces warnings-as-errors and runs the full cargo test suite.
-- Use sample programs in `tests/programs/` to validate new runtime or compiler capabilities; memory-specific cases live under `tests/programs/memory/` with `scripts/run_valgrind_memory.sh` for leak checks.
+- Use sample programs in `tests/programs/` to validate new runtime or compiler capabilities; memory-specific cases live under `tests/programs/memory/` with `tests/programs/memory/run_allocator_telemetry.sh` capturing allocator traces.
 
 ## Working Agreements
 - Prioritise interpreter implementations before porting features to the compiler.
