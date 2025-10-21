@@ -76,8 +76,8 @@ Successfully compiled file 'tests/programs/functions/simple_add.slisp' to 'hello
 
 ## Developer Utilities
 
-- `scripts/run_valgrind_memory.sh` – Builds the `tests/programs/memory/escaping_strings.slisp` workload, runs it under Valgrind with leak checking, and retains the object file for further inspection.
-- `tests/programs/memory/churn_reuse.slisp`, `tests/programs/memory/mixed_sizes.slisp` – Stress workloads that exercise allocator reuse; run them with `--trace-alloc` to inspect telemetry.
+- `tests/programs/memory/run_allocator_telemetry.sh` – Compiles every memory workload with allocator telemetry enabled, runs each binary under a short timeout, and stores telemetry logs in `target/allocator_runs/logs/`.
+- `tests/programs/memory/churn_reuse.slisp`, `tests/programs/memory/mixed_sizes.slisp` – Stress workloads that exercise allocator reuse; inspect the logs produced by the telemetry harness for allocation/free patterns.
 
 ## Project Structure
 
