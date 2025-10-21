@@ -125,15 +125,16 @@ impl X86CodeGen {
         code
     }
 
-    pub fn generate_free_local_code(&mut self, slot: usize, current_pos: usize) -> Vec<u8> {
+    pub fn generate_free_local_code(&mut self, slot: usize, func_info: &FunctionInfo, current_pos: usize) -> Vec<u8> {
         let mut code = Vec::new();
 
         // Save RAX (might contain return value that we need to preserve)
         code.push(0x50); // push rax
 
-        // Load the pointer from local variable into rdi (arg for _free)
-        // Local variables are at rbp - 8*(slot+1)
-        let offset = 8 * (slot + 1);
+        // Load the pointer from local variable into rdi (arg for _free).
+        // Mirror the addressing scheme used by store/load helpers so we
+        // account for parameters that occupy stack space above the locals.
+        let offset = 8 * (func_info.param_count + slot + 1);
 
         // mov rdi, [rbp - offset]
         if offset <= 128 {
@@ -201,15 +202,16 @@ impl X86CodeGen {
         // Pass 2: Generate all functions with correct addresses now available
 
         let mut ordered_functions = Vec::new();
+        let entry_name = program.entry_point.clone();
 
-        if let Some(entry_name) = &program.entry_point {
+        if let Some(entry_name) = &entry_name {
             if let Some(entry_func) = program.functions.iter().find(|f| &f.name == entry_name) {
                 ordered_functions.push(entry_func.clone());
             }
         }
 
         for func_info in &program.functions {
-            if program.entry_point.as_ref() != Some(&func_info.name) {
+            if entry_name.as_ref() != Some(&func_info.name) {
                 ordered_functions.push(func_info.clone());
             }
         }
@@ -317,7 +319,7 @@ impl X86CodeGen {
 
             IRInstruction::FreeLocal(slot) => {
                 let current_pos = self.code.len();
-                self.generate_free_local_code(*slot, current_pos)
+                self.generate_free_local_code(*slot, func_info, current_pos)
             }
 
             IRInstruction::RuntimeCall(func_name, arg_count) => {
@@ -376,28 +378,37 @@ pub(super) fn compute_local_count(instructions: &[IRInstruction]) -> usize {
     max_slot.map_or(0, |slot| slot + 1)
 }
 
-pub(super) fn generate_entry_stub(entry_symbol: &str) -> (Vec<u8>, Vec<SymbolRelocation>) {
+fn append_runtime_call(code: &mut Vec<u8>, relocations: &mut Vec<SymbolRelocation>, symbol: &str) {
+    let call_site = code.len();
+    code.push(0xe8);
+    code.extend_from_slice(&0i32.to_le_bytes());
+    relocations.push(SymbolRelocation {
+        offset: call_site + 1,
+        symbol: symbol.to_string(),
+    });
+}
+
+pub(super) fn generate_entry_stub(entry_symbol: &str, telemetry_enabled: bool) -> (Vec<u8>, Vec<SymbolRelocation>) {
     let mut code = Vec::new();
     let mut relocations = Vec::new();
 
-    // call _heap_init
-    code.push(0xe8);
-    code.extend_from_slice(&0i32.to_le_bytes());
-    relocations.push(SymbolRelocation {
-        offset: 1,
-        symbol: "_heap_init".to_string(),
-    });
+    if telemetry_enabled {
+        append_runtime_call(&mut code, &mut relocations, "_allocator_telemetry_reset");
+        code.extend_from_slice(&[0xbf, 0x01, 0x00, 0x00, 0x00]); // mov edi, 1
+        append_runtime_call(&mut code, &mut relocations, "_allocator_telemetry_enable");
+    }
 
-    // call entry function
-    code.push(0xe8);
-    code.extend_from_slice(&0i32.to_le_bytes());
-    relocations.push(SymbolRelocation {
-        offset: 6,
-        symbol: entry_symbol.to_string(),
-    });
+    append_runtime_call(&mut code, &mut relocations, "_heap_init");
+    append_runtime_call(&mut code, &mut relocations, entry_symbol);
 
-    // mov rdi, rax
-    code.extend_from_slice(&[0x48, 0x89, 0xc7]);
+    if telemetry_enabled {
+        // Preserve return value then dump telemetry before exiting.
+        code.extend_from_slice(&[0x48, 0x89, 0xc3]); // mov rbx, rax
+        append_runtime_call(&mut code, &mut relocations, "_allocator_telemetry_dump_stdout");
+        code.extend_from_slice(&[0x48, 0x89, 0xdf]); // mov rdi, rbx
+    } else {
+        code.extend_from_slice(&[0x48, 0x89, 0xc7]); // mov rdi, rax
+    }
 
     // mov rax, 60
     code.extend_from_slice(&[0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00]);

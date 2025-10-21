@@ -7,11 +7,12 @@ use std::fs;
 use std::process::Command;
 
 /// Compile a .slisp file to an executable
-pub fn compile_file_to_executable(input_file: &str, output_file: &str, keep_object_file: bool) -> Result<(), String> {
+pub fn compile_file_to_executable(input_file: &str, output_file: &str, keep_object_file: bool, trace_allocations: bool) -> Result<(), String> {
     let file_content = fs::read_to_string(input_file).map_err(|e| format!("Failed to read file '{}': {}", input_file, e))?;
 
     let expressions = parse_file(&file_content)?;
-    let ir_program = compile_program(&expressions).map_err(|e| format_compile_error(&e))?;
+    let mut ir_program = compile_program(&expressions).map_err(|e| format_compile_error(&e))?;
+    ir_program.telemetry_enabled = trace_allocations;
 
     let target = detect_host_target();
     let object = compile_to_object(&ir_program, target);

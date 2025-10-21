@@ -207,6 +207,56 @@ impl CompileContext {
         }
     }
 
+    /// Allocate a set of temporary slots that occupy consecutive positions.
+    ///
+    /// This is required for operations that treat locals as an array (e.g.
+    /// building the pointer list for `_string_concat_n`). The allocator reuses
+    /// contiguous runs from `free_slots` when possible and falls back to carving
+    /// out a fresh block.
+    pub fn allocate_contiguous_temp_slots(&mut self, count: usize) -> Vec<usize> {
+        if count == 0 {
+            return Vec::new();
+        }
+
+        if count == 1 {
+            return vec![self.allocate_temp_slot()];
+        }
+
+        if self.free_slots.len() >= count {
+            let mut popped = Vec::with_capacity(count);
+            for _ in 0..count {
+                if let Some(slot) = self.free_slots.pop() {
+                    popped.push(slot);
+                } else {
+                    break;
+                }
+            }
+
+            if popped.len() == count {
+                let mut sorted = popped.clone();
+                sorted.sort_unstable();
+                let contiguous = sorted.windows(2).all(|window| window[1] == window[0] + 1);
+                if contiguous {
+                    return sorted;
+                }
+
+                // Not contiguous – restore the slots for future reuse.
+                for slot in popped.into_iter().rev() {
+                    self.free_slots.push(slot);
+                }
+            } else {
+                // Ran out of free slots; restore any we popped.
+                for slot in popped.into_iter().rev() {
+                    self.free_slots.push(slot);
+                }
+            }
+        }
+
+        let start = self.next_slot;
+        self.next_slot += count;
+        (start..start + count).collect()
+    }
+
     /// Return a temporary slot to the pool for reuse.
     pub fn release_temp_slot(&mut self, slot: usize) {
         self.free_slots.push(slot);
@@ -264,5 +314,34 @@ mod tests {
         assert!(function_context.free_slots.is_empty());
         assert_eq!(function_context.next_slot, 0);
         assert_eq!(function_context.functions, context.functions);
+    }
+
+    #[test]
+    fn contiguous_temp_slots_reuse_and_extend() {
+        let mut context = CompileContext::new();
+
+        // Fresh allocation should yield consecutive slots starting at zero.
+        let first = context.allocate_contiguous_temp_slots(3);
+        assert_eq!(first, vec![0, 1, 2]);
+
+        for slot in first.iter().rev() {
+            context.release_temp_slot(*slot);
+        }
+
+        // Reusing should pick the freed run instead of extending the frame.
+        let second = context.allocate_contiguous_temp_slots(3);
+        assert_eq!(second, vec![0, 1, 2]);
+
+        for slot in second.iter().rev() {
+            context.release_temp_slot(*slot);
+        }
+
+        // Simulate fragmented free slots; expect a fresh contiguous block.
+        context.free_slots.clear();
+        context.free_slots.extend([0, 2, 4]);
+        context.next_slot = 6;
+
+        let third = context.allocate_contiguous_temp_slots(2);
+        assert_eq!(third, vec![6, 7]);
     }
 }

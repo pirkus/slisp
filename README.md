@@ -19,6 +19,8 @@ cargo run          # Start the default interpreter REPL
 - `slisp` – Launch the interpreter REPL.
 - `slisp --compile` – Launch the compiler REPL which JITs expressions to machine code before running them.
 - `slisp --compile [--keep-obj] -o <output> <file.slisp>` – Compile a `.slisp`/`.lisp` file that defines `(-main ...)` into a native executable; pass `--keep-obj` to retain the intermediate object file for inspection.
+- `slisp --compile --trace-alloc` – Emit allocator telemetry logs in the compiler REPL (build with `--features allocator-telemetry`).
+- `slisp --compile --trace-alloc [--keep-obj] -o <output> <file.slisp>` – Compile to an executable that prints allocator telemetry to stdout on exit.
 
 ## Supported Functionality
 
@@ -75,6 +77,7 @@ Successfully compiled file 'tests/programs/functions/simple_add.slisp' to 'hello
 ## Developer Utilities
 
 - `scripts/run_valgrind_memory.sh` – Builds the `tests/programs/memory/escaping_strings.slisp` workload, runs it under Valgrind with leak checking, and retains the object file for further inspection.
+- `tests/programs/memory/churn_reuse.slisp`, `tests/programs/memory/mixed_sizes.slisp` – Stress workloads that exercise allocator reuse; run them with `--trace-alloc` to inspect telemetry.
 
 ## Project Structure
 

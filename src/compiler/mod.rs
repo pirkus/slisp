@@ -329,23 +329,32 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
 
     let count = args.len();
     let mut instructions = Vec::new();
-    let mut temp_slots = Vec::with_capacity(count);
-    let mut needs_free = vec![false; count];
+    let temp_slots = context.allocate_contiguous_temp_slots(count);
+    let mut ordered_slots = temp_slots.clone();
+    ordered_slots.sort_unstable();
+    ordered_slots.reverse();
 
-    for _ in 0..count {
-        temp_slots.push(context.allocate_temp_slot());
-    }
+    let mut needs_free = Vec::with_capacity(count);
 
-    for (index, arg) in args.iter().enumerate() {
+    for (arg, slot) in args.iter().zip(ordered_slots.iter()) {
         let arg_result = compile_node(arg, context, program)?;
         instructions.extend(arg_result.instructions);
 
-        let slot_index = count - 1 - index;
-        let slot = temp_slots[slot_index];
-
         let mut slot_needs_free = arg_result.heap_ownership == HeapOwnership::Owned;
 
-        match arg_result.kind {
+        let mut arg_kind = arg_result.kind;
+        if arg_kind == ValueKind::Any {
+            if let Node::Symbol { value } = arg {
+                if is_heap_allocated_symbol(value, context) {
+                    arg_kind = ValueKind::String;
+                } else if context.get_parameter(value).is_some() {
+                    context.mark_heap_allocated(value);
+                    arg_kind = ValueKind::String;
+                }
+            }
+        }
+
+        match arg_kind {
             ValueKind::String => {
                 let clone_flag = if let Node::Symbol { value } = arg {
                     if is_heap_allocated_symbol(value, context) {
@@ -377,16 +386,16 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
             }
         }
 
-        instructions.push(IRInstruction::StoreLocal(slot));
-        needs_free[slot_index] = slot_needs_free;
+        instructions.push(IRInstruction::StoreLocal(*slot));
+        needs_free.push(slot_needs_free);
     }
 
-    let base_slot = temp_slots[count - 1];
+    let base_slot = ordered_slots[0];
     instructions.push(IRInstruction::PushLocalAddress(base_slot));
     instructions.push(IRInstruction::Push(count as i64));
     instructions.push(IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2));
 
-    for (slot, free) in temp_slots.iter().zip(needs_free.iter()) {
+    for (slot, free) in ordered_slots.iter().zip(needs_free.iter()) {
         if *free {
             instructions.push(IRInstruction::FreeLocal(*slot));
         }

@@ -102,7 +102,7 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
 
     let entry_offset = generated.function_addresses.get(&entry_symbol_name).copied().unwrap_or(0);
 
-    let (stub_code, mut stub_relocs) = generate_entry_stub(&entry_symbol_name);
+    let (stub_code, mut stub_relocs) = generate_entry_stub(&entry_symbol_name, program.telemetry_enabled);
     let stub_len = stub_code.len();
 
     let mut text = Vec::new();
@@ -173,7 +173,7 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
     }
 
     // External runtime symbols
-    for runtime_symbol in [
+    let mut runtime_symbols = vec![
         "_heap_init",
         "_allocate",
         "_free",
@@ -185,7 +185,15 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
         "_string_normalize",
         "_string_from_number",
         "_string_from_boolean",
-    ] {
+    ];
+
+    if program.telemetry_enabled {
+        runtime_symbols.push("_allocator_telemetry_reset");
+        runtime_symbols.push("_allocator_telemetry_enable");
+        runtime_symbols.push("_allocator_telemetry_dump_stdout");
+    }
+
+    for runtime_symbol in runtime_symbols {
         let id = obj.add_symbol(Symbol {
             name: runtime_symbol.as_bytes().to_vec(),
             value: 0,

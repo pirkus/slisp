@@ -1,4 +1,5 @@
 /// REPL (Read-Eval-Print-Loop) for both interpreter and compiler modes
+use crate::allocator_trace;
 use crate::ast::{AstParser, AstParserTrt};
 use crate::codegen::{compile_to_executable, detect_host_target};
 use crate::compiler::{compile_to_ir, CompileError};
@@ -11,8 +12,28 @@ pub enum ExecutionMode {
     Compile,
 }
 
+#[derive(Clone, Copy)]
+pub struct ReplOptions {
+    pub trace_allocations: bool,
+}
+
+impl Default for ReplOptions {
+    fn default() -> Self {
+        Self { trace_allocations: false }
+    }
+}
+
+pub struct ExecutionResult {
+    pub value: i64,
+    pub telemetry_log: Option<String>,
+}
+
 /// Main REPL loop
-pub fn repl_loop(mode: ExecutionMode) {
+pub fn repl_loop(mode: ExecutionMode, options: ReplOptions) {
+    if let ExecutionMode::Compile = mode {
+        allocator_trace::set_enabled(options.trace_allocations);
+    }
+
     loop {
         match mode {
             ExecutionMode::Interpret => print!("slisp> "),
@@ -39,8 +60,13 @@ pub fn repl_loop(mode: ExecutionMode) {
                         Ok(value) => println!("{}", format_value(&value)),
                         Err(error) => println!("Error: {}", format_error(&error)),
                     },
-                    ExecutionMode::Compile => match parse_compile_and_execute(input) {
-                        Ok(result) => println!("{}", result),
+                    ExecutionMode::Compile => match parse_compile_and_execute(input, &options) {
+                        Ok(result) => {
+                            println!("{}", result.value);
+                            if let Some(report) = result.telemetry_log {
+                                print!("{}", report);
+                            }
+                        }
                         Err(error) => println!("Error: {}", error),
                     },
                 }
@@ -50,6 +76,10 @@ pub fn repl_loop(mode: ExecutionMode) {
                 break;
             }
         }
+    }
+
+    if let ExecutionMode::Compile = mode {
+        allocator_trace::set_enabled(false);
     }
 }
 
@@ -63,7 +93,7 @@ fn parse_and_eval(input: &str) -> Result<Value, EvalError> {
     }
 }
 
-fn parse_compile_and_execute(input: &str) -> Result<i64, String> {
+fn parse_compile_and_execute(input: &str, options: &ReplOptions) -> Result<ExecutionResult, String> {
     let ast = match std::panic::catch_unwind(|| AstParser::parse_sexp_new_domain(input.as_bytes(), &mut 0)) {
         Ok(ast) => ast,
         Err(_) => return Err("Parse error: malformed expression".to_string()),
@@ -77,8 +107,14 @@ fn parse_compile_and_execute(input: &str) -> Result<i64, String> {
     let target = detect_host_target();
     let artifact = compile_to_executable(&ir_program, target);
 
-    let result = JitRunner::exec_artifact(&artifact);
-    Ok(result as i64)
+    if options.trace_allocations {
+        allocator_trace::prepare_run();
+    }
+
+    let result = JitRunner::exec_artifact(&artifact) as i64;
+    let telemetry_log = if options.trace_allocations { allocator_trace::collect_report() } else { None };
+
+    Ok(ExecutionResult { value: result, telemetry_log })
 }
 
 fn format_value(value: &Value) -> String {

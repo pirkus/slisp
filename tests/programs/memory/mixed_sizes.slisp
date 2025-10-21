@@ -1,0 +1,14 @@
+(defn build-string [prefix suffix]
+  (let [base (str prefix "-" suffix)
+        doubled (str base base)
+        window (subs doubled 0 (count doubled))]
+    (str window "-" prefix)))
+
+(defn churn-mixed []
+  (let [a (build-string "tiny" "1")
+        b (build-string "medium" "payload")
+        c (build-string "longer-prefix" "tail")]
+    (count (str a b c))))
+
+(defn -main []
+  (+ (churn-mixed) (+ (churn-mixed) (churn-mixed))))

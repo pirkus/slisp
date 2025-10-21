@@ -62,6 +62,7 @@ pub struct IRProgram {
     pub functions: Vec<FunctionInfo>,
     pub entry_point: Option<String>,  // Name of the main function
     pub string_literals: Vec<String>, // String literals in the program
+    pub telemetry_enabled: bool,
 }
 
 impl IRProgram {
@@ -71,6 +72,7 @@ impl IRProgram {
             functions: Vec::new(),
             entry_point: None,
             string_literals: Vec::new(),
+            telemetry_enabled: false,
         }
     }
 
