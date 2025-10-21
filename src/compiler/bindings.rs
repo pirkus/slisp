@@ -9,8 +9,6 @@ use std::collections::HashSet;
 struct BindingInfo {
     slot: usize,
     owns_heap: bool,
-    store_index: usize,
-    freed_immediately: bool,
 }
 
 /// Compile a let binding expression
@@ -72,8 +70,6 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
         binding_infos.push(BindingInfo {
             slot,
             owns_heap: value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing,
-            store_index: instructions.len() - 1,
-            freed_immediately: false,
         });
     }
 
@@ -90,21 +86,9 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
 
     let mut body_instructions = body_result.instructions;
 
-    let owned_slots: HashSet<usize> = binding_infos.iter().filter(|info| info.owns_heap).map(|info| info.slot).collect();
+    let mut freed_on_all_paths: HashSet<usize> = HashSet::new();
 
-    let slots_used = collect_slot_usage_basic(&body_instructions, &owned_slots);
-
-    for info in binding_infos.iter_mut().filter(|info| info.owns_heap) {
-        if !slots_used.contains(&info.slot) {
-            // Value never used; free immediately instead of storing in a local slot.
-            instructions[info.store_index] = IRInstruction::Free;
-            info.freed_immediately = true;
-        }
-    }
-
-    let mut freed_on_all_paths: HashSet<usize> = binding_infos.iter().filter(|info| info.owns_heap && info.freed_immediately).map(|info| info.slot).collect();
-
-    let tracked_slots_for_plan: HashSet<usize> = binding_infos.iter().filter(|info| info.owns_heap && !info.freed_immediately).map(|info| info.slot).collect();
+    let tracked_slots_for_plan: HashSet<usize> = binding_infos.iter().filter(|info| info.owns_heap).map(|info| info.slot).collect();
 
     if !tracked_slots_for_plan.is_empty() {
         let plan = compute_liveness_plan(&body_instructions, &tracked_slots_for_plan);
@@ -127,16 +111,4 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
     context.remove_variables(&added_variables);
 
     Ok(CompileResult::with_instructions(instructions, body_kind).with_heap_ownership(body_result.heap_ownership))
-}
-
-fn collect_slot_usage_basic(instructions: &[IRInstruction], tracked: &HashSet<usize>) -> HashSet<usize> {
-    let mut used = HashSet::new();
-    for inst in instructions {
-        if let IRInstruction::LoadLocal(slot) | IRInstruction::PushLocalAddress(slot) = inst {
-            if tracked.contains(slot) {
-                used.insert(*slot);
-            }
-        }
-    }
-    used
 }

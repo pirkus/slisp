@@ -54,7 +54,7 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
 - ✅ Wire the shared liveness planner into other heap-owning sites (e.g., string helpers outside `let`) so redundant frees disappear across the compiler.
   - ⏳ Require closures (interpreter/JIT only for now) to clone any captured values up front, keeping borrow rules simple while preventing dangling references when frames unwind.
   - ⏳ Expand `tests/programs/` to exercise branch-heavy lets, unused bindings, and nested frees so the new lifetime semantics stay regression-tested.
-  - ⏳ Prototype allocator telemetry (build flag + CLI toggle) to trace allocations/frees and validate reuse with new stress cases under `tests/programs/memory/`.
+  - ✅ Prototype allocator telemetry (build flag + CLI toggle) to trace allocations/frees and validate reuse with new stress cases under `tests/programs/memory/`.
   - ⏳ Continue investigating lightweight shared ownership (e.g., ref counting) for future features that demand longer-lived sharing beyond clone-on-capture.
 - **6.4 Composite data structures (planned):** Heap-backed vectors, maps, and sets with associated primitives (`vec`, `conj`, `assoc`, etc.).
 - **6.5 Type inference pass (planned):** Introduce a dedicated analysis stage that walks the AST/IR to propagate `ValueKind`, reconcile function signatures, and emit diagnostics for ambiguous or unsupported combinations before code generation.

@@ -1,0 +1,15 @@
+(defn churn-batch [tag]
+  (let [seed (str "seed-" tag)
+        long (str seed "-payload-" seed)
+        alias (str long)
+        sliced (subs alias 0 (count alias))
+        final (str alias sliced)]
+    (count final)))
+
+(defn -main []
+  (let [a (churn-batch "alpha")
+        b (churn-batch "beta")
+        c (churn-batch "gamma")
+        d (churn-batch "delta")
+        e (churn-batch "epsilon")]
+    (+ (+ a b) (+ (+ c d) e))))

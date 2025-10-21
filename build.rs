@@ -23,6 +23,7 @@ fn main() {
 
     let mut command = Command::new(&cargo);
     let runtime_target_dir = manifest_dir.join("target").join("runtime-build");
+    let telemetry_enabled = env::var("CARGO_FEATURE_ALLOCATOR_TELEMETRY").is_ok();
 
     command
         .current_dir(&manifest_dir)
@@ -32,6 +33,10 @@ fn main() {
         .env_remove("MAKEFLAGS")
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .args(["build", "-p", "slisp-runtime", "--no-default-features"]);
+
+    if telemetry_enabled {
+        command.args(["--features", "telemetry"]);
+    }
 
     match profile.as_str() {
         "release" => {
