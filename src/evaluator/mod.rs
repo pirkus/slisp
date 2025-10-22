@@ -14,6 +14,7 @@ pub enum Value {
     Number(isize),
     Boolean(bool),
     String(String),
+    Vector(Vec<Value>),
     Nil,
     Function {
         params: Vec<String>,
@@ -101,6 +102,7 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
             "count" => primitives::eval_count(args, env),
             "get" => primitives::eval_get(args, env),
             "subs" => primitives::eval_subs(args, env),
+            "vec" => primitives::eval_vec(args, env),
             op => {
                 if let Some(func_value) = env.get(op) {
                     special_forms::eval_function_call(func_value.clone(), args, env)
@@ -116,8 +118,12 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
     }
 }
 
-fn eval_vector(_nodes: &[Node], _env: &Environment) -> Result<Value, EvalError> {
-    Ok(Value::Nil)
+fn eval_vector(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    let mut values = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        values.push(eval_with_env(node, env)?);
+    }
+    Ok(Value::Vector(values))
 }
 
 #[cfg(test)]
@@ -512,5 +518,40 @@ mod tests {
     fn test_string_in_conditionals() {
         assert_eq!(parse_and_eval("(if (= (count \"hi\") 2) \"yes\" \"no\")"), Ok(Value::String("yes".to_string())));
         assert_eq!(parse_and_eval("(if (= (get \"abc\" 0) \"a\") 1 0)"), Ok(Value::Number(1)));
+    }
+
+    #[test]
+    fn test_vector_literal() {
+        assert_eq!(parse_and_eval("[1 2 3]"), Ok(Value::Vector(vec![Value::Number(1), Value::Number(2), Value::Number(3)])));
+    }
+
+    #[test]
+    fn test_vec_function() {
+        assert_eq!(parse_and_eval("(vec 1 2 (+ 1 1))"), Ok(Value::Vector(vec![Value::Number(1), Value::Number(2), Value::Number(2)])));
+    }
+
+    #[test]
+    fn test_count_vector() {
+        assert_eq!(parse_and_eval("(count [1 2 3])"), Ok(Value::Number(3)));
+        assert_eq!(parse_and_eval("(count (vec))"), Ok(Value::Number(0)));
+    }
+
+    #[test]
+    fn test_get_vector() {
+        assert_eq!(parse_and_eval("(get [10 20 30] 1)"), Ok(Value::Number(20)));
+        assert_eq!(parse_and_eval("(get [10 20] 5)"), Ok(Value::Nil));
+        assert_eq!(parse_and_eval("(get [10 20] 5 99)"), Ok(Value::Number(99)));
+    }
+
+    #[test]
+    fn test_subs_vector() {
+        assert_eq!(parse_and_eval("(subs [1 2 3 4] 1 3)"), Ok(Value::Vector(vec![Value::Number(2), Value::Number(3)])));
+        assert_eq!(parse_and_eval("(subs [1 2 3 4] 2)"), Ok(Value::Vector(vec![Value::Number(3), Value::Number(4)])));
+    }
+
+    #[test]
+    fn test_str_vector() {
+        assert_eq!(parse_and_eval("(str [1 2])"), Ok(Value::String("[1 2]".to_string())));
+        assert_eq!(parse_and_eval("(str (vec))"), Ok(Value::String("[]".to_string())));
     }
 }

@@ -4,7 +4,8 @@
 extern crate std;
 
 use core::arch::asm;
-use core::ptr::null_mut;
+use core::mem::size_of;
+use core::ptr::{copy_nonoverlapping, null_mut};
 
 const HEAP_SIZE: usize = 1 << 20; // 1MB
 const PROT_READ: usize = 0x1;
@@ -32,6 +33,45 @@ static mut HEAP_INITIALIZED: bool = false;
 static TRUE_LITERAL: [u8; 5] = *b"true\0";
 static FALSE_LITERAL: [u8; 6] = *b"false\0";
 static NIL_LITERAL: [u8; 4] = *b"nil\0";
+
+#[repr(C)]
+struct VectorHeader {
+    length: u64,
+    capacity: u64,
+}
+
+#[inline]
+fn vector_allocation_size(len: usize) -> Option<usize> {
+    let header = size_of::<VectorHeader>();
+    len.checked_mul(size_of::<i64>())?.checked_add(header)
+}
+
+#[inline]
+unsafe fn vector_data_ptr(vec: *const VectorHeader) -> *const i64 {
+    (vec as *const u8).add(size_of::<VectorHeader>()) as *const i64
+}
+
+#[inline]
+unsafe fn vector_data_ptr_mut(vec: *mut VectorHeader) -> *mut i64 {
+    (vec as *mut u8).add(size_of::<VectorHeader>()) as *mut i64
+}
+
+unsafe fn vector_allocate(len: usize) -> *mut VectorHeader {
+    match vector_allocation_size(len) {
+        Some(total) => {
+            let raw = _allocate(total as u64);
+            if raw.is_null() {
+                null_mut()
+            } else {
+                let header = raw as *mut VectorHeader;
+                (*header).length = len as u64;
+                (*header).capacity = len as u64;
+                header
+            }
+        }
+        None => null_mut(),
+    }
+}
 
 #[cfg(feature = "telemetry")]
 mod telemetry {
@@ -550,6 +590,176 @@ pub unsafe extern "C" fn _free(ptr: *mut u8) {
 
 /// # Safety
 ///
+/// The caller must ensure that `elements` either points to at least `count` 64-bit values
+/// previously allocated by the caller or is null when `count` is zero. The returned vector
+/// resides in the managed heap and must be released with `_vector_free`.
+#[no_mangle]
+pub unsafe extern "C" fn _vector_create(elements: *const i64, count: u64) -> *mut u8 {
+    if count > usize::MAX as u64 {
+        return null_mut();
+    }
+
+    let len = count as usize;
+    let vector = vector_allocate(len);
+    if vector.is_null() {
+        return null_mut();
+    }
+
+    if len > 0 {
+        let dst = vector_data_ptr_mut(vector);
+        if elements.is_null() {
+            let mut idx = 0;
+            while idx < len {
+                *dst.add(idx) = 0;
+                idx += 1;
+            }
+        } else {
+            copy_nonoverlapping(elements, dst, len);
+        }
+    }
+
+    vector as *mut u8
+}
+
+/// # Safety
+///
+/// The caller must ensure that `vec` is either null or points to a vector created by the
+/// runtime. Passing arbitrary pointers results in undefined behavior.
+#[no_mangle]
+pub unsafe extern "C" fn _vector_count(vec: *const u8) -> u64 {
+    if vec.is_null() {
+        return 0;
+    }
+    let header = vec as *const VectorHeader;
+    (*header).length
+}
+
+/// # Safety
+///
+/// The caller must ensure that `vec` is either null or points to a managed vector and that `out`
+/// is either null or writable. When the index lies outside the bounds of the vector, the function
+/// returns 0 without writing to `out`. On success it stores the element value into `out` and
+/// returns 1.
+#[no_mangle]
+pub unsafe extern "C" fn _vector_get(vec: *const u8, index: i64, out: *mut i64) -> i64 {
+    if vec.is_null() || out.is_null() || index < 0 {
+        return 0;
+    }
+
+    let header = vec as *const VectorHeader;
+
+    if (*header).length > usize::MAX as u64 {
+        return 0;
+    }
+
+    let len = (*header).length as usize;
+    let idx = index as usize;
+    if idx >= len {
+        return 0;
+    }
+
+    let data = vector_data_ptr(header);
+    *out = *data.add(idx);
+    1
+}
+
+/// # Safety
+///
+/// The caller must ensure that `vec` is either null or points to a managed vector. The returned
+/// vector owns its storage and must be released with `_vector_free`.
+#[no_mangle]
+pub unsafe extern "C" fn _vector_slice(vec: *const u8, start: i64, end: i64) -> *mut u8 {
+    if vec.is_null() || start < 0 {
+        return null_mut();
+    }
+
+    let header = vec as *const VectorHeader;
+
+    if (*header).length > usize::MAX as u64 {
+        return null_mut();
+    }
+
+    let len = (*header).length as usize;
+    let start_idx = start as usize;
+    if start_idx > len {
+        return null_mut();
+    }
+
+    let end_idx = if end < 0 {
+        len
+    } else if end < start {
+        return null_mut();
+    } else {
+        let end_usize = end as usize;
+        if end_usize > len {
+            return null_mut();
+        }
+        end_usize
+    };
+
+    if start_idx > end_idx {
+        return null_mut();
+    }
+
+    let slice_len = end_idx - start_idx;
+    let new_vec = vector_allocate(slice_len);
+    if new_vec.is_null() {
+        return null_mut();
+    }
+
+    if slice_len > 0 {
+        let src = vector_data_ptr(header);
+        let dst = vector_data_ptr_mut(new_vec);
+        copy_nonoverlapping(src.add(start_idx), dst, slice_len);
+    }
+
+    new_vec as *mut u8
+}
+
+/// # Safety
+///
+/// The caller must ensure that `vec` is either null or points to a managed vector. The returned
+/// vector owns its storage and must be released with `_vector_free`.
+#[no_mangle]
+pub unsafe extern "C" fn _vector_clone(vec: *const u8) -> *mut u8 {
+    if vec.is_null() {
+        return null_mut();
+    }
+
+    let header = vec as *const VectorHeader;
+
+    if (*header).length > usize::MAX as u64 {
+        return null_mut();
+    }
+
+    let len = (*header).length as usize;
+    let new_vec = vector_allocate(len);
+    if new_vec.is_null() {
+        return null_mut();
+    }
+
+    if len > 0 {
+        let src = vector_data_ptr(header);
+        let dst = vector_data_ptr_mut(new_vec);
+        copy_nonoverlapping(src, dst, len);
+    }
+
+    new_vec as *mut u8
+}
+
+/// # Safety
+///
+/// The caller must ensure that `vec` is either null or points to a vector returned by the runtime.
+#[no_mangle]
+pub unsafe extern "C" fn _vector_free(vec: *mut u8) {
+    if vec.is_null() {
+        return;
+    }
+    _free(vec);
+}
+
+/// # Safety
+///
 /// The caller must ensure that `ptr` is either null or points to a valid
 /// NUL-terminated UTF-8 byte sequence. Passing a non-terminated or dangling pointer
 /// causes the function to read beyond the allocation, resulting in undefined behavior.
@@ -946,6 +1156,39 @@ mod tests {
             _free(ptr as *mut u8);
             _free(extra);
             _free(combined);
+        }
+    }
+
+    #[test]
+    fn vector_runtime_roundtrip() {
+        unsafe {
+            let values = [1i64, 2, 3, 4];
+            let vec_ptr = _vector_create(values.as_ptr(), values.len() as u64);
+            assert!(!vec_ptr.is_null());
+            assert_eq!(_vector_count(vec_ptr), 4);
+
+            let mut out = 0i64;
+            assert_eq!(_vector_get(vec_ptr, 2, &mut out), 1);
+            assert_eq!(out, 3);
+
+            let clone_ptr = _vector_clone(vec_ptr);
+            assert!(!clone_ptr.is_null());
+            assert_eq!(_vector_count(clone_ptr), 4);
+            assert_eq!(_vector_get(clone_ptr, 1, &mut out), 1);
+            assert_eq!(out, 2);
+
+            let slice_ptr = _vector_slice(vec_ptr, 1, 3);
+            assert!(!slice_ptr.is_null());
+            assert_eq!(_vector_count(slice_ptr), 2);
+            assert_eq!(_vector_get(slice_ptr, 0, &mut out), 1);
+            assert_eq!(out, 2);
+            assert_eq!(_vector_get(slice_ptr, 1, &mut out), 1);
+            assert_eq!(out, 3);
+            assert_eq!(_vector_get(slice_ptr, 2, &mut out), 0);
+
+            _vector_free(slice_ptr);
+            _vector_free(clone_ptr);
+            _vector_free(vec_ptr);
         }
     }
 }
