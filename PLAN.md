@@ -52,8 +52,7 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
 - ✅ Adopt "borrowed argument, owned return" semantics so callees receive pointers without cloning while callers stay responsible for frees.
 - ✅ Insert liveness-aware `FreeLocal` emission to ensure the last user of each allocation performs the release and skip `Allocate` for dead temporaries (covers straight-line and branched `let` bodies with shared liveness helpers).
 - ✅ Wire the shared liveness planner into other heap-owning sites (e.g., string helpers outside `let`) so redundant frees disappear across the compiler.
-  - ⏳ Require closures (interpreter/JIT only for now) to clone any captured values up front, keeping borrow rules simple while preventing dangling references when frames unwind.
-  - ⏳ Expand `tests/programs/` to exercise branch-heavy lets, unused bindings, and nested frees so the new lifetime semantics stay regression-tested.
+  - ✅ Expand `tests/programs/` to exercise branch-heavy lets, unused bindings, and nested frees so the new lifetime semantics stay regression-tested.
   - ✅ Prototype allocator telemetry (build flag + CLI toggle) to trace allocations/frees and validate reuse with new stress cases under `tests/programs/memory/`.
   - ⏳ Continue investigating lightweight shared ownership (e.g., ref counting) for future features that demand longer-lived sharing beyond clone-on-capture.
 - **6.4 Composite data structures (planned):**
@@ -75,6 +74,7 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
 
 ### Phase 8 – Advanced Language Features 🚀
 - **8.1 Closures in compiled code:** Environment capture layout, closure call conventions, and heap-stored activation records.
+  - ⏳ Align interpreter/JIT closure capture semantics by cloning captured values up front so compiled closures can share borrow/ownership rules.
 - **8.2 Control flow:** `loop`/`recur`, pattern matching, and structured error handling (`try`/`catch`).
 - **8.3 Optimisations:** Constant folding, dead code elimination, tail-call optimisation, register allocation, and selective inlining.
 

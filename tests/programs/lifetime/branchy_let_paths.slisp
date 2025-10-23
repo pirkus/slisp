@@ -1,0 +1,18 @@
+(defn decorate [flag label]
+  (let [base (str label "-base")
+        branch (if flag
+                   (let [true-inner (str base "-true")
+                         expanded (str true-inner "-path")]
+                     (str expanded "-done"))
+                   (let [false-inner (str base "-false")
+                         expanded (str false-inner "-path")]
+                     (if (> (count label) 3)
+                         (str expanded "-long")
+                         (str expanded "-short"))))]
+    branch))
+
+(defn -main []
+  (let [first (decorate true "alpha")
+        second (decorate false "xy")
+        third (decorate false "delta")]
+    (+ (count first) (count second) (count third))))
