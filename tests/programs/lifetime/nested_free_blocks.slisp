@@ -1,0 +1,16 @@
+(defn assemble [flag seed]
+  (let [prefix (str seed "-prefix")]
+    (let [body (str prefix "-body")
+          tail (if flag
+                   (let [true-inner (str body "-true")
+                         leaf (str true-inner "-leaf")]
+                     leaf)
+                   (let [false-inner (str body "-false")]
+                     (let [expanded (str false-inner "-expanded")]
+                       (str expanded "-leaf"))))]
+      (str tail "-done"))))
+
+(defn -main []
+  (let [left (assemble true "foo")
+        right (assemble false "barbaz")]
+    (- (count right) (count left))))

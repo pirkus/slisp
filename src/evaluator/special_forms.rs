@@ -15,6 +15,7 @@ pub fn eval_if(args: &[Node], env: &mut Environment) -> Result<Value, EvalError>
         Value::Nil => false,
         Value::Function { .. } => true, // Functions are always truthy
         Value::String(s) => !s.is_empty(),
+        Value::Vector(items) => !items.is_empty(),
     };
 
     if is_truthy {

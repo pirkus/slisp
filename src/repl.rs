@@ -131,6 +131,13 @@ fn format_value(value: &Value) -> String {
         Value::Function { params, .. } => {
             format!("#<function/{}>", params.len())
         }
+        Value::Vector(items) => {
+            let mut parts = Vec::with_capacity(items.len());
+            for item in items {
+                parts.push(format_value(item));
+            }
+            format!("[{}]", parts.join(" "))
+        }
         Value::String(s) => format!("\"{}\"", s),
     }
 }

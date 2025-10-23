@@ -1,0 +1,12 @@
+(defn annotate [label]
+  (let [unused (str label "-throwaway")
+        kept (str label "-kept")]
+    (if (< (count label) 4)
+        (let [branch-extra (str kept "-short")]
+          branch-extra)
+        kept)))
+
+(defn -main []
+  (let [short (annotate "abc")
+        long (annotate "lengthy")]
+    (count (str short long))))

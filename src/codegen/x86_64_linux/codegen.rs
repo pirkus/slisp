@@ -152,6 +152,16 @@ impl X86CodeGen {
         // Restore RAX
         code.push(0x58); // pop rax
 
+        // Zero out the local slot so stale pointers are not freed again if the slot
+        // gets reused before another store.
+        if offset <= 128 {
+            code.extend_from_slice(&[0x48, 0xc7, 0x45, (256 - offset) as u8, 0x00, 0x00, 0x00, 0x00]);
+        } else {
+            code.extend_from_slice(&[0x48, 0xc7, 0x85]);
+            code.extend_from_slice(&(-(offset as i32)).to_le_bytes());
+            code.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        }
+
         code
     }
 

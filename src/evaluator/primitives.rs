@@ -42,6 +42,7 @@ pub fn eval_equal(args: &[Node], env: &mut Environment) -> Result<Value, EvalErr
         (Value::Number(a), Value::Number(b)) => a == b,
         (Value::Boolean(a), Value::Boolean(b)) => a == b,
         (Value::String(a), Value::String(b)) => a == b,
+        (Value::Vector(a), Value::Vector(b)) => a == b,
         (Value::Nil, Value::Nil) => true,
         _ => false, // Different types are not equal
     };
@@ -119,6 +120,40 @@ fn is_truthy(val: &Value) -> bool {
         Value::Nil => false,
         Value::Function { .. } => true, // Functions are always truthy
         Value::String(s) => !s.is_empty(),
+        Value::Vector(items) => !items.is_empty(),
+    }
+}
+
+fn value_to_string(value: &Value) -> String {
+    match value {
+        Value::Number(n) => n.to_string(),
+        Value::Boolean(b) => b.to_string(),
+        Value::String(s) => s.clone(),
+        Value::Nil => "nil".to_string(),
+        Value::Function { .. } => "#<function>".to_string(),
+        Value::Vector(items) => {
+            if items.is_empty() {
+                "[]".to_string()
+            } else {
+                let mut out = String::from("[");
+                for (idx, item) in items.iter().enumerate() {
+                    if idx > 0 {
+                        out.push(' ');
+                    }
+                    out.push_str(&value_to_string(item));
+                }
+                out.push(']');
+                out
+            }
+        }
+    }
+}
+
+fn resolve_default(default: Option<&Node>, env: &mut Environment) -> Result<Value, EvalError> {
+    if let Some(expr) = default {
+        crate::evaluator::eval_with_env(expr, env)
+    } else {
+        Ok(Value::Nil)
     }
 }
 
@@ -129,13 +164,7 @@ pub fn eval_str(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
 
     for arg in args {
         let val = crate::evaluator::eval_with_env(arg, env)?;
-        match val {
-            Value::String(s) => result.push_str(&s),
-            Value::Number(n) => result.push_str(&n.to_string()),
-            Value::Boolean(b) => result.push_str(if b { "true" } else { "false" }),
-            Value::Nil => result.push_str("nil"),
-            Value::Function { .. } => result.push_str("#<function>"),
-        }
+        result.push_str(&value_to_string(&val));
     }
 
     Ok(Value::String(result))
@@ -150,7 +179,8 @@ pub fn eval_count(args: &[Node], env: &mut Environment) -> Result<Value, EvalErr
     let val = crate::evaluator::eval_with_env(&args[0], env)?;
     match val {
         Value::String(s) => Ok(Value::Number(s.len() as isize)),
-        _ => Err(EvalError::TypeError("count requires a string argument".to_string())),
+        Value::Vector(items) => Ok(Value::Number(items.len() as isize)),
+        _ => Err(EvalError::TypeError("count requires a string or vector argument".to_string())),
     }
 }
 
@@ -160,23 +190,73 @@ pub fn eval_get(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
         return Err(EvalError::ArityError("get".to_string(), 2, args.len()));
     }
 
-    let string_val = crate::evaluator::eval_with_env(&args[0], env)?;
+    let target = crate::evaluator::eval_with_env(&args[0], env)?;
     let index_val = crate::evaluator::eval_with_env(&args[1], env)?;
+    let default = if args.len() == 3 { Some(&args[2]) } else { None };
 
-    match (string_val, index_val) {
+    match (target, index_val) {
         (Value::String(s), Value::Number(idx)) => {
             if idx < 0 || idx >= s.len() as isize {
-                // Return nil for out of bounds (Clojure style)
-                return Ok(Value::Nil);
+                return resolve_default(default, env);
             }
 
-            let idx = idx as usize;
-            let ch = s.chars().nth(idx).unwrap();
-            Ok(Value::String(ch.to_string()))
+            let idx_usize = idx as usize;
+            if let Some(ch) = s.chars().nth(idx_usize) {
+                Ok(Value::String(ch.to_string()))
+            } else {
+                resolve_default(default, env)
+            }
         }
-        (Value::String(_), _) => Err(EvalError::TypeError("get: index must be a number".to_string())),
-        _ => Err(EvalError::TypeError("get: first argument must be a string".to_string())),
+        (Value::Vector(items), Value::Number(idx)) => {
+            if idx < 0 || idx >= items.len() as isize {
+                return resolve_default(default, env);
+            }
+            Ok(items[idx as usize].clone())
+        }
+        (Value::String(_), _) | (Value::Vector(_), _) => Err(EvalError::TypeError("get: index must be a number".to_string())),
+        _ => Err(EvalError::TypeError("get: first argument must be a string or vector".to_string())),
     }
+}
+
+fn compute_range(start_val: Value, args: &[Node], env: &mut Environment, len: usize) -> Result<(usize, usize), EvalError> {
+    let start = match start_val {
+        Value::Number(n) => {
+            if n < 0 {
+                return Err(EvalError::InvalidOperation("subs: start index cannot be negative".to_string()));
+            }
+            n as usize
+        }
+        _ => return Err(EvalError::TypeError("subs: start index must be a number".to_string())),
+    };
+
+    let end = if args.len() == 3 {
+        let end_val = crate::evaluator::eval_with_env(&args[2], env)?;
+        match end_val {
+            Value::Number(n) => {
+                if n < 0 {
+                    return Err(EvalError::InvalidOperation("subs: end index cannot be negative".to_string()));
+                }
+                n as usize
+            }
+            _ => return Err(EvalError::TypeError("subs: end index must be a number".to_string())),
+        }
+    } else {
+        len
+    };
+
+    if start > len {
+        return Err(EvalError::InvalidOperation(format!("subs: start index {} out of bounds for length {}", start, len)));
+    }
+
+    if end > len {
+        return Err(EvalError::InvalidOperation(format!("subs: end index {} out of bounds for length {}", end, len)));
+    }
+
+    if start > end {
+        return Err(EvalError::InvalidOperation(format!("subs: start index {} is greater than end index {}", start, end)));
+    }
+
+    Ok((start, end))
 }
 
 /// subs - Extract substring (start, end)
@@ -185,51 +265,31 @@ pub fn eval_subs(args: &[Node], env: &mut Environment) -> Result<Value, EvalErro
         return Err(EvalError::ArityError("subs".to_string(), 2, args.len()));
     }
 
-    let string_val = crate::evaluator::eval_with_env(&args[0], env)?;
+    let target = crate::evaluator::eval_with_env(&args[0], env)?;
     let start_val = crate::evaluator::eval_with_env(&args[1], env)?;
 
-    match string_val {
+    match target {
         Value::String(s) => {
-            let start = match start_val {
-                Value::Number(n) => {
-                    if n < 0 {
-                        return Err(EvalError::InvalidOperation("subs: start index cannot be negative".to_string()));
-                    }
-                    n as usize
-                }
-                _ => return Err(EvalError::TypeError("subs: start index must be a number".to_string())),
-            };
-
-            let end = if args.len() == 3 {
-                let end_val = crate::evaluator::eval_with_env(&args[2], env)?;
-                match end_val {
-                    Value::Number(n) => {
-                        if n < 0 {
-                            return Err(EvalError::InvalidOperation("subs: end index cannot be negative".to_string()));
-                        }
-                        n as usize
-                    }
-                    _ => return Err(EvalError::TypeError("subs: end index must be a number".to_string())),
-                }
-            } else {
-                s.len()
-            };
-
-            if start > s.len() {
-                return Err(EvalError::InvalidOperation(format!("subs: start index {} out of bounds for string of length {}", start, s.len())));
-            }
-
-            if end > s.len() {
-                return Err(EvalError::InvalidOperation(format!("subs: end index {} out of bounds for string of length {}", end, s.len())));
-            }
-
-            if start > end {
-                return Err(EvalError::InvalidOperation(format!("subs: start index {} is greater than end index {}", start, end)));
-            }
-
+            let len = s.len();
+            let (start, end) = compute_range(start_val, args, env, len)?;
             let substring: String = s.chars().skip(start).take(end - start).collect();
             Ok(Value::String(substring))
         }
-        _ => Err(EvalError::TypeError("subs: first argument must be a string".to_string())),
+        Value::Vector(items) => {
+            let len = items.len();
+            let (start, end) = compute_range(start_val, args, env, len)?;
+            let slice = items[start..end].to_vec();
+            Ok(Value::Vector(slice))
+        }
+        _ => Err(EvalError::TypeError("subs: first argument must be a string or vector".to_string())),
     }
+}
+
+/// vec - Construct a vector from evaluated arguments
+pub fn eval_vec(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    let mut values = Vec::with_capacity(args.len());
+    for arg in args {
+        values.push(crate::evaluator::eval_with_env(arg, env)?);
+    }
+    Ok(Value::Vector(values))
 }
