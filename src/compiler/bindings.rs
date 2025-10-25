@@ -41,12 +41,17 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
 
         let mut value_result = crate::compiler::compile_node(val_node, context, program)?;
 
-        let mut cloned_from_existing = false;
+        let mut cloned_from_existing: Option<ValueKind> = None;
         if let Node::Symbol { value } = val_node {
             if crate::compiler::is_heap_allocated_symbol(value, context) {
-                value_result.instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+                let source_kind = context.get_variable_type(value).or_else(|| context.get_parameter_type(value)).unwrap_or(ValueKind::String);
+                let runtime = match source_kind {
+                    ValueKind::Vector => "_vector_clone",
+                    _ => "_string_clone",
+                };
+                value_result.instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
                 value_result.heap_ownership = HeapOwnership::Owned;
-                cloned_from_existing = true;
+                cloned_from_existing = Some(source_kind);
             }
         }
 
@@ -56,20 +61,20 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
         instructions.push(IRInstruction::StoreLocal(slot));
 
         let value_kind = match value_result.kind {
-            ValueKind::Any if cloned_from_existing => ValueKind::String,
+            ValueKind::Any => cloned_from_existing.unwrap_or(ValueKind::Any),
             other => other,
         };
         context.set_variable_type(var_name, value_kind);
 
         // Mark variable as heap-allocated if needed
-        if value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing {
-            context.mark_heap_allocated(var_name);
+        if value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing.is_some() {
+            context.mark_heap_allocated(var_name, value_kind);
         }
 
         added_variables.push(var_name.clone());
         binding_infos.push(BindingInfo {
             slot,
-            owns_heap: value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing,
+            owns_heap: value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing.is_some(),
         });
     }
 
@@ -78,9 +83,14 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
 
     if let Node::Symbol { value } = &args[1] {
         if added_variables.iter().any(|name| name == value) && crate::compiler::is_heap_allocated_symbol(value, context) {
-            body_result.instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
+            let symbol_kind = context.get_variable_type(value).unwrap_or(ValueKind::String);
+            let runtime = match symbol_kind {
+                ValueKind::Vector => "_vector_clone",
+                _ => "_string_clone",
+            };
+            body_result.instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
             body_result.heap_ownership = HeapOwnership::Owned;
-            body_kind = ValueKind::String;
+            body_kind = symbol_kind;
         }
     }
 

@@ -1,0 +1,4 @@
+(defn -main []
+  (let [nested (vec (vec 1 2) 3)
+        rendered (str nested)]
+    (count rendered)))

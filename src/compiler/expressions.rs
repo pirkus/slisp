@@ -76,6 +76,8 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
         then_result.kind
     } else if (then_result.kind == ValueKind::String && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::String) {
         ValueKind::String
+    } else if (then_result.kind == ValueKind::Vector && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Vector) {
+        ValueKind::Vector
     } else if (then_result.kind == ValueKind::Boolean && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Boolean) {
         ValueKind::Boolean
     } else {

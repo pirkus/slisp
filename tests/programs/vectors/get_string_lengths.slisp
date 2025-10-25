@@ -1,0 +1,4 @@
+(defn -main []
+  (let [first (get (vec 1 2 3) 1 0)
+        second (get (vec 4 5 6) 2 0)]
+    (+ first second)))

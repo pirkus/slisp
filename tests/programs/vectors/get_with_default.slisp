@@ -1,0 +1,4 @@
+(defn -main []
+  (let [good (get (vec 1 2 3) 1 0)
+        miss (get (vec 10 20 30) 5 9)]
+    (+ good miss)))

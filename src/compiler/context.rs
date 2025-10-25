@@ -263,12 +263,14 @@ impl CompileContext {
     }
 
     /// Mark a variable as holding a heap-allocated pointer
-    pub fn mark_heap_allocated(&mut self, name: &str) {
+    pub fn mark_heap_allocated(&mut self, name: &str, kind: ValueKind) {
         self.heap_allocated_vars.insert(name.to_string(), true);
-        if self.variables.contains_key(name) {
-            self.variable_types.insert(name.to_string(), ValueKind::String);
-        } else if self.parameters.contains_key(name) {
-            self.parameter_types.insert(name.to_string(), ValueKind::String);
+        if matches!(kind, ValueKind::String | ValueKind::Vector) {
+            if self.variables.contains_key(name) {
+                self.variable_types.insert(name.to_string(), kind);
+            } else if self.parameters.contains_key(name) {
+                self.parameter_types.insert(name.to_string(), kind);
+            }
         }
     }
 
@@ -287,7 +289,7 @@ mod tests {
         let mut context = CompileContext::new();
 
         context.add_variable("x".to_string());
-        context.mark_heap_allocated("x");
+        context.mark_heap_allocated("x", ValueKind::String);
         context.add_parameter("y".to_string(), 0);
         context
             .add_function(

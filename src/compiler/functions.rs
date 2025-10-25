@@ -47,8 +47,8 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
         func_context.add_parameter(param_name.clone(), i);
         if let Some(kind) = context.get_function_parameter_type(&func_name, i) {
             func_context.set_parameter_type(param_name, kind);
-            if kind == ValueKind::String {
-                func_context.mark_heap_allocated(param_name);
+            if kind.is_heap_kind() {
+                func_context.mark_heap_allocated(param_name, kind);
             }
         }
     }
@@ -63,10 +63,19 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
     let mut body_kind = body_result.kind;
 
     if body_result.heap_ownership == HeapOwnership::Borrowed {
-        body_result.instructions.push(IRInstruction::RuntimeCall("_string_clone".to_string(), 1));
-        body_result.heap_ownership = HeapOwnership::Owned;
-        if body_kind == ValueKind::Any {
-            body_kind = ValueKind::String;
+        let clone_runtime = match body_kind {
+            ValueKind::String => Some("_string_clone"),
+            ValueKind::Vector => Some("_vector_clone"),
+            ValueKind::Any => {
+                body_kind = ValueKind::String;
+                Some("_string_clone")
+            }
+            _ => None,
+        };
+
+        if let Some(runtime) = clone_runtime {
+            body_result.instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
+            body_result.heap_ownership = HeapOwnership::Owned;
         }
     }
 
