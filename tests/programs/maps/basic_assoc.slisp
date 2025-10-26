@@ -1,0 +1,12 @@
+(let [empty (hash-map)
+      with-user (assoc empty "user" 41)
+      updated (assoc with-user "user" 42)
+      extended (assoc updated "active" true)
+      removed (dissoc extended "user")
+      user (get extended "user" 0)
+      default (get removed "user" 5)
+      has-active (contains? extended "active")
+      has-user (contains? removed "user")]
+  (+ user default (count extended)
+     (if has-active 10 0)
+     (if has-user 1 0)))

@@ -1,0 +1,8 @@
+(let [a "alpha"
+      b "alpha"
+      c "beta"
+      empty ""]
+  (+ (if (= a b) 10 0)
+     (if (= a c) 1 0)
+     (if (= empty "") 5 0)
+     (if (= empty a) 2 0)))
