@@ -146,6 +146,8 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
         ValueKind::String
     } else if (then_result.kind == ValueKind::Vector && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Vector) {
         ValueKind::Vector
+    } else if (then_result.kind == ValueKind::Map && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Map) {
+        ValueKind::Map
     } else if (then_result.kind == ValueKind::Boolean && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Boolean) {
         ValueKind::Boolean
     } else {

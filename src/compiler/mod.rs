@@ -18,6 +18,13 @@ use crate::ast::Node;
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
 use std::collections::HashSet;
 
+const TAG_NIL: i64 = 0;
+const TAG_NUMBER: i64 = 1;
+const TAG_BOOLEAN: i64 = 2;
+const TAG_STRING: i64 = 3;
+const TAG_VECTOR: i64 = 4;
+const TAG_ANY: i64 = 0xff;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ValueKind {
     Any,
@@ -25,21 +32,23 @@ pub enum ValueKind {
     Boolean,
     String,
     Vector,
+    Map,
     Nil,
 }
 
 impl ValueKind {
     pub fn is_heap_kind(self) -> bool {
-        matches!(self, ValueKind::String | ValueKind::Vector)
+        matches!(self, ValueKind::String | ValueKind::Vector | ValueKind::Map)
     }
 
-    pub fn vector_tag(self) -> i64 {
+    pub fn runtime_tag(self) -> i64 {
         match self {
             ValueKind::Nil => 0,
             ValueKind::Number => 1,
             ValueKind::Boolean => 2,
             ValueKind::String => 3,
             ValueKind::Vector => 4,
+            ValueKind::Map => 0xff,
             ValueKind::Any => 0xff,
         }
     }
@@ -278,7 +287,7 @@ fn compile_vector_literal(elements: &[Node], context: &mut CompileContext, progr
             }
         }
 
-        instructions.push(IRInstruction::Push(element_kind.vector_tag()));
+        instructions.push(IRInstruction::Push(element_kind.runtime_tag()));
         instructions.push(IRInstruction::StoreLocal(tag_slot));
     }
 
@@ -330,7 +339,11 @@ fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRPr
         }
     }
 
-    let runtime = if target_kind == ValueKind::Vector { "_vector_count" } else { "_string_count" };
+    let runtime = match target_kind {
+        ValueKind::Vector => "_vector_count",
+        ValueKind::Map => "_map_count",
+        _ => "_string_count",
+    };
     instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
 
     if !tracked_slots.is_empty() {
@@ -357,10 +370,42 @@ fn resolve_value_kind(node: &Node, initial: ValueKind, context: &CompileContext)
     }
 }
 
+fn resolve_map_key_kind(node: &Node, initial: ValueKind, context: &CompileContext) -> Result<ValueKind, CompileError> {
+    let resolved = resolve_value_kind(node, initial, context);
+    match resolved {
+        ValueKind::Number | ValueKind::Boolean | ValueKind::String | ValueKind::Nil => Ok(resolved),
+        ValueKind::Any => Err(CompileError::InvalidExpression("map keys must have a concrete type".to_string())),
+        _ => Err(CompileError::InvalidExpression("map keys must be numbers, booleans, strings, or nil".to_string())),
+    }
+}
+
+fn runtime_tag_for_key(kind: ValueKind) -> i64 {
+    match kind {
+        ValueKind::Nil => TAG_NIL,
+        ValueKind::Number => TAG_NUMBER,
+        ValueKind::Boolean => TAG_BOOLEAN,
+        ValueKind::String => TAG_STRING,
+        _ => TAG_ANY,
+    }
+}
+
+fn runtime_tag_for_value(kind: ValueKind) -> i64 {
+    match kind {
+        ValueKind::Nil => TAG_NIL,
+        ValueKind::Number => TAG_NUMBER,
+        ValueKind::Boolean => TAG_BOOLEAN,
+        ValueKind::String => TAG_STRING,
+        ValueKind::Vector => TAG_VECTOR,
+        ValueKind::Map => TAG_ANY,
+        ValueKind::Any => TAG_ANY,
+    }
+}
+
 fn clone_runtime_for_kind(kind: ValueKind) -> Option<&'static str> {
     match kind {
         ValueKind::String => Some("_string_clone"),
         ValueKind::Vector => Some("_vector_clone"),
+        ValueKind::Map => Some("_map_clone"),
         _ => None,
     }
 }
@@ -495,7 +540,12 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
         owned_arg_slot = Some(slot);
     }
 
-    instructions.extend(compile_node(&args[1], context, program)?.instructions);
+    let CompileResult {
+        instructions: key_instructions,
+        kind: mut key_kind,
+        heap_ownership: key_ownership,
+    } = compile_node(&args[1], context, program)?;
+    instructions.extend(key_instructions);
 
     let mut default_slot = None;
     let mut default_owned = false;
@@ -514,10 +564,56 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
     let default_handling = DefaultHandling::from_parts(default_slot, default_owned, default_kind);
     let target_kind = resolve_value_kind(&args[0], target_result.kind, context);
 
-    if target_kind == ValueKind::Vector {
-        emit_vector_get(&mut instructions, context, &mut tracked_slots, owned_arg_slot, &default_handling);
-    } else {
-        emit_string_get(&mut instructions, context, &default_handling);
+    match target_kind {
+        ValueKind::Vector => {
+            emit_vector_get(&mut instructions, context, &mut tracked_slots, owned_arg_slot, &default_handling);
+        }
+        ValueKind::Map => {
+            if key_ownership == HeapOwnership::Owned {
+                let slot = context.allocate_temp_slot();
+                instructions.push(IRInstruction::StoreLocal(slot));
+                instructions.push(IRInstruction::LoadLocal(slot));
+                tracked_slots.insert(slot);
+                temp_slots.push(slot);
+            }
+
+            key_kind = resolve_map_key_kind(&args[1], key_kind, context)?;
+            let key_tag = runtime_tag_for_key(key_kind);
+            instructions.push(IRInstruction::Push(key_tag));
+
+            let value_slot = context.allocate_temp_slot();
+            instructions.push(IRInstruction::Push(0));
+            instructions.push(IRInstruction::StoreLocal(value_slot));
+            instructions.push(IRInstruction::PushLocalAddress(value_slot));
+            temp_slots.push(value_slot);
+
+            let tag_slot = context.allocate_temp_slot();
+            instructions.push(IRInstruction::Push(0));
+            instructions.push(IRInstruction::StoreLocal(tag_slot));
+            instructions.push(IRInstruction::PushLocalAddress(tag_slot));
+            temp_slots.push(tag_slot);
+
+            instructions.push(IRInstruction::RuntimeCall("_map_get".to_string(), 5));
+
+            let failure_jump_pos = instructions.len();
+            instructions.push(IRInstruction::JumpIfZero(0));
+
+            instructions.push(IRInstruction::LoadLocal(value_slot));
+            default_handling.success_cleanup(&mut instructions);
+            let success_jump_pos = instructions.len();
+            instructions.push(IRInstruction::Jump(0));
+
+            let failure_block_pos = instructions.len();
+            instructions[failure_jump_pos] = IRInstruction::JumpIfZero(failure_block_pos);
+
+            default_handling.emit_fallback(&mut instructions);
+
+            let end_pos = instructions.len();
+            instructions[success_jump_pos] = IRInstruction::Jump(end_pos);
+        }
+        _ => {
+            emit_string_get(&mut instructions, context, &default_handling);
+        }
     }
 
     if !tracked_slots.is_empty() {
@@ -531,13 +627,17 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
 
     default_handling.release_slot(context);
 
-    let result_kind = if target_kind == ValueKind::Vector || default_handling.has_value() {
-        ValueKind::Any
-    } else {
-        ValueKind::String
+    let result_kind = match target_kind {
+        ValueKind::Vector | ValueKind::Map => ValueKind::Any,
+        _ if default_handling.has_value() => ValueKind::Any,
+        _ => ValueKind::String,
     };
 
-    let heap_ownership = if target_kind == ValueKind::Vector { HeapOwnership::None } else { HeapOwnership::Owned };
+    let heap_ownership = match target_kind {
+        ValueKind::Vector => HeapOwnership::None,
+        ValueKind::Map => HeapOwnership::None,
+        _ => HeapOwnership::Owned,
+    };
 
     Ok(CompileResult::with_instructions(instructions, result_kind).with_heap_ownership(heap_ownership))
 }
@@ -626,8 +726,8 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
         let mut arg_kind = arg_result.kind;
         if arg_kind == ValueKind::Any {
             if let Node::Symbol { value } = arg {
-                if is_heap_allocated_symbol(value, context) {
-                    arg_kind = ValueKind::String;
+                if let Some(var_kind) = context.get_variable_type(value).or_else(|| context.get_parameter_type(value)) {
+                    arg_kind = var_kind;
                 } else if context.get_parameter(value).is_some() {
                     context.mark_heap_allocated(value, ValueKind::String);
                     arg_kind = ValueKind::String;
@@ -661,6 +761,10 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
                 instructions.push(IRInstruction::RuntimeCall("_vector_to_string".to_string(), 1));
                 slot_needs_free = true;
             }
+            ValueKind::Map => {
+                instructions.push(IRInstruction::RuntimeCall("_map_to_string".to_string(), 1));
+                slot_needs_free = true;
+            }
             ValueKind::Boolean => {
                 instructions.push(IRInstruction::RuntimeCall("_string_from_boolean".to_string(), 1));
                 slot_needs_free = false;
@@ -691,6 +795,252 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
     }
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(HeapOwnership::Owned))
+}
+
+fn compile_hash_map(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() % 2 != 0 {
+        return Err(CompileError::InvalidExpression("hash-map requires key/value pairs".to_string()));
+    }
+
+    let pair_count = args.len() / 2;
+    if pair_count == 0 {
+        return Ok(CompileResult::with_instructions(
+            vec![
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::RuntimeCall("_map_create".to_string(), 5),
+            ],
+            ValueKind::Map,
+        )
+        .with_heap_ownership(HeapOwnership::Owned));
+    }
+
+    let mut instructions = Vec::new();
+
+    let key_value_slots = context.allocate_contiguous_temp_slots(pair_count);
+    let mut ordered_key_value_slots = key_value_slots.clone();
+    ordered_key_value_slots.sort_unstable();
+    ordered_key_value_slots.reverse();
+
+    let key_tag_slots = context.allocate_contiguous_temp_slots(pair_count);
+    let mut ordered_key_tag_slots = key_tag_slots.clone();
+    ordered_key_tag_slots.sort_unstable();
+    ordered_key_tag_slots.reverse();
+
+    let value_slots = context.allocate_contiguous_temp_slots(pair_count);
+    let mut ordered_value_slots = value_slots.clone();
+    ordered_value_slots.sort_unstable();
+    ordered_value_slots.reverse();
+
+    let value_tag_slots = context.allocate_contiguous_temp_slots(pair_count);
+    let mut ordered_value_tag_slots = value_tag_slots.clone();
+    ordered_value_tag_slots.sort_unstable();
+    ordered_value_tag_slots.reverse();
+
+    for idx in 0..pair_count {
+        let key_node = &args[idx * 2];
+        let value_node = &args[idx * 2 + 1];
+
+        let key_slot = ordered_key_value_slots[idx];
+        let key_tag_slot = ordered_key_tag_slots[idx];
+        let value_slot = ordered_value_slots[idx];
+        let value_tag_slot = ordered_value_tag_slots[idx];
+
+        let key_result = compile_node(key_node, context, program)?;
+        instructions.extend(key_result.instructions);
+        instructions.push(IRInstruction::StoreLocal(key_slot));
+        let key_kind = resolve_map_key_kind(key_node, key_result.kind, context)?;
+        instructions.push(IRInstruction::Push(runtime_tag_for_key(key_kind)));
+        instructions.push(IRInstruction::StoreLocal(key_tag_slot));
+
+        let value_result = compile_node(value_node, context, program)?;
+        instructions.extend(value_result.instructions);
+        instructions.push(IRInstruction::StoreLocal(value_slot));
+        let value_kind = resolve_value_kind(value_node, value_result.kind, context);
+        instructions.push(IRInstruction::Push(runtime_tag_for_value(value_kind)));
+        instructions.push(IRInstruction::StoreLocal(value_tag_slot));
+    }
+
+    instructions.push(IRInstruction::PushLocalAddress(ordered_key_value_slots[0]));
+    instructions.push(IRInstruction::PushLocalAddress(ordered_key_tag_slots[0]));
+    instructions.push(IRInstruction::PushLocalAddress(ordered_value_slots[0]));
+    instructions.push(IRInstruction::PushLocalAddress(ordered_value_tag_slots[0]));
+    instructions.push(IRInstruction::Push(pair_count as i64));
+    instructions.push(IRInstruction::RuntimeCall("_map_create".to_string(), 5));
+
+    for slot in key_value_slots {
+        context.release_temp_slot(slot);
+    }
+    for slot in key_tag_slots {
+        context.release_temp_slot(slot);
+    }
+    for slot in value_slots {
+        context.release_temp_slot(slot);
+    }
+    for slot in value_tag_slots {
+        context.release_temp_slot(slot);
+    }
+
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Map).with_heap_ownership(HeapOwnership::Owned))
+}
+
+fn compile_assoc(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() < 3 {
+        return Err(CompileError::ArityError("assoc".to_string(), 3, args.len()));
+    }
+    if (args.len() - 1) % 2 != 0 {
+        return Err(CompileError::InvalidExpression("assoc expects key/value pairs".to_string()));
+    }
+
+    let base_result = compile_node(&args[0], context, program)?;
+    let mut instructions = base_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut temp_slots = Vec::new();
+
+    if base_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        temp_slots.push(slot);
+    }
+
+    for pair_idx in 0..((args.len() - 1) / 2) {
+        let key_index = 1 + pair_idx * 2;
+        let value_index = key_index + 1;
+
+        let mut key_result = compile_node(&args[key_index], context, program)?;
+        instructions.extend(key_result.instructions);
+        if key_result.heap_ownership == HeapOwnership::Owned {
+            let slot = context.allocate_temp_slot();
+            instructions.push(IRInstruction::StoreLocal(slot));
+            instructions.push(IRInstruction::LoadLocal(slot));
+            tracked_slots.insert(slot);
+            temp_slots.push(slot);
+        }
+        key_result.kind = resolve_map_key_kind(&args[key_index], key_result.kind, context)?;
+        instructions.push(IRInstruction::Push(runtime_tag_for_key(key_result.kind)));
+
+        let mut value_result = compile_node(&args[value_index], context, program)?;
+        instructions.extend(value_result.instructions);
+        if value_result.heap_ownership == HeapOwnership::Owned {
+            let slot = context.allocate_temp_slot();
+            instructions.push(IRInstruction::StoreLocal(slot));
+            instructions.push(IRInstruction::LoadLocal(slot));
+            tracked_slots.insert(slot);
+            temp_slots.push(slot);
+        }
+        value_result.kind = resolve_value_kind(&args[value_index], value_result.kind, context);
+        instructions.push(IRInstruction::Push(runtime_tag_for_value(value_result.kind)));
+
+        instructions.push(IRInstruction::RuntimeCall("_map_assoc".to_string(), 5));
+    }
+
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    for slot in temp_slots {
+        context.release_temp_slot(slot);
+    }
+
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Map).with_heap_ownership(HeapOwnership::Owned))
+}
+
+fn compile_dissoc(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.is_empty() {
+        return Err(CompileError::ArityError("dissoc".to_string(), 1, 0));
+    }
+
+    let base_result = compile_node(&args[0], context, program)?;
+    if args.len() == 1 {
+        return Ok(base_result);
+    }
+
+    let mut instructions = base_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut temp_slots = Vec::new();
+
+    if base_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        temp_slots.push(slot);
+    }
+
+    for key_idx in 1..args.len() {
+        let mut key_result = compile_node(&args[key_idx], context, program)?;
+        instructions.extend(key_result.instructions);
+        if key_result.heap_ownership == HeapOwnership::Owned {
+            let slot = context.allocate_temp_slot();
+            instructions.push(IRInstruction::StoreLocal(slot));
+            instructions.push(IRInstruction::LoadLocal(slot));
+            tracked_slots.insert(slot);
+            temp_slots.push(slot);
+        }
+        key_result.kind = resolve_map_key_kind(&args[key_idx], key_result.kind, context)?;
+        instructions.push(IRInstruction::Push(runtime_tag_for_key(key_result.kind)));
+        instructions.push(IRInstruction::RuntimeCall("_map_dissoc".to_string(), 3));
+    }
+
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    for slot in temp_slots {
+        context.release_temp_slot(slot);
+    }
+
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Map).with_heap_ownership(HeapOwnership::Owned))
+}
+
+fn compile_contains(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() != 2 {
+        return Err(CompileError::ArityError("contains?".to_string(), 2, args.len()));
+    }
+
+    let target_result = compile_node(&args[0], context, program)?;
+    let mut instructions = target_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut temp_slots = Vec::new();
+
+    if target_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        temp_slots.push(slot);
+    }
+
+    let mut key_result = compile_node(&args[1], context, program)?;
+    instructions.extend(key_result.instructions);
+    if key_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        temp_slots.push(slot);
+    }
+    key_result.kind = resolve_map_key_kind(&args[1], key_result.kind, context)?;
+    instructions.push(IRInstruction::Push(runtime_tag_for_key(key_result.kind)));
+    instructions.push(IRInstruction::RuntimeCall("_map_contains".to_string(), 3));
+
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    for slot in temp_slots {
+        context.release_temp_slot(slot);
+    }
+
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Boolean))
 }
 
 /// Compile a list (function call or special form) to IR
@@ -727,6 +1077,10 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
             "subs" => compile_subs(args, context, program),
             "str" => compile_str(args, context, program),
             "vec" => compile_vector_literal(args, context, program),
+            "hash-map" => compile_hash_map(args, context, program),
+            "assoc" => compile_assoc(args, context, program),
+            "dissoc" => compile_dissoc(args, context, program),
+            "contains?" => compile_contains(args, context, program),
             op => {
                 if let Some(func_info) = context.get_function(op) {
                     functions::compile_function_call(op, args, context, program, func_info.param_count)
@@ -872,6 +1226,42 @@ mod tests {
     fn test_compile_vector_get_runtime_call() {
         let program = compile_expression("(get (vec 9 8) 0)").unwrap();
         assert!(program.instructions.contains(&IRInstruction::RuntimeCall("_vector_get".to_string(), 3)));
+    }
+
+    #[test]
+    fn test_compile_hash_map_literal_runtime_call() {
+        let program = compile_expression("(hash-map \"a\" 1 \"b\" 2)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_create"
+        )));
+    }
+
+    #[test]
+    fn test_compile_assoc_runtime_call() {
+        let program = compile_expression("(assoc (hash-map) \"a\" 1)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_assoc"
+        )));
+    }
+
+    #[test]
+    fn test_compile_map_get_runtime_call() {
+        let program = compile_expression("(get (hash-map \"a\" 1) \"a\" 0)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_get"
+        )));
+    }
+
+    #[test]
+    fn test_compile_contains_runtime_call() {
+        let program = compile_expression("(contains? (hash-map \"a\" 1) \"a\")").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 3) if name == "_map_contains"
+        )));
     }
 
     #[test]

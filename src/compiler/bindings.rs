@@ -47,6 +47,7 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
                 let source_kind = context.get_variable_type(value).or_else(|| context.get_parameter_type(value)).unwrap_or(ValueKind::String);
                 let runtime = match source_kind {
                     ValueKind::Vector => "_vector_clone",
+                    ValueKind::Map => "_map_clone",
                     _ => "_string_clone",
                 };
                 value_result.instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
@@ -86,6 +87,7 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
             let symbol_kind = context.get_variable_type(value).unwrap_or(ValueKind::String);
             let runtime = match symbol_kind {
                 ValueKind::Vector => "_vector_clone",
+                ValueKind::Map => "_map_clone",
                 _ => "_string_clone",
             };
             body_result.instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));

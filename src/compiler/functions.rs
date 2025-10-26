@@ -66,6 +66,7 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
         let clone_runtime = match body_kind {
             ValueKind::String => Some("_string_clone"),
             ValueKind::Vector => Some("_vector_clone"),
+            ValueKind::Map => Some("_map_clone"),
             ValueKind::Any => {
                 body_kind = ValueKind::String;
                 Some("_string_clone")

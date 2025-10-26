@@ -186,6 +186,20 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
         "_string_from_number",
         "_string_from_boolean",
         "_string_equals",
+        "_vector_create",
+        "_vector_clone",
+        "_vector_count",
+        "_vector_get",
+        "_vector_slice",
+        "_vector_to_string",
+        "_map_create",
+        "_map_clone",
+        "_map_assoc",
+        "_map_dissoc",
+        "_map_contains",
+        "_map_get",
+        "_map_count",
+        "_map_to_string",
     ];
 
     if program.telemetry_enabled {
