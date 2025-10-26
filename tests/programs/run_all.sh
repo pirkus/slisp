@@ -22,12 +22,6 @@ while IFS= read -r -d '' file; do
         continue
     fi
 
-    if [[ "$rel_path" == tests/programs/strings/equals_* ]]; then
-        echo "Skipping $rel_path (string equality compiler support pending)"
-        echo
-        continue
-    fi
-
     echo "Compiling $rel_path -> $rel_binary"
     if cargo run --quiet -- --compile -o "$rel_binary" "$rel_path"; then
         echo "Compiled $rel_path"

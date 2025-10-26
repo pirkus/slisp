@@ -116,6 +116,7 @@ pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
 pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> {
     let mut program = IRProgram::new();
     let mut context = CompileContext::new();
+    let mut emitted_toplevel_code = false;
 
     // First pass: find all function definitions
     for expr in expressions {
@@ -185,6 +186,11 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
         for instruction in result.instructions {
             program.add_instruction(instruction);
         }
+        emitted_toplevel_code = true;
+    }
+
+    if emitted_toplevel_code && program.instructions.last() != Some(&IRInstruction::Return) {
+        program.add_instruction(IRInstruction::Return);
     }
 
     if context.get_function("-main").is_some() {
@@ -1237,6 +1243,13 @@ mod tests {
             IRInstruction::FreeLocal(slot) if *slot == store_slot => {}
             other => panic!("expected FreeLocal for slot {} after call, found {:?}", store_slot, other),
         }
+    }
+
+    #[test]
+    fn test_compile_program_top_level_expression_emits_return() {
+        let expressions = vec![AstParser::parse_sexp_new_domain("(let [a 1] (+ a 2))".as_bytes(), &mut 0)];
+        let program = compile_program(&expressions).unwrap();
+        assert_eq!(program.instructions.last(), Some(&IRInstruction::Return));
     }
 
     #[test]
