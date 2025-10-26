@@ -185,6 +185,7 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
         "_string_normalize",
         "_string_from_number",
         "_string_from_boolean",
+        "_string_equals",
     ];
 
     if program.telemetry_enabled {

@@ -744,6 +744,18 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_string_equality_runtime_call() {
+        let program = compile_expression("(= (str \"a\") (str \"a\"))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 2) if name == "_string_equals")));
+    }
+
+    #[test]
+    fn test_compile_simple_string_equality_program() {
+        let program = compile_expression("(if (= \"alpha\" \"alpha\") 1 0)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 2) if name == "_string_equals")));
+    }
+
+    #[test]
     fn test_compile_number() {
         let program = compile_expression("42").unwrap();
         assert_eq!(program.instructions, vec![IRInstruction::Push(42), IRInstruction::Return]);

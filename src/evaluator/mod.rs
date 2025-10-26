@@ -9,12 +9,21 @@ mod special_forms;
 use crate::ast::{Node, Primitive};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MapKey {
+    Number(isize),
+    Boolean(bool),
+    String(String),
+    Nil,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(isize),
     Boolean(bool),
     String(String),
     Vector(Vec<Value>),
+    Map(HashMap<MapKey, Value>),
     Nil,
     Function {
         params: Vec<String>,
@@ -32,6 +41,18 @@ pub enum EvalError {
 }
 
 pub type Environment = HashMap<String, Value>;
+
+impl MapKey {
+    pub fn try_from_value(value: &Value) -> Result<Self, EvalError> {
+        match value {
+            Value::Number(n) => Ok(MapKey::Number(*n)),
+            Value::Boolean(b) => Ok(MapKey::Boolean(*b)),
+            Value::String(s) => Ok(MapKey::String(s.clone())),
+            Value::Nil => Ok(MapKey::Nil),
+            _ => Err(EvalError::TypeError("map keys must be numbers, booleans, strings, or nil".to_string())),
+        }
+    }
+}
 
 /// Evaluate a node with a fresh environment
 pub fn eval_node(node: &Node) -> Result<Value, EvalError> {
@@ -103,6 +124,10 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
             "get" => primitives::eval_get(args, env),
             "subs" => primitives::eval_subs(args, env),
             "vec" => primitives::eval_vec(args, env),
+            "hash-map" => primitives::eval_hash_map(args, env),
+            "assoc" => primitives::eval_assoc(args, env),
+            "dissoc" => primitives::eval_dissoc(args, env),
+            "contains?" => primitives::eval_contains(args, env),
             op => {
                 if let Some(func_value) = env.get(op) {
                     special_forms::eval_function_call(func_value.clone(), args, env)
@@ -130,6 +155,7 @@ fn eval_vector(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError
 mod tests {
     use super::*;
     use crate::ast::{AstParser, AstParserTrt};
+    use std::collections::HashMap;
 
     fn parse_and_eval(input: &str) -> Result<Value, EvalError> {
         let ast = AstParser::parse_sexp_new_domain(input.as_bytes(), &mut 0);
@@ -191,6 +217,26 @@ mod tests {
         assert_eq!(parse_and_eval("(if (and (> 10 5) (< 3 8)) (+ 2 3) (* 2 4))"), Ok(Value::Number(5)));
 
         assert_eq!(parse_and_eval("(+ (* 2 3) (if (= 1 1) 4 0))"), Ok(Value::Number(10)));
+    }
+
+    #[test]
+    fn test_hash_map_literal_and_assoc() {
+        let mut expected = HashMap::new();
+        expected.insert(MapKey::String("a".to_string()), Value::Number(1));
+        expected.insert(MapKey::String("b".to_string()), Value::Number(2));
+        assert_eq!(parse_and_eval("(assoc (hash-map \"a\" 1) \"b\" 2)"), Ok(Value::Map(expected)));
+    }
+
+    #[test]
+    fn test_hash_map_dissoc_and_get_default() {
+        assert_eq!(parse_and_eval("(get (dissoc (hash-map \"a\" 1 \"b\" 2) \"a\") \"a\" 42)"), Ok(Value::Number(42)));
+    }
+
+    #[test]
+    fn test_hash_map_contains_and_count() {
+        assert_eq!(parse_and_eval("(contains? (hash-map \"a\" 1) \"a\")"), Ok(Value::Boolean(true)));
+        assert_eq!(parse_and_eval("(contains? (hash-map \"a\" 1) \"missing\")"), Ok(Value::Boolean(false)));
+        assert_eq!(parse_and_eval("(count (hash-map \"a\" 1 \"b\" 2))"), Ok(Value::Number(2)));
     }
 
     #[test]

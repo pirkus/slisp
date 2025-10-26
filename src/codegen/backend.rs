@@ -55,6 +55,7 @@ pub struct RuntimeAddresses {
     pub string_normalize: Option<usize>,
     pub string_from_number: Option<usize>,
     pub string_from_boolean: Option<usize>,
+    pub string_equals: Option<usize>,
 }
 
 /// Code generation backend trait for different target architectures

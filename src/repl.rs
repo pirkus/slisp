@@ -3,7 +3,7 @@ use crate::allocator_trace;
 use crate::ast::{AstParser, AstParserTrt};
 use crate::codegen::{compile_to_executable, detect_host_target};
 use crate::compiler::{compile_to_ir, CompileError};
-use crate::evaluator::{eval_node, EvalError, Value};
+use crate::evaluator::{eval_node, EvalError, MapKey, Value};
 use crate::jit_runner::JitRunner;
 use std::io::{self, Write};
 
@@ -139,6 +139,26 @@ fn format_value(value: &Value) -> String {
             format!("[{}]", parts.join(" "))
         }
         Value::String(s) => format!("\"{}\"", s),
+        Value::Map(entries) => {
+            if entries.is_empty() {
+                "{}".to_string()
+            } else {
+                let mut pairs: Vec<(String, String)> = entries.iter().map(|(key, value)| (format_map_key(key), format_value(value))).collect();
+                pairs.sort_by(|(ka, _), (kb, _)| ka.cmp(kb));
+                let joined: Vec<String> = pairs.into_iter().map(|(k, v)| format!("{} {}", k, v)).collect();
+                format!("{{{}}}", joined.join(" "))
+            }
+        }
+    }
+}
+
+fn format_map_key(key: &MapKey) -> String {
+    match key {
+        MapKey::Number(n) => n.to_string(),
+        MapKey::Boolean(true) => "true".to_string(),
+        MapKey::Boolean(false) => "false".to_string(),
+        MapKey::String(s) => format!("\"{}\"", s),
+        MapKey::Nil => "nil".to_string(),
     }
 }
 
