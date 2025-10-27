@@ -12,73 +12,89 @@ impl AstParserTrt for AstParser {
     }
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum ContainerKind {
+    List,
+    Vector,
+    Map,
+}
+
 impl AstParser {
     fn parse_sexp_internal(input: &[u8], offset: &mut usize, inside_container: bool) -> Node {
-        Self::parse_container(input, offset, inside_container, false)
+        Self::parse_container(input, offset, inside_container, ContainerKind::List)
     }
 
-    fn parse_container(input: &[u8], offset: &mut usize, inside_container: bool, is_vector: bool) -> Node {
+    fn parse_container(input: &[u8], offset: &mut usize, inside_container: bool, kind: ContainerKind) -> Node {
         let mut buffer = String::new();
         let mut sexp = vec![];
+
+        let flush_buffer = |buffer: &mut String, sexp: &mut Vec<Node>| {
+            if !buffer.is_empty() {
+                sexp.push(Self::parse_atom(buffer.as_str()));
+                buffer.clear();
+            }
+        };
 
         while *offset < input.len() {
             let c = input[*offset] as char;
             match c {
                 '(' => {
-                    if !buffer.is_empty() {
-                        sexp.push(Self::parse_atom(&buffer));
-                        buffer = String::new();
-                    }
+                    flush_buffer(&mut buffer, &mut sexp);
                     *offset += 1;
-                    sexp.push(Self::parse_container(input, offset, true, false));
+                    sexp.push(Self::parse_container(input, offset, true, ContainerKind::List));
                 }
                 '[' => {
-                    if !buffer.is_empty() {
-                        sexp.push(Self::parse_atom(&buffer));
-                        buffer = String::new();
-                    }
+                    flush_buffer(&mut buffer, &mut sexp);
                     *offset += 1;
-                    sexp.push(Self::parse_container(input, offset, true, true));
+                    sexp.push(Self::parse_container(input, offset, true, ContainerKind::Vector));
+                }
+                '{' => {
+                    flush_buffer(&mut buffer, &mut sexp);
+                    *offset += 1;
+                    sexp.push(Self::parse_container(input, offset, true, ContainerKind::Map));
                 }
                 '"' => {
-                    if !buffer.is_empty() {
-                        sexp.push(Self::parse_atom(&buffer));
-                        buffer = String::new();
-                    }
+                    flush_buffer(&mut buffer, &mut sexp);
                     *offset += 1;
                     sexp.push(Self::parse_string_literal(input, offset));
                 }
                 ')' => {
-                    if !inside_container || is_vector {
+                    if !inside_container || kind != ContainerKind::List {
                         panic!("Unexpected closing parenthesis");
                     }
-                    if !buffer.is_empty() {
-                        sexp.push(Self::parse_atom(&buffer));
-                    }
+                    flush_buffer(&mut buffer, &mut sexp);
                     return Node::new_list_from_raw(sexp);
                 }
                 ']' => {
-                    if !inside_container || !is_vector {
+                    if !inside_container || kind != ContainerKind::Vector {
                         panic!("Unexpected closing bracket");
                     }
-                    if !buffer.is_empty() {
-                        sexp.push(Self::parse_atom(&buffer));
-                    }
+                    flush_buffer(&mut buffer, &mut sexp);
                     return Node::new_vector_from_raw(sexp);
                 }
-                ';' => {
-                    if !buffer.is_empty() {
-                        sexp.push(Self::parse_atom(&buffer));
-                        buffer = String::new();
+                '}' => {
+                    if !inside_container || kind != ContainerKind::Map {
+                        panic!("Unexpected closing brace");
                     }
+                    flush_buffer(&mut buffer, &mut sexp);
+                    if sexp.len() % 2 != 0 {
+                        panic!("Map literal requires key/value pairs");
+                    }
+                    let mut entries = Vec::with_capacity(sexp.len() / 2);
+                    let mut iter = sexp.into_iter();
+                    while let Some(key) = iter.next() {
+                        let value = iter.next().expect("missing map value");
+                        entries.push((key, value));
+                    }
+                    return Node::new_map_from_raw(entries);
+                }
+                ';' => {
+                    flush_buffer(&mut buffer, &mut sexp);
                     *offset = skip_comment(input, *offset);
                     continue;
                 }
                 c if c.is_whitespace() => {
-                    if !buffer.is_empty() {
-                        sexp.push(Self::parse_atom(&buffer));
-                        buffer = String::new();
-                    }
+                    flush_buffer(&mut buffer, &mut sexp);
                 }
                 _ => {
                     buffer.push(c);
@@ -92,11 +108,13 @@ impl AstParser {
             panic!("Unclosed container");
         }
 
-        if !buffer.is_empty() {
-            Self::parse_atom(&buffer)
-        } else {
-            sexp.first().unwrap().to_owned()
+        flush_buffer(&mut buffer, &mut sexp);
+
+        if sexp.is_empty() {
+            panic!("No expression found");
         }
+
+        sexp.first().unwrap().to_owned()
     }
 
     fn parse_string_literal(input: &[u8], offset: &mut usize) -> Node {
@@ -145,6 +163,7 @@ impl AstParser {
             match buffer {
                 "true" => Node::new_boolean(true),
                 "false" => Node::new_boolean(false),
+                _ if buffer.starts_with(':') && buffer.len() > 1 => Node::new_keyword_from_raw(buffer[1..].to_string()),
                 _ => Node::Symbol { value: buffer.to_string() },
             }
         }
@@ -194,6 +213,17 @@ mod tests {
     fn parse_single_symbol() {
         let parsed = AstParser::parse_sexp_new_domain(b"hello", &mut 0);
         assert_eq!(parsed, Node::Symbol { value: "hello".to_string() });
+    }
+
+    #[test]
+    fn parse_keyword_literal() {
+        let parsed = AstParser::parse_sexp_new_domain(b":key", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::Primitive {
+                value: Primitive::Keyword("key".to_string())
+            }
+        );
     }
 
     #[test]
@@ -306,6 +336,34 @@ mod tests {
                 Node::new_number(10)
             ])
         );
+    }
+
+    #[test]
+    fn parse_map_literal() {
+        let parsed = AstParser::parse_sexp_new_domain(b"{\"a\" 1 \"b\" 2}", &mut 0);
+        assert_eq!(
+            parsed,
+            Node::new_map_from_raw(vec![
+                (
+                    Node::Primitive {
+                        value: Primitive::String("a".to_string())
+                    },
+                    Node::new_number(1)
+                ),
+                (
+                    Node::Primitive {
+                        value: Primitive::String("b".to_string())
+                    },
+                    Node::new_number(2)
+                )
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_empty_map_literal() {
+        let parsed = AstParser::parse_sexp_new_domain(b"{}", &mut 0);
+        assert_eq!(parsed, Node::new_map_from_raw(vec![]));
     }
 
     #[test]
@@ -458,7 +516,7 @@ fn skip_whitespace(bytes: &[u8], offset: usize) -> usize {
 /// Find the end of a single top-level expression
 fn find_expression_end(bytes: &[u8], offset: usize) -> Result<usize, String> {
     match bytes[offset] {
-        b'(' => find_list_end(bytes, offset),
+        b'(' | b'[' | b'{' => find_delimited_expression_end(bytes, offset),
         b';' => {
             // Skip comments at top level
             let next_offset = skip_comment(bytes, offset);
@@ -476,43 +534,73 @@ fn find_expression_end(bytes: &[u8], offset: usize) -> Result<usize, String> {
 }
 
 /// Find the end of a list expression (parenthesized form)
-fn find_list_end(bytes: &[u8], offset: usize) -> Result<usize, String> {
-    let mut offset = offset;
-    let mut depth = 0;
+fn matching_close(open: u8) -> Option<u8> {
+    match open {
+        b'(' => Some(b')'),
+        b'[' => Some(b']'),
+        b'{' => Some(b'}'),
+        _ => None,
+    }
+}
 
-    while offset < bytes.len() {
-        match bytes[offset] {
-            b'(' => {
-                depth += 1;
-                offset += 1;
-            }
-            b')' => {
-                depth -= 1;
-                offset += 1;
-                if depth == 0 {
-                    return Ok(offset);
-                }
-                if depth < 0 {
-                    return Err(format!("Unmatched closing parenthesis at byte {}", offset));
-                }
-            }
+fn matching_open(close: u8) -> Option<u8> {
+    match close {
+        b')' => Some(b'('),
+        b']' => Some(b'['),
+        b'}' => Some(b'{'),
+        _ => None,
+    }
+}
+
+fn find_delimited_expression_end(bytes: &[u8], offset: usize) -> Result<usize, String> {
+    let opening = bytes[offset];
+    let Some(first_expected) = matching_close(opening) else {
+        return Err(format!("Unknown opening delimiter '{}'", opening as char));
+    };
+
+    let mut stack = vec![first_expected];
+    let mut idx = offset + 1;
+
+    while idx < bytes.len() {
+        match bytes[idx] {
             b'"' => {
-                offset = skip_string_literal_boundary(bytes, offset)?;
+                idx = skip_string_literal_boundary(bytes, idx)?;
+                continue;
             }
             b';' => {
-                offset = skip_comment(bytes, offset);
+                idx = skip_comment(bytes, idx);
+                continue;
+            }
+            b'(' | b'[' | b'{' => {
+                let Some(close) = matching_close(bytes[idx]) else {
+                    return Err(format!("Unknown opening delimiter '{}'", bytes[idx] as char));
+                };
+                stack.push(close);
+                idx += 1;
+                continue;
+            }
+            b')' | b']' | b'}' => {
+                let Some(expected_close) = stack.pop() else {
+                    return Err(format!("Unmatched closing delimiter '{}' at byte {}", bytes[idx] as char, idx));
+                };
+                if bytes[idx] != expected_close {
+                    return Err(format!("Mismatched delimiter: expected '{}', found '{}'", expected_close as char, bytes[idx] as char));
+                }
+                idx += 1;
+                if stack.is_empty() {
+                    return Ok(idx);
+                }
+                continue;
             }
             _ => {
-                offset += 1;
+                idx += 1;
             }
         }
     }
 
-    if depth > 0 {
-        Err(format!("Unclosed parenthesis: expected {} more ')'", depth))
-    } else {
-        Ok(offset)
-    }
+    let expected_close = stack.last().copied().unwrap_or(first_expected);
+    let opening_char = matching_open(expected_close).unwrap_or(opening) as char;
+    Err(format!("Unclosed delimiter '{}'", opening_char))
 }
 
 /// Find the end of an atom (number, symbol, or other non-list token)
@@ -520,7 +608,7 @@ fn find_atom_end(bytes: &[u8], offset: usize) -> Result<usize, String> {
     let mut offset = offset;
     while offset < bytes.len() {
         let b = bytes[offset];
-        if is_whitespace(b) || b == b'(' || b == b')' || b == b';' {
+        if is_whitespace(b) || b == b'(' || b == b')' || b == b';' || b == b'[' || b == b']' || b == b'{' || b == b'}' {
             break;
         }
         offset += 1;
@@ -622,5 +710,20 @@ mod file_parser_tests {
         let result = parse_file(input);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "No expressions found in file");
+    }
+
+    #[test]
+    fn test_parse_map_literal_expression() {
+        let input = "{\"alpha\" 1}";
+        let result = parse_file(input).unwrap();
+        assert_eq!(
+            result[0],
+            Node::new_map_from_raw(vec![(
+                Node::Primitive {
+                    value: Primitive::String("alpha".to_string())
+                },
+                Node::new_number(1)
+            )])
+        );
     }
 }

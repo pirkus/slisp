@@ -14,6 +14,11 @@ pub fn compile_primitive(primitive: &Primitive, program: &mut IRProgram) -> Resu
             let string_index = program.add_string(s.clone());
             Ok(CompileResult::with_instructions(vec![IRInstruction::PushString(string_index)], ValueKind::String))
         }
+        Primitive::Keyword(k) => {
+            let literal = format!(":{}", k);
+            let string_index = program.add_string(literal);
+            Ok(CompileResult::with_instructions(vec![IRInstruction::PushString(string_index)], ValueKind::Keyword))
+        }
     }
 }
 
@@ -81,7 +86,8 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
         right_kind = resolve_operand_kind(&args[1], right_kind, context);
     }
 
-    let string_equality = matches!(instruction, IRInstruction::Equal) && left_kind == ValueKind::String && right_kind == ValueKind::String;
+    let string_equality =
+        matches!(instruction, IRInstruction::Equal) && ((left_kind == ValueKind::String && right_kind == ValueKind::String) || (left_kind == ValueKind::Keyword && right_kind == ValueKind::Keyword));
 
     if string_equality {
         instructions.push(IRInstruction::RuntimeCall("_string_equals".to_string(), 2));
@@ -144,6 +150,8 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
         then_result.kind
     } else if (then_result.kind == ValueKind::String && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::String) {
         ValueKind::String
+    } else if (then_result.kind == ValueKind::Keyword && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Keyword) {
+        ValueKind::Keyword
     } else if (then_result.kind == ValueKind::Vector && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Vector) {
         ValueKind::Vector
     } else if (then_result.kind == ValueKind::Map && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Map) {

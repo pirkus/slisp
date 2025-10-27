@@ -138,6 +138,7 @@ fn format_value(value: &Value) -> String {
             }
             format!("[{}]", parts.join(" "))
         }
+        Value::Keyword(k) => format!(":{}", k),
         Value::String(s) => format!("\"{}\"", s),
         Value::Map(entries) => {
             if entries.is_empty() {
@@ -158,6 +159,7 @@ fn format_map_key(key: &MapKey) -> String {
         MapKey::Boolean(true) => "true".to_string(),
         MapKey::Boolean(false) => "false".to_string(),
         MapKey::String(s) => format!("\"{}\"", s),
+        MapKey::Keyword(k) => format!(":{}", k),
         MapKey::Nil => "nil".to_string(),
     }
 }

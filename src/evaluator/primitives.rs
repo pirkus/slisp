@@ -42,6 +42,7 @@ pub fn eval_equal(args: &[Node], env: &mut Environment) -> Result<Value, EvalErr
         (Value::Number(a), Value::Number(b)) => a == b,
         (Value::Boolean(a), Value::Boolean(b)) => a == b,
         (Value::String(a), Value::String(b)) => a == b,
+        (Value::Keyword(a), Value::Keyword(b)) => a == b,
         (Value::Vector(a), Value::Vector(b)) => a == b,
         (Value::Map(a), Value::Map(b)) => a == b,
         (Value::Nil, Value::Nil) => true,
@@ -120,6 +121,7 @@ fn is_truthy(val: &Value) -> bool {
         Value::Number(n) => *n != 0,
         Value::Nil => false,
         Value::Function { .. } => true, // Functions are always truthy
+        Value::Keyword(_) => true,
         Value::String(s) => !s.is_empty(),
         Value::Vector(items) => !items.is_empty(),
         Value::Map(entries) => !entries.is_empty(),
@@ -131,6 +133,7 @@ fn value_to_string(value: &Value) -> String {
         Value::Number(n) => n.to_string(),
         Value::Boolean(b) => b.to_string(),
         Value::String(s) => s.clone(),
+        Value::Keyword(k) => format!(":{}", k),
         Value::Nil => "nil".to_string(),
         Value::Function { .. } => "#<function>".to_string(),
         Value::Vector(items) => {
@@ -176,6 +179,7 @@ fn map_key_to_string(key: &MapKey) -> String {
         MapKey::Boolean(true) => "true".to_string(),
         MapKey::Boolean(false) => "false".to_string(),
         MapKey::String(s) => format!("\"{}\"", s),
+        MapKey::Keyword(k) => format!(":{}", k),
         MapKey::Nil => "nil".to_string(),
     }
 }

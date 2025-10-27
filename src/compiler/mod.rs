@@ -24,6 +24,7 @@ const TAG_BOOLEAN: i64 = 2;
 const TAG_STRING: i64 = 3;
 const TAG_VECTOR: i64 = 4;
 const TAG_MAP: i64 = 5;
+const TAG_KEYWORD: i64 = 6;
 const TAG_ANY: i64 = 0xff;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -32,6 +33,7 @@ pub enum ValueKind {
     Number,
     Boolean,
     String,
+    Keyword,
     Vector,
     Map,
     Nil,
@@ -48,6 +50,7 @@ impl ValueKind {
             ValueKind::Number => TAG_NUMBER,
             ValueKind::Boolean => TAG_BOOLEAN,
             ValueKind::String => TAG_STRING,
+            ValueKind::Keyword => TAG_KEYWORD,
             ValueKind::Vector => TAG_VECTOR,
             ValueKind::Map => TAG_MAP,
             ValueKind::Any => TAG_ANY,
@@ -239,6 +242,14 @@ pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &
         }
         Node::List { root } => compile_list(root, context, program),
         Node::Vector { root } => compile_vector_literal(root, context, program),
+        Node::Map { entries } => {
+            let mut flattened = Vec::with_capacity(entries.len() * 2);
+            for (key, value) in entries {
+                flattened.push(key.clone());
+                flattened.push(value.clone());
+            }
+            compile_hash_map(&flattened, context, program)
+        }
     }
 }
 
@@ -374,9 +385,9 @@ fn resolve_value_kind(node: &Node, initial: ValueKind, context: &CompileContext)
 fn resolve_map_key_kind(node: &Node, initial: ValueKind, context: &CompileContext) -> Result<ValueKind, CompileError> {
     let resolved = resolve_value_kind(node, initial, context);
     match resolved {
-        ValueKind::Number | ValueKind::Boolean | ValueKind::String | ValueKind::Nil => Ok(resolved),
+        ValueKind::Number | ValueKind::Boolean | ValueKind::String | ValueKind::Keyword | ValueKind::Nil => Ok(resolved),
         ValueKind::Any => Err(CompileError::InvalidExpression("map keys must have a concrete type".to_string())),
-        _ => Err(CompileError::InvalidExpression("map keys must be numbers, booleans, strings, or nil".to_string())),
+        _ => Err(CompileError::InvalidExpression("map keys must be numbers, booleans, strings, keywords, or nil".to_string())),
     }
 }
 
@@ -386,6 +397,7 @@ fn runtime_tag_for_key(kind: ValueKind) -> i64 {
         ValueKind::Number => TAG_NUMBER,
         ValueKind::Boolean => TAG_BOOLEAN,
         ValueKind::String => TAG_STRING,
+        ValueKind::Keyword => TAG_KEYWORD,
         _ => TAG_ANY,
     }
 }
@@ -396,6 +408,7 @@ fn runtime_tag_for_value(kind: ValueKind) -> i64 {
         ValueKind::Number => TAG_NUMBER,
         ValueKind::Boolean => TAG_BOOLEAN,
         ValueKind::String => TAG_STRING,
+        ValueKind::Keyword => TAG_KEYWORD,
         ValueKind::Vector => TAG_VECTOR,
         ValueKind::Map => TAG_MAP,
         ValueKind::Any => TAG_ANY,
@@ -752,6 +765,11 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
                 if clone_flag != 0 {
                     slot_needs_free = true;
                 }
+            }
+            ValueKind::Keyword => {
+                instructions.push(IRInstruction::Push(0));
+                instructions.push(IRInstruction::RuntimeCall("_string_normalize".to_string(), 2));
+                slot_needs_free = false;
             }
             ValueKind::Nil => {
                 instructions.push(IRInstruction::Push(0));
@@ -1129,6 +1147,13 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_keyword_literal() {
+        let program = compile_expression(":kw").unwrap();
+        assert_eq!(program.instructions, vec![IRInstruction::PushString(0), IRInstruction::Return]);
+        assert_eq!(program.string_literals, vec![":kw".to_string()]);
+    }
+
+    #[test]
     fn test_compile_arithmetic() {
         let program = compile_expression("(+ 2 3)").unwrap();
         assert_eq!(program.instructions, vec![IRInstruction::Push(2), IRInstruction::Push(3), IRInstruction::Add, IRInstruction::Return]);
@@ -1236,6 +1261,24 @@ mod tests {
             inst,
             IRInstruction::RuntimeCall(name, 5) if name == "_map_create"
         )));
+        assert_eq!(program.instructions.last(), Some(&IRInstruction::Return));
+    }
+
+    #[test]
+    fn test_compile_map_literal_syntax_runtime_call() {
+        let program = compile_expression("{\"a\" 1 \"b\" 2}").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_create"
+        )));
+        assert_eq!(program.instructions.last(), Some(&IRInstruction::Return));
+    }
+
+    #[test]
+    fn test_compile_keyword_map_key_emits_keyword_tag() {
+        let program = compile_expression("{:name 1}").unwrap();
+        assert!(program.string_literals.contains(&":name".to_string()));
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::Push(value) if *value == super::TAG_KEYWORD)));
     }
 
     #[test]

@@ -39,6 +39,9 @@ The interpreter provides a complete Lisp experience with rich error reporting an
 - Anonymous functions via `fn` with closures
 - Function invocation with arity checking
 - String helpers: `str`, `count`, `get`, `subs`
+- Keyword literals like `:name` that self-evaluate and act as map keys
+- Vector literals `[...]` and helpers (`vec`, `get`, `subs`)
+- Hash map helpers (`hash-map`, `assoc`, `dissoc`, `contains?`, `get`) and `{}` literal syntax
 - Comprehensive runtime errors for arity, type, and undefined symbols
 
 ### Compiler Modes
@@ -48,8 +51,10 @@ Slisp includes a stack-based compiler that lowers expressions to an intermediate
 - JIT mode (`slisp --compile`) compiles and executes expressions immediately
 - Ahead-of-time compilation produces standalone ELF binaries linked with the runtime
 - Supports the same expression set as the interpreter, including arithmetic, comparisons, logical operations, `if`, and `let`
+- Emits keyword literals (`:name`) with dedicated tagging so compiled maps and equality checks mirror interpreter semantics
 - Handles nested and multi-operand expressions
 - Performs automatic memory management for heap-allocated strings within lexical scopes
+- Generates ownership-aware code for vectors and maps, including `[...]` and `{...}` literal syntax
 
 ## Sample Session
 

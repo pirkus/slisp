@@ -236,6 +236,35 @@ mod tests {
     }
 
     #[test]
+    fn map_keyword_keys_roundtrip() {
+        unsafe {
+            const TAG_KEYWORD: i64 = 6;
+            const TAG_NUMBER: i64 = 1;
+            let literal: &[u8] = b":name\0";
+            let keyword = _string_clone(literal.as_ptr());
+            assert!(!keyword.is_null());
+
+            let map_ptr = _map_assoc(core::ptr::null(), keyword as i64, TAG_KEYWORD, 42, TAG_NUMBER);
+            assert!(!map_ptr.is_null());
+            assert_eq!(_map_count(map_ptr), 1);
+
+            let mut out_value = 0i64;
+            let mut out_tag = 0u8;
+            assert_eq!(_map_get(map_ptr, keyword as i64, TAG_KEYWORD, &mut out_value, &mut out_tag), 1);
+            assert_eq!(out_value, 42);
+            assert_eq!(out_tag, TAG_NUMBER as u8);
+
+            let rendered = _map_to_string(map_ptr);
+            assert!(!rendered.is_null());
+            assert_eq!(_string_equals(rendered, b"{:name 42}\0".as_ptr()), 1);
+            _free(rendered);
+
+            _map_free(map_ptr);
+            _free(keyword);
+        }
+    }
+
+    #[test]
     fn map_nested_values_use_map_tag() {
         unsafe {
             const TAG_STRING: i64 = 3;

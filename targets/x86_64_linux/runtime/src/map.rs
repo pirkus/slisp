@@ -28,6 +28,7 @@ const TAG_BOOLEAN: u8 = 2;
 const TAG_STRING: u8 = 3;
 const TAG_VECTOR: u8 = 4;
 const TAG_MAP: u8 = 5;
+const TAG_KEYWORD: u8 = 6;
 const TAG_ANY: u8 = 0xff;
 
 #[inline]
@@ -172,7 +173,7 @@ unsafe fn map_keys_equal(stored_tag: u8, stored_value: i64, query_tag: u8, query
     match stored_tag {
         TAG_NIL | TAG_NUMBER => stored_value == query_value,
         TAG_BOOLEAN => canonical_boolean(stored_value) == canonical_boolean(query_value),
-        TAG_STRING => {
+        TAG_STRING | TAG_KEYWORD => {
             let left = stored_value as *const u8;
             let right = query_value as *const u8;
             _string_equals(left, right) != 0
@@ -344,6 +345,39 @@ unsafe fn render_map_key(tag: u8, value: i64) -> EntryRender {
                 }
             }
         }
+        TAG_KEYWORD => {
+            if value == 0 {
+                EntryRender {
+                    ptr: NIL_LITERAL.as_ptr() as *mut u8,
+                    len: 3,
+                    owned: false,
+                }
+            } else {
+                let source = value as *const u8;
+                if source.is_null() {
+                    EntryRender {
+                        ptr: NIL_LITERAL.as_ptr() as *mut u8,
+                        len: 3,
+                        owned: false,
+                    }
+                } else {
+                    let cloned = _string_clone(source);
+                    if cloned.is_null() {
+                        EntryRender {
+                            ptr: NIL_LITERAL.as_ptr() as *mut u8,
+                            len: 3,
+                            owned: false,
+                        }
+                    } else {
+                        EntryRender {
+                            ptr: cloned,
+                            len: _string_count(cloned) as usize,
+                            owned: true,
+                        }
+                    }
+                }
+            }
+        }
         _ => EntryRender {
             ptr: NIL_LITERAL.as_ptr() as *mut u8,
             len: 3,
@@ -375,6 +409,30 @@ unsafe fn render_map_value(tag: u8, value: i64) -> EntryRender {
             }
         }
         TAG_STRING => {
+            if value == 0 {
+                EntryRender {
+                    ptr: NIL_LITERAL.as_ptr() as *mut u8,
+                    len: 3,
+                    owned: false,
+                }
+            } else {
+                let cloned = _string_clone(value as *const u8);
+                if cloned.is_null() {
+                    EntryRender {
+                        ptr: NIL_LITERAL.as_ptr() as *mut u8,
+                        len: 3,
+                        owned: false,
+                    }
+                } else {
+                    EntryRender {
+                        ptr: cloned,
+                        len: _string_count(cloned) as usize,
+                        owned: true,
+                    }
+                }
+            }
+        }
+        TAG_KEYWORD => {
             if value == 0 {
                 EntryRender {
                     ptr: NIL_LITERAL.as_ptr() as *mut u8,

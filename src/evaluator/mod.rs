@@ -14,6 +14,7 @@ pub enum MapKey {
     Number(isize),
     Boolean(bool),
     String(String),
+    Keyword(String),
     Nil,
 }
 
@@ -22,6 +23,7 @@ pub enum Value {
     Number(isize),
     Boolean(bool),
     String(String),
+    Keyword(String),
     Vector(Vec<Value>),
     Map(HashMap<MapKey, Value>),
     Nil,
@@ -48,8 +50,9 @@ impl MapKey {
             Value::Number(n) => Ok(MapKey::Number(*n)),
             Value::Boolean(b) => Ok(MapKey::Boolean(*b)),
             Value::String(s) => Ok(MapKey::String(s.clone())),
+            Value::Keyword(k) => Ok(MapKey::Keyword(k.clone())),
             Value::Nil => Ok(MapKey::Nil),
-            _ => Err(EvalError::TypeError("map keys must be numbers, booleans, strings, or nil".to_string())),
+            _ => Err(EvalError::TypeError("map keys must be numbers, booleans, strings, keywords, or nil".to_string())),
         }
     }
 }
@@ -66,6 +69,7 @@ pub(crate) fn eval_with_env(node: &Node, env: &mut Environment) -> Result<Value,
         Node::Symbol { value } => eval_symbol(value, env),
         Node::List { root } => eval_list(root, env),
         Node::Vector { root } => eval_vector(root, env),
+        Node::Map { entries } => eval_map_literal(entries, env),
     }
 }
 
@@ -74,6 +78,7 @@ fn eval_primitive(primitive: &Primitive) -> Result<Value, EvalError> {
         Primitive::Number(n) => Ok(Value::Number(*n as isize)),
         Primitive::Boolean(b) => Ok(Value::Boolean(*b)),
         Primitive::String(s) => Ok(Value::String(s.clone())),
+        Primitive::Keyword(k) => Ok(Value::Keyword(k.clone())),
     }
 }
 
@@ -151,6 +156,17 @@ fn eval_vector(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError
     Ok(Value::Vector(values))
 }
 
+fn eval_map_literal(entries: &[(Node, Node)], env: &mut Environment) -> Result<Value, EvalError> {
+    let mut map = HashMap::with_capacity(entries.len());
+    for (key_node, value_node) in entries {
+        let key_value = eval_with_env(key_node, env)?;
+        let key = MapKey::try_from_value(&key_value)?;
+        let value = eval_with_env(value_node, env)?;
+        map.insert(key, value);
+    }
+    Ok(Value::Map(map))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,6 +233,31 @@ mod tests {
         assert_eq!(parse_and_eval("(if (and (> 10 5) (< 3 8)) (+ 2 3) (* 2 4))"), Ok(Value::Number(5)));
 
         assert_eq!(parse_and_eval("(+ (* 2 3) (if (= 1 1) 4 0))"), Ok(Value::Number(10)));
+    }
+
+    #[test]
+    fn test_keyword_literal() {
+        assert_eq!(parse_and_eval(":hello"), Ok(Value::Keyword("hello".to_string())));
+    }
+
+    #[test]
+    fn test_map_literal_with_keyword_key() {
+        let mut expected = HashMap::new();
+        expected.insert(MapKey::Keyword("name".to_string()), Value::String("Ada".to_string()));
+        assert_eq!(parse_and_eval("{:name \"Ada\"}"), Ok(Value::Map(expected)));
+    }
+
+    #[test]
+    fn test_get_with_keyword_key() {
+        assert_eq!(parse_and_eval("(get {:name \"Ada\"} :name)"), Ok(Value::String("Ada".to_string())));
+    }
+
+    #[test]
+    fn test_map_literal() {
+        let mut expected = HashMap::new();
+        expected.insert(MapKey::String("foo".to_string()), Value::Number(1));
+        expected.insert(MapKey::String("bar".to_string()), Value::Boolean(true));
+        assert_eq!(parse_and_eval("{\"foo\" 1 \"bar\" true}"), Ok(Value::Map(expected)));
     }
 
     #[test]
