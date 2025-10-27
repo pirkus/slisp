@@ -16,12 +16,6 @@ while IFS= read -r -d '' file; do
     binary_path="$output_dir/$program_name"
     rel_binary="tests/programs/target/$program_name"
 
-    if [[ "$rel_path" == tests/programs/maps/* ]]; then
-        echo "Skipping $rel_path (map compiler support pending)"
-        echo
-        continue
-    fi
-
     echo "Compiling $rel_path -> $rel_binary"
     if cargo run --quiet -- --compile -o "$rel_binary" "$rel_path"; then
         echo "Compiled $rel_path"

@@ -23,6 +23,7 @@ const TAG_NUMBER: i64 = 1;
 const TAG_BOOLEAN: i64 = 2;
 const TAG_STRING: i64 = 3;
 const TAG_VECTOR: i64 = 4;
+const TAG_MAP: i64 = 5;
 const TAG_ANY: i64 = 0xff;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -43,13 +44,13 @@ impl ValueKind {
 
     pub fn runtime_tag(self) -> i64 {
         match self {
-            ValueKind::Nil => 0,
-            ValueKind::Number => 1,
-            ValueKind::Boolean => 2,
-            ValueKind::String => 3,
-            ValueKind::Vector => 4,
-            ValueKind::Map => 0xff,
-            ValueKind::Any => 0xff,
+            ValueKind::Nil => TAG_NIL,
+            ValueKind::Number => TAG_NUMBER,
+            ValueKind::Boolean => TAG_BOOLEAN,
+            ValueKind::String => TAG_STRING,
+            ValueKind::Vector => TAG_VECTOR,
+            ValueKind::Map => TAG_MAP,
+            ValueKind::Any => TAG_ANY,
         }
     }
 }
@@ -396,7 +397,7 @@ fn runtime_tag_for_value(kind: ValueKind) -> i64 {
         ValueKind::Boolean => TAG_BOOLEAN,
         ValueKind::String => TAG_STRING,
         ValueKind::Vector => TAG_VECTOR,
-        ValueKind::Map => TAG_ANY,
+        ValueKind::Map => TAG_MAP,
         ValueKind::Any => TAG_ANY,
     }
 }

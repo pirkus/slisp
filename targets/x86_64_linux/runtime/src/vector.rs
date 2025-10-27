@@ -1,7 +1,7 @@
 use core::mem::size_of;
 use core::ptr::{copy_nonoverlapping, null_mut};
 
-use crate::{_allocate, _free, _string_clone, _string_count, _string_from_number, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL};
+use crate::{_allocate, _free, _map_to_string, _string_clone, _string_count, _string_from_number, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL};
 
 #[repr(C)]
 struct VectorHeader {
@@ -14,6 +14,7 @@ const TAG_NUMBER: u8 = 1;
 const TAG_BOOLEAN: u8 = 2;
 const TAG_STRING: u8 = 3;
 const TAG_VECTOR: u8 = 4;
+const TAG_MAP: u8 = 5;
 const TAG_ANY: u8 = 0xff;
 
 #[repr(C)]
@@ -175,6 +176,30 @@ unsafe fn materialize_element_render(value: i64, tag: u8) -> ElementRender {
                     ElementRender {
                         ptr: nested,
                         len: _string_count(nested) as usize,
+                        owned: true,
+                    }
+                }
+            }
+        }
+        TAG_MAP => {
+            if value == 0 {
+                ElementRender {
+                    ptr: NIL_LITERAL.as_ptr() as *mut u8,
+                    len: 3,
+                    owned: false,
+                }
+            } else {
+                let rendered = _map_to_string(value as *const u8);
+                if rendered.is_null() {
+                    ElementRender {
+                        ptr: NIL_LITERAL.as_ptr() as *mut u8,
+                        len: 3,
+                        owned: false,
+                    }
+                } else {
+                    ElementRender {
+                        ptr: rendered,
+                        len: _string_count(rendered) as usize,
                         owned: true,
                     }
                 }

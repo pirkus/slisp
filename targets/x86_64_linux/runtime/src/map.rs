@@ -27,6 +27,7 @@ const TAG_NUMBER: u8 = 1;
 const TAG_BOOLEAN: u8 = 2;
 const TAG_STRING: u8 = 3;
 const TAG_VECTOR: u8 = 4;
+const TAG_MAP: u8 = 5;
 const TAG_ANY: u8 = 0xff;
 
 #[inline]
@@ -176,6 +177,7 @@ unsafe fn map_keys_equal(stored_tag: u8, stored_value: i64, query_tag: u8, query
             let right = query_value as *const u8;
             _string_equals(left, right) != 0
         }
+        TAG_VECTOR | TAG_MAP => stored_value == query_value,
         _ => false,
     }
 }
@@ -405,6 +407,30 @@ unsafe fn render_map_value(tag: u8, value: i64) -> EntryRender {
                 }
             } else {
                 let rendered = _vector_to_string(value as *const u8);
+                if rendered.is_null() {
+                    EntryRender {
+                        ptr: NIL_LITERAL.as_ptr() as *mut u8,
+                        len: 3,
+                        owned: false,
+                    }
+                } else {
+                    EntryRender {
+                        ptr: rendered,
+                        len: _string_count(rendered) as usize,
+                        owned: true,
+                    }
+                }
+            }
+        }
+        TAG_MAP => {
+            if value == 0 {
+                EntryRender {
+                    ptr: NIL_LITERAL.as_ptr() as *mut u8,
+                    len: 3,
+                    owned: false,
+                }
+            } else {
+                let rendered = _map_to_string(value as *const u8);
                 if rendered.is_null() {
                     EntryRender {
                         ptr: NIL_LITERAL.as_ptr() as *mut u8,

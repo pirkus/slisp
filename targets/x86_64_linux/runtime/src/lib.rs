@@ -234,4 +234,49 @@ mod tests {
             _map_free(map_ptr);
         }
     }
+
+    #[test]
+    fn map_nested_values_use_map_tag() {
+        unsafe {
+            const TAG_STRING: i64 = 3;
+            const TAG_NUMBER: i64 = 1;
+            const TAG_MAP: i64 = 5;
+
+            let outer_key = _string_from_number(1);
+            let nested_key = _string_from_number(2);
+            assert!(!outer_key.is_null());
+            assert!(!nested_key.is_null());
+
+            let nested_keys = [nested_key as i64];
+            let nested_key_tags = [TAG_STRING];
+            let nested_values = [42i64];
+            let nested_value_tags = [TAG_NUMBER];
+
+            let nested_map = _map_create(nested_keys.as_ptr(), nested_key_tags.as_ptr(), nested_values.as_ptr(), nested_value_tags.as_ptr(), 1);
+            assert!(!nested_map.is_null());
+
+            let base_map = _map_create(core::ptr::null(), core::ptr::null(), core::ptr::null(), core::ptr::null(), 0);
+            assert!(!base_map.is_null());
+
+            let outer_map = _map_assoc(base_map, outer_key as i64, TAG_STRING, nested_map as i64, TAG_MAP);
+            assert!(!outer_map.is_null());
+
+            let mut out_value = 0i64;
+            let mut out_tag = 0u8;
+            assert_eq!(_map_get(outer_map, outer_key as i64, TAG_STRING, &mut out_value, &mut out_tag), 1);
+            assert_eq!(out_tag, TAG_MAP as u8);
+            assert_eq!(out_value, nested_map as i64);
+
+            let rendered = _map_to_string(outer_map);
+            assert!(!rendered.is_null());
+            assert!(_string_count(rendered) > 2);
+            _free(rendered);
+
+            _map_free(outer_map);
+            _map_free(base_map);
+            _map_free(nested_map);
+            _free(nested_key);
+            _free(outer_key);
+        }
+    }
 }
