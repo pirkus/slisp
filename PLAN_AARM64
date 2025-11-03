@@ -1,0 +1,717 @@
+# ARM64 macOS Port Plan
+
+## Overview
+This document outlines the detailed steps required to port the slisp compiler from x86_64 Linux to ARM64 macOS. The port involves changes across four major dimensions:
+1. **Architecture**: x86_64 → ARM64 (AArch64)
+2. **Operating System**: Linux → macOS
+3. **Binary Format**: ELF → Mach-O
+4. **Calling Convention**: System V ABI → AAPCS64 (ARM Procedure Call Standard)
+
+## Current State
+- ✅ Working x86_64 Linux implementation with ELF output
+- ✅ JIT-backed REPL and AOT compilation
+- ✅ Runtime support for heap allocation, strings, vectors
+- ✅ Allocator telemetry and comprehensive test suite
+
+## Target Architecture
+- **Platform**: macOS (Darwin)
+- **Architecture**: ARM64 (AArch64)
+- **Binary Format**: Mach-O (Mach Object File Format)
+- **Calling Convention**: AAPCS64
+- **Linker**: macOS ld64
+
+---
+
+## Phase 1: Project Structure & Scaffolding
+
+### 1.1 Create ARM64 macOS Target Directory Structure
+- [ ] Create `targets/aarch64_macos/` directory
+- [ ] Create `targets/aarch64_macos/runtime/` subdirectory
+- [ ] Set up Cargo workspace for runtime crate
+- [ ] Create `targets/aarch64_macos/runtime/Cargo.toml`
+- [ ] Create `targets/aarch64_macos/runtime/src/` with initial module structure
+
+**Deliverable**: Directory structure mirroring `targets/x86_64_linux/`
+
+### 1.2 Create Code Generation Module Structure
+- [ ] Create `src/codegen/aarch64_macos/` directory
+- [ ] Create `src/codegen/aarch64_macos/mod.rs` with module exports
+- [ ] Create `src/codegen/aarch64_macos/abi.rs` for AAPCS64 implementation
+- [ ] Create `src/codegen/aarch64_macos/instructions.rs` for ARM64 instruction encoding
+- [ ] Create `src/codegen/aarch64_macos/codegen.rs` for core code generator
+- [ ] Update `src/codegen/mod.rs` to include ARM64 macOS module
+- [ ] Update `src/codegen/api.rs` to enable `Target::ARM64MacOS` variant
+
+**Deliverable**: Skeleton module structure with stub implementations
+
+### 1.3 Update Build System
+- [ ] Add conditional compilation flags for ARM64 macOS
+- [ ] Update `Cargo.toml` with ARM64 macOS runtime dependency (feature-gated)
+- [ ] Add workspace member for ARM64 macOS runtime
+- [ ] Update `build.rs` to handle ARM64 macOS runtime library building
+- [ ] Add `detect_host_target()` logic for macOS ARM64 detection
+
+**Deliverable**: Build system can compile for ARM64 macOS target
+
+---
+
+## Phase 2: ARM64 Instruction Encoding
+
+### 2.1 Basic ARM64 Instruction Encoders
+- [ ] **Stack Operations**
+  - [ ] `push` / `pop` using `stp`/`ldp` (store/load pair)
+  - [ ] Frame pointer setup (x29/FP, x30/LR)
+  - [ ] Stack pointer manipulation (SP)
+- [ ] **Data Movement**
+  - [ ] `mov` immediate (MOVZ/MOVK for wide immediates)
+  - [ ] `mov` register-to-register
+  - [ ] `ldr` / `str` (load/store register)
+  - [ ] `ldp` / `stp` (load/store pair)
+- [ ] **Arithmetic Operations**
+  - [ ] `add` immediate / register
+  - [ ] `sub` immediate / register
+  - [ ] `mul` / `sdiv` (signed division)
+  - [ ] `neg` (negate)
+- [ ] **Logical Operations**
+  - [ ] `and` / `orr` / `eor` (XOR)
+  - [ ] Immediate vs register forms
+- [ ] **Comparison & Conditional**
+  - [ ] `cmp` (compare)
+  - [ ] Condition code flags (EQ, NE, LT, LE, GT, GE)
+  - [ ] `csel` (conditional select)
+
+**Deliverable**: Core instruction encoders in `instructions.rs`
+
+### 2.2 Control Flow Instructions
+- [ ] **Branching**
+  - [ ] `b` (unconditional branch)
+  - [ ] `b.cond` (conditional branches: b.eq, b.ne, b.lt, etc.)
+  - [ ] `bl` (branch with link - function call)
+  - [ ] `blr` (branch to register with link)
+  - [ ] `br` (branch to register)
+  - [ ] `ret` (return)
+- [ ] **Branch Offset Calculation**
+  - [ ] Calculate PC-relative offsets (signed 26-bit for `b`, 19-bit for `b.cond`)
+  - [ ] Two-pass assembly: placeholder emission + patch phase
+- [ ] **Jump Tables & Relocation**
+  - [ ] Track branch locations for forward references
+  - [ ] Implement branch patching mechanism
+  - [ ] Handle long-range branches (trampolines if needed)
+
+**Deliverable**: Complete control flow support with forward reference resolution
+
+### 2.3 Advanced Instructions
+- [ ] **Addressing Modes**
+  - [ ] Base plus offset: `[xN, #offset]`
+  - [ ] Pre-indexed: `[xN, #offset]!`
+  - [ ] Post-indexed: `[xN], #offset`
+  - [ ] PC-relative addressing (`adrp` + `add` for symbol addresses)
+- [ ] **Wide Immediates**
+  - [ ] MOVZ (move wide with zero)
+  - [ ] MOVK (move wide keep)
+  - [ ] 64-bit immediate loading (multi-instruction sequence)
+- [ ] **Special Operations**
+  - [ ] ADRP (address of page) for position-independent code
+  - [ ] System calls via `svc` instruction
+  - [ ] No-op instruction (`nop`)
+
+**Deliverable**: Full instruction encoder suite matching x86_64 capabilities
+
+---
+
+## Phase 3: AAPCS64 Calling Convention
+
+### 3.1 Register Allocation & Usage
+- [ ] **Define Register Roles**
+  - [ ] x0-x7: Argument/result registers
+  - [ ] x8: Indirect result location (struct returns)
+  - [ ] x9-x15: Temporary registers (caller-saved)
+  - [ ] x16-x17: Intra-procedure-call temporary (IP0, IP1)
+  - [ ] x18: Platform register (reserved on some platforms)
+  - [ ] x19-x28: Callee-saved registers
+  - [ ] x29: Frame pointer (FP)
+  - [ ] x30: Link register (LR)
+  - [ ] SP: Stack pointer
+  - [ ] XZR: Zero register
+- [ ] **Implement Register Allocator**
+  - [ ] Simple stack-based evaluation (like x86_64 version)
+  - [ ] Track register liveness
+  - [ ] Spill/restore mechanism
+
+**Deliverable**: Register allocation strategy documented and implemented
+
+### 3.2 Function Prologue & Epilogue (AAPCS64)
+- [ ] **Prologue Generation** (`abi.rs`)
+  - [ ] Save FP (x29) and LR (x30) to stack using `stp`
+  - [ ] Set up new frame pointer: `mov x29, sp`
+  - [ ] Allocate stack space (16-byte aligned per AAPCS64)
+  - [ ] Save callee-saved registers if used
+  - [ ] Save incoming arguments (x0-x7) to stack slots
+- [ ] **Epilogue Generation**
+  - [ ] Restore stack pointer from frame pointer
+  - [ ] Restore FP and LR using `ldp`
+  - [ ] Return via `ret` (branches to address in LR)
+- [ ] **Stack Alignment**
+  - [ ] Ensure 16-byte alignment at all times
+  - [ ] Account for saved FP/LR (16 bytes)
+  - [ ] Round up local storage to 16-byte boundary
+
+**Deliverable**: AAPCS64-compliant function entry/exit in `abi.rs`
+
+### 3.3 Argument Passing & Return Values
+- [ ] **Argument Passing**
+  - [ ] First 8 args in x0-x7
+  - [ ] Additional args on stack (16-byte aligned)
+  - [ ] Handle mixed integer/pointer arguments
+- [ ] **Return Value Handling**
+  - [ ] Return value in x0
+  - [ ] 128-bit returns use x0 + x1
+  - [ ] Struct returns via x8 pointer (if needed)
+- [ ] **Call Setup Code**
+  - [ ] Pop arguments from evaluation stack into x0-x7
+  - [ ] Handle spilling extra args to memory stack
+  - [ ] Reverse order adjustment (match stack evaluation order)
+
+**Deliverable**: Function call/return machinery in `abi.rs`
+
+---
+
+## Phase 4: Code Generator Implementation
+
+### 4.1 Core CodeGen Structure
+- [ ] **Port `X86CodeGen` to `Aarch64MacOSCodeGen`** (`codegen.rs`)
+  - [ ] Implement `TargetBackend` trait
+  - [ ] Two-pass emission (measure + emit)
+  - [ ] Track function addresses for symbol resolution
+  - [ ] Maintain instruction offset map for IR → machine code
+- [ ] **Stack-Based Expression Evaluation**
+  - [ ] Push operation (decrement SP, store to `[SP]`)
+  - [ ] Pop operation (load from `[SP]`, increment SP)
+  - [ ] Binary operations: pop two operands, compute, push result
+  - [ ] Unary operations: pop operand, compute, push result
+
+**Deliverable**: Basic code generator skeleton with stack operations
+
+### 4.2 Expression Compilation
+- [ ] **Literal Values**
+  - [ ] Integer constants (MOVZ/MOVK sequence for wide values)
+  - [ ] Boolean values (0/1)
+  - [ ] Nil/null values
+  - [ ] String literals (reference to rodata section)
+- [ ] **Arithmetic Operations**
+  - [ ] Addition, subtraction, multiplication, division
+  - [ ] Negation
+  - [ ] Stack-based evaluation: pop operands, compute, push result
+- [ ] **Logical Operations**
+  - [ ] AND, OR, NOT
+  - [ ] Short-circuit evaluation (requires branches)
+- [ ] **Comparison Operations**
+  - [ ] Equality, inequality
+  - [ ] Less than, less/equal, greater than, greater/equal
+  - [ ] Use `cmp` + conditional branch or `csel`
+
+**Deliverable**: All expression types compiling to ARM64
+
+### 4.3 Control Flow Compilation
+- [ ] **If Expressions**
+  - [ ] Evaluate condition, push to stack
+  - [ ] Pop condition, compare with zero
+  - [ ] Branch to else/end based on condition
+  - [ ] Patch forward branches after code generation
+- [ ] **Let Bindings**
+  - [ ] Allocate stack slots for locals
+  - [ ] Evaluate binding expressions
+  - [ ] Store results in local slots
+  - [ ] Reference locals via `[FP, #-offset]`
+- [ ] **Function Calls**
+  - [ ] Evaluate arguments (push to eval stack)
+  - [ ] Call setup: move args to x0-x7
+  - [ ] Emit `bl` to target function
+  - [ ] Handle direct calls (PC-relative)
+  - [ ] Handle indirect calls (address in register)
+  - [ ] Push return value (from x0) to stack
+
+**Deliverable**: Complete control flow support
+
+### 4.4 Function Compilation
+- [ ] **Multi-Function Programs**
+  - [ ] Track function metadata (params, locals)
+  - [ ] Emit prologue/epilogue for each function
+  - [ ] Generate function bodies
+  - [ ] Build function address map
+- [ ] **Inter-Function References**
+  - [ ] Direct calls with PC-relative offsets
+  - [ ] Symbol resolution in two-pass assembly
+  - [ ] Forward reference patching
+- [ ] **Entry Point Handling**
+  - [ ] Discover `-main` or specified entry function
+  - [ ] Generate entry stub (see Phase 5)
+
+**Deliverable**: Multi-function programs compile correctly
+
+---
+
+## Phase 5: Mach-O Binary Format
+
+### 5.1 Object File Generation
+- [ ] **Use `object` Crate for Mach-O**
+  - [ ] Configure for `BinaryFormat::MachO`, `Architecture::Aarch64`
+  - [ ] Create Mach-O object file structure
+  - [ ] Add `__TEXT` segment for code
+  - [ ] Add `__DATA` segment for rodata (strings)
+- [ ] **Section Layout**
+  - [ ] `__TEXT,__text`: Executable code
+  - [ ] `__DATA,__const` or `__TEXT,__const`: Read-only data (string literals)
+  - [ ] Optional: `__DATA,__data` for mutable globals (future)
+- [ ] **Symbol Table**
+  - [ ] Define function symbols (e.g., `-main`, user functions)
+  - [ ] Define `_main` entry point symbol (macOS convention)
+  - [ ] External runtime symbols (e.g., `_heap_init`, `_allocate`)
+  - [ ] String literal symbols (private/local)
+
+**Deliverable**: Mach-O object file generation in `compile_to_object()`
+
+### 5.2 Relocations
+- [ ] **Relocation Types for ARM64 Mach-O**
+  - [ ] `ARM64_RELOC_BRANCH26`: Function call branches (`bl`)
+  - [ ] `ARM64_RELOC_PAGE21` + `ARM64_RELOC_PAGEOFF12`: ADRP + ADD for symbol addresses
+  - [ ] `ARM64_RELOC_GOT_LOAD_PAGE21` + `ARM64_RELOC_GOT_LOAD_PAGEOFF12`: GOT references (if needed)
+- [ ] **Symbol Relocations**
+  - [ ] Track relocation sites during code generation
+  - [ ] Emit relocations for function calls
+  - [ ] Emit relocations for string literal addresses
+  - [ ] External symbol relocations (runtime functions)
+- [ ] **Two-Pass Assembly Integration**
+  - [ ] First pass: measure sizes, allocate offsets
+  - [ ] Second pass: emit final code with relocation markers
+
+**Deliverable**: Complete relocation support in object files
+
+### 5.3 Entry Stub Generation
+- [ ] **macOS Entry Point Conventions**
+  - [ ] Entry symbol is `_main` (with underscore prefix)
+  - [ ] argc in x0, argv in x1, envp in x2, apple in x3 (macOS extension)
+  - [ ] Return value in x0 becomes process exit code
+- [ ] **Entry Stub Code**
+  - [ ] Initialize heap: call `_heap_init`
+  - [ ] Call user's `-main` function (slisp convention)
+  - [ ] If telemetry enabled: call `_allocator_telemetry_dump_stdout`
+  - [ ] Move result to x0
+  - [ ] Call `exit` syscall or return to `_start`
+- [ ] **Stub Relocations**
+  - [ ] `bl _heap_init` relocation
+  - [ ] `bl <user_main>` relocation
+  - [ ] `bl _allocator_telemetry_dump_stdout` (if telemetry enabled)
+
+**Deliverable**: Proper entry stub in `generate_entry_stub()`
+
+---
+
+## Phase 6: Runtime Library (ARM64 macOS)
+
+### 6.1 Heap Allocator
+- [ ] **Port Allocator to ARM64 macOS**
+  - [ ] Copy `targets/x86_64_linux/runtime/src/allocator.rs` to ARM64 runtime
+  - [ ] Adapt for macOS system calls (if needed)
+  - [ ] Implement `_heap_init`, `_allocate`, `_free`
+  - [ ] Use `mmap` on macOS (similar to Linux, but with macOS flags)
+- [ ] **Memory Management Functions**
+  - [ ] Free-list allocator (architecture-agnostic, should port directly)
+  - [ ] Ensure alignment requirements (16-byte for ARM64)
+  - [ ] Test with allocator telemetry
+
+**Deliverable**: Working heap allocator for ARM64 macOS
+
+### 6.2 String Runtime Support
+- [ ] **Port String Functions**
+  - [ ] `_string_count(s: *const u8) -> i64`
+  - [ ] `_string_concat_n(count: i64, ...) -> *mut u8`
+  - [ ] `_string_clone(s: *const u8) -> *mut u8`
+  - [ ] `_string_get(s: *const u8, index: i64) -> *mut u8`
+  - [ ] `_string_subs(s: *const u8, start: i64, end: i64) -> *mut u8`
+  - [ ] `_string_normalize(val: i64, kind: i64) -> *mut u8`
+  - [ ] `_string_from_number(n: i64) -> *mut u8`
+  - [ ] `_string_from_boolean(b: i64) -> *mut u8`
+- [ ] **Calling Convention Adjustments**
+  - [ ] Accept arguments in x0-x7 (AAPCS64)
+  - [ ] Return pointers in x0
+  - [ ] Preserve callee-saved registers (x19-x28)
+- [ ] **Test String Operations**
+  - [ ] Port `tests/programs/strings/` tests to ARM64
+  - [ ] Verify escaped strings, concatenation, substring operations
+
+**Deliverable**: Full string runtime for ARM64 macOS
+
+### 6.3 Vector Runtime Support
+- [ ] **Port Vector Functions**
+  - [ ] `_vector_create(capacity: i64) -> *mut VecHeader`
+  - [ ] `_vector_push(vec: *mut VecHeader, elem: i64)`
+  - [ ] `_vector_get(vec: *const VecHeader, index: i64) -> i64`
+  - [ ] `_vector_count(vec: *const VecHeader) -> i64`
+  - [ ] `_vector_clone(vec: *const VecHeader) -> *mut VecHeader`
+  - [ ] `_vector_free(vec: *mut VecHeader)`
+  - [ ] `_vector_to_string(vec: *const VecHeader) -> *mut u8` (for printing)
+- [ ] **Vector Layout**
+  - [ ] Ensure ARM64 alignment for header fields
+  - [ ] Verify pointer arithmetic is architecture-agnostic
+- [ ] **Test Vector Operations**
+  - [ ] Port `tests/programs/vectors/` tests
+
+**Deliverable**: Full vector runtime for ARM64 macOS
+
+### 6.4 Allocator Telemetry (Optional)
+- [ ] **Port Telemetry Functions**
+  - [ ] `_allocator_telemetry_reset()`
+  - [ ] `_allocator_telemetry_enable()`
+  - [ ] `_allocator_telemetry_dump_stdout()`
+- [ ] **macOS stdout Writing**
+  - [ ] Use macOS syscalls or libc `write()` to stdout
+  - [ ] Format telemetry output (allocation/free counts, sizes)
+- [ ] **Test Telemetry**
+  - [ ] Run `tests/programs/memory/run_allocator_telemetry.sh` on ARM64 macOS
+  - [ ] Verify zero outstanding allocations
+
+**Deliverable**: Telemetry support for memory debugging
+
+### 6.5 Build Runtime Static Library
+- [ ] **Cargo Configuration**
+  - [ ] Set `crate-type = ["staticlib"]` in runtime Cargo.toml
+  - [ ] Build with `cargo build --release` for ARM64 macOS
+  - [ ] Output: `libaarch64_macos_runtime.a`
+- [ ] **Symbol Exports**
+  - [ ] Use `#[no_mangle]` for all runtime functions
+  - [ ] Verify symbols with `nm -g libaarch64_macos_runtime.a`
+- [ ] **Integration with Linker**
+  - [ ] Update `link_with_runtime()` for ARM64 macOS
+  - [ ] Use macOS `ld` (or `clang` as driver) to link object + runtime
+  - [ ] Specify runtime library path
+
+**Deliverable**: `libaarch64_macos_runtime.a` with all runtime symbols
+
+---
+
+## Phase 7: Linking & Executable Generation
+
+### 7.1 Linker Integration
+- [ ] **macOS Linker Differences**
+  - [ ] Use `ld` or `clang` as linker driver
+  - [ ] Entry point is `_main` (not `_start` like Linux)
+  - [ ] Link against system libraries if needed (e.g., `-lSystem`)
+  - [ ] Generate Mach-O executables (not ELF)
+- [ ] **Implement `link_with_runtime()` for ARM64 macOS**
+  - [ ] Write object file to temporary `.o` file
+  - [ ] Invoke linker: `ld -o output program.o libaarch64_macos_runtime.a -arch arm64 -macos_version_min 11.0`
+  - [ ] Alternative: use `clang`: `clang -o output program.o libaarch64_macos_runtime.a -arch arm64`
+  - [ ] Handle `-lSystem` if needed (for any C library dependencies)
+  - [ ] Clean up temporary object file (unless `--keep-object` flag set)
+- [ ] **Static vs Dynamic Linking**
+  - [ ] Prefer static linking for simplicity (no external runtime dependencies)
+  - [ ] If dynamic linking needed, handle dylib loading conventions
+
+**Deliverable**: Working `link_with_runtime()` for ARM64 macOS
+
+### 7.2 Executable Testing
+- [ ] **Basic Executable Tests**
+  - [ ] Compile simple arithmetic program
+  - [ ] Run on ARM64 macOS, verify output
+  - [ ] Test return codes (exit status)
+- [ ] **Function Call Tests**
+  - [ ] Compile program with multiple functions
+  - [ ] Verify inter-function calls work
+  - [ ] Test argument passing and return values
+- [ ] **Runtime Integration Tests**
+  - [ ] Test heap allocation (string/vector programs)
+  - [ ] Verify no memory leaks (telemetry checks)
+  - [ ] Test all string operations
+  - [ ] Test all vector operations
+
+**Deliverable**: Executables running successfully on ARM64 macOS
+
+---
+
+## Phase 8: JIT Execution (In-Process)
+
+### 8.1 JIT Memory Allocation
+- [ ] **Allocate Executable Memory**
+  - [ ] Use `mmap` with `PROT_READ | PROT_WRITE | PROT_EXEC` on macOS
+  - [ ] macOS might require special entitlements or code signing for W^X policy
+  - [ ] Alternative: use `mprotect` to change permissions after writing code
+- [ ] **Copy Generated Code**
+  - [ ] Allocate buffer for machine code
+  - [ ] Copy code from generator output
+  - [ ] Set execute permission
+- [ ] **Handle macOS Security**
+  - [ ] Code signing requirements (developer ID or ad-hoc signing)
+  - [ ] Entitlements for JIT (`com.apple.security.cs.allow-jit`)
+  - [ ] Possible workaround: disable System Integrity Protection (SIP) for development
+
+**Deliverable**: Executable memory allocation on macOS
+
+### 8.2 Runtime Linking
+- [ ] **Load Runtime Library Symbols**
+  - [ ] Dynamically load runtime functions or link statically into REPL binary
+  - [ ] Get function pointers for `_heap_init`, `_allocate`, etc.
+  - [ ] Use `dlsym()` if dynamic, or direct linking if static
+- [ ] **Patch Runtime Stubs**
+  - [ ] Emit stub code for each runtime function (like x86_64 version)
+  - [ ] Stub: load function address into register, branch to it
+  - [ ] ARM64 stub example:
+    ```asm
+    adrp  x16, runtime_fn@PAGE
+    add   x16, x16, runtime_fn@PAGEOFF
+    br    x16
+    ```
+  - [ ] Patch stub addresses with actual runtime function pointers
+- [ ] **Relocation Resolution**
+  - [ ] Resolve symbol relocations in JIT code
+  - [ ] Patch `bl` instructions with target addresses
+  - [ ] Handle PC-relative addressing for string literals
+
+**Deliverable**: JIT code can call runtime functions
+
+### 8.3 JIT Execution
+- [ ] **Execute JIT Code**
+  - [ ] Cast code buffer to function pointer: `fn() -> i64`
+  - [ ] Call function, retrieve result
+  - [ ] Handle errors/crashes gracefully
+- [ ] **REPL Integration**
+  - [ ] Compile each REPL expression to ARM64 machine code
+  - [ ] Execute in-process via JIT
+  - [ ] Display results (call `println!` or format output)
+- [ ] **Test JIT Functionality**
+  - [ ] Run REPL on ARM64 macOS
+  - [ ] Execute various expressions (arithmetic, strings, vectors)
+  - [ ] Verify heap allocations don't leak
+
+**Deliverable**: Working JIT-backed REPL on ARM64 macOS
+
+---
+
+## Phase 9: Testing & Validation
+
+### 9.1 Port Test Suite
+- [ ] **Unit Tests**
+  - [ ] Instruction encoding tests (verify byte sequences)
+  - [ ] ABI tests (prologue/epilogue correctness)
+  - [ ] Relocation tests
+- [ ] **Integration Tests**
+  - [ ] Port all `tests/programs/` samples to ARM64 macOS
+  - [ ] Arithmetic: `tests/programs/arithmetic/`
+  - [ ] Strings: `tests/programs/strings/`
+  - [ ] Vectors: `tests/programs/vectors/`
+  - [ ] Functions: `tests/programs/functions/`
+  - [ ] Memory: `tests/programs/memory/`
+- [ ] **Test Harness Updates**
+  - [ ] Update `tests/programs/run_all.sh` to detect ARM64 macOS
+  - [ ] Set appropriate timeout (2 seconds default)
+  - [ ] Handle architecture-specific exclusions if needed
+
+**Deliverable**: All tests passing on ARM64 macOS
+
+### 9.2 Telemetry Validation
+- [ ] **Run Telemetry Tests**
+  - [ ] `tests/programs/memory/churn_reuse.lisp`
+  - [ ] `tests/programs/memory/escaping_strings.lisp`
+  - [ ] `tests/programs/memory/mixed_sizes.lisp`
+  - [ ] Additional telemetry workloads
+- [ ] **Verify Zero Leaks**
+  - [ ] Check allocator telemetry output
+  - [ ] Ensure allocations == frees
+  - [ ] No outstanding heap blocks
+
+**Deliverable**: Clean telemetry reports on all memory tests
+
+### 9.3 Cross-Platform Parity
+- [ ] **Feature Parity Checklist**
+  - [ ] All IR operations supported (match x86_64 coverage)
+  - [ ] All runtime functions available
+  - [ ] All test programs pass
+  - [ ] JIT and AOT modes both work
+  - [ ] REPL functionality complete
+- [ ] **Performance Benchmarking**
+  - [ ] Compare ARM64 vs x86_64 performance on same programs
+  - [ ] Identify any significant regressions
+  - [ ] Optimize hot paths if needed (register allocation, instruction selection)
+
+**Deliverable**: ARM64 macOS at feature parity with x86_64 Linux
+
+---
+
+## Phase 10: Documentation & Finalization
+
+### 10.1 Update Documentation
+- [ ] **README.md**
+  - [ ] Document ARM64 macOS support
+  - [ ] Installation instructions for macOS
+  - [ ] Build instructions (Rust toolchain, runtime compilation)
+  - [ ] Mention any macOS-specific requirements (code signing, entitlements)
+- [ ] **PLAN.md**
+  - [ ] Mark ARM64 macOS port as completed
+  - [ ] Update support matrix to include ARM64 macOS
+- [ ] **Architecture Notes**
+  - [ ] Document AAPCS64 calling convention choices
+  - [ ] Explain Mach-O binary format differences
+  - [ ] Note any macOS-specific quirks (security, linking)
+
+**Deliverable**: Complete documentation for ARM64 macOS
+
+### 10.2 Code Quality
+- [ ] **Remove Dead Code**
+  - [ ] Clean up `#[allow(dead_code)]` attributes
+  - [ ] Remove scaffolding/temporary code
+- [ ] **Code Review**
+  - [ ] Ensure idiomatic Rust throughout
+  - [ ] Consistent error handling
+  - [ ] No unwraps in production code paths
+- [ ] **Add Comments**
+  - [ ] Document complex ARM64 instruction sequences
+  - [ ] Explain non-obvious ABI choices
+  - [ ] Reference ARM Architecture Reference Manual where helpful
+
+**Deliverable**: Clean, maintainable ARM64 macOS codebase
+
+### 10.3 CI/CD Integration
+- [ ] **Add ARM64 macOS to CI**
+  - [ ] Update CircleCI config (if ARM64 macOS runners available)
+  - [ ] Or use GitHub Actions with macOS ARM64 runners
+  - [ ] Run full test suite on ARM64 macOS
+  - [ ] Build both JIT and AOT artifacts
+- [ ] **Warnings as Errors**
+  - [ ] Ensure all warnings resolved
+  - [ ] Enable `-D warnings` for ARM64 macOS builds
+- [ ] **Release Artifacts**
+  - [ ] Build ARM64 macOS binaries for releases
+  - [ ] Provide pre-built runtime library
+  - [ ] Package as `.tar.gz` or macOS installer
+
+**Deliverable**: ARM64 macOS builds in CI pipeline
+
+---
+
+## Phase 11: Future Enhancements
+
+### 11.1 Optimizations
+- [ ] **Register Allocation**
+  - [ ] Move beyond stack-based evaluation
+  - [ ] Use ARM64's 31 general-purpose registers effectively
+  - [ ] Implement simple register allocator (linear scan or graph coloring)
+- [ ] **Instruction Selection**
+  - [ ] Use combined instructions where possible (e.g., `madd` for multiply-add)
+  - [ ] Optimize immediates (use shifted immediates, avoid multi-instruction loads)
+  - [ ] Peephole optimizations
+- [ ] **SIMD/NEON Support**
+  - [ ] Use ARM64 NEON instructions for vector operations
+  - [ ] Vectorize loops (future: SIMD for array operations)
+
+**Deliverable**: Performance improvements for ARM64
+
+### 11.2 Advanced Features
+- [ ] **Closures in Compiled Code**
+  - [ ] Port closure support from interpreter to compiler
+  - [ ] Heap-allocated environment capture
+  - [ ] Closure calling convention
+- [ ] **Tail Call Optimization**
+  - [ ] Detect tail calls
+  - [ ] Replace `bl` + `ret` with `b` (tail branch)
+  - [ ] Works well with ARM64 branch instructions
+- [ ] **Exception Handling**
+  - [ ] Implement `try`/`catch` in compiled code
+  - [ ] Use setjmp/longjmp or native exception mechanisms
+
+**Deliverable**: Advanced language features on ARM64
+
+---
+
+## Key Architectural Differences Summary
+
+### Instruction Set
+| Feature              | x86_64                          | ARM64 (AArch64)                    |
+|----------------------|---------------------------------|------------------------------------|
+| Instruction Length   | Variable (1-15 bytes)           | Fixed (4 bytes)                    |
+| Operand Forms        | Reg-Reg, Reg-Mem, Mem-Reg       | Reg-Reg only (load/store separate) |
+| Immediate Encoding   | Embedded in instruction         | Limited; wide values need multiple insns |
+| Condition Codes      | Implicit flags (ZF, SF, etc.)   | Explicit flags, condition suffixes |
+| Stack Operations     | `push`/`pop` instructions       | Load/store pair (`stp`/`ldp`)      |
+| Branch Offsets       | Byte-addressed                  | Word-addressed (÷4 for offset)     |
+
+### Calling Convention
+| Aspect               | x86_64 System V ABI             | ARM64 AAPCS64                      |
+|----------------------|---------------------------------|------------------------------------|
+| Argument Registers   | RDI, RSI, RDX, RCX, R8, R9      | x0-x7                              |
+| Return Register      | RAX                             | x0 (x1 for 128-bit)                |
+| Callee-Saved         | RBX, R12-R15                    | x19-x28                            |
+| Frame Pointer        | RBP (optional)                  | x29 (FP, typically used)           |
+| Link Register        | Implicit (return addr on stack) | x30 (LR, explicit)                 |
+| Stack Alignment      | 16-byte                         | 16-byte (stricter enforcement)     |
+
+### Binary Format
+| Feature              | ELF (Linux)                     | Mach-O (macOS)                     |
+|----------------------|---------------------------------|------------------------------------|
+| File Magic           | `0x7F 'E' 'L' 'F'`              | `0xFEEDFACF` (64-bit)              |
+| Entry Symbol         | `_start`                        | `_main`                            |
+| Sections             | `.text`, `.rodata`, `.data`     | `__TEXT,__text`, `__DATA,__const`  |
+| Relocations          | `R_X86_64_*` types              | `ARM64_RELOC_*` types              |
+| Linker               | `ld` (GNU binutils)             | `ld` (Apple ld64) or `clang`       |
+| Dynamic Linking      | `LD_LIBRARY_PATH`               | `DYLD_LIBRARY_PATH`, dylib system  |
+
+---
+
+## Success Criteria
+
+The ARM64 macOS port is complete when:
+
+1. ✅ **Build System**: Project compiles on ARM64 macOS with `cargo build --release`
+2. ✅ **Runtime**: All runtime functions work (heap, strings, vectors, telemetry)
+3. ✅ **Code Generation**: Compiler generates valid ARM64 machine code for all IR constructs
+4. ✅ **Object Files**: Mach-O object files link successfully into executables
+5. ✅ **Executables**: AOT-compiled programs run correctly on ARM64 macOS
+6. ✅ **JIT**: REPL executes code in-process via JIT
+7. ✅ **Tests**: Full test suite passes (`tests/programs/run_all.sh`)
+8. ✅ **Telemetry**: Memory tests show zero leaks
+9. ✅ **Documentation**: README and PLAN updated with ARM64 macOS instructions
+10. ✅ **CI**: Automated builds and tests for ARM64 macOS
+
+---
+
+## Estimated Effort
+
+| Phase                                  | Estimated Time  |
+|----------------------------------------|-----------------|
+| Phase 1: Project Structure             | 1-2 days        |
+| Phase 2: ARM64 Instruction Encoding    | 3-5 days        |
+| Phase 3: AAPCS64 Calling Convention    | 2-3 days        |
+| Phase 4: Code Generator Implementation | 4-6 days        |
+| Phase 5: Mach-O Binary Format          | 3-4 days        |
+| Phase 6: Runtime Library               | 3-5 days        |
+| Phase 7: Linking & Executables         | 2-3 days        |
+| Phase 8: JIT Execution                 | 2-4 days        |
+| Phase 9: Testing & Validation          | 3-5 days        |
+| Phase 10: Documentation & Finalization | 1-2 days        |
+| **Total**                              | **24-39 days**  |
+
+**Note**: Times assume one developer working full-time. Parallelization possible for some phases (e.g., runtime work can happen alongside code generation).
+
+---
+
+## References
+
+- **ARM Architecture Reference Manual (ARMv8)**: Official ARM documentation for AArch64 instruction set
+- **AAPCS64**: Procedure Call Standard for the Arm 64-bit Architecture
+- **Mach-O File Format Reference**: Apple's documentation on Mach-O structure
+- **`object` crate documentation**: Rust library for reading/writing object files
+- **macOS ld64 Linker**: Apple's linker documentation
+- **Rust ARM64 Target Triple**: `aarch64-apple-darwin`
+
+---
+
+## Open Questions & Risks
+
+1. **macOS Code Signing**: JIT execution may require code signing or disabling SIP. Need to test entitlements.
+2. **W^X Policy**: Modern macOS enforces write-xor-execute. May need special syscalls or two-stage memory setup.
+3. **Runtime Performance**: ARM64 has different cache/memory characteristics. Performance profiling needed.
+4. **Linker Differences**: macOS `ld` has different flags and behaviors than GNU `ld`. May require experimentation.
+5. **SIMD/Vector Ops**: Future optimization opportunities with NEON, but not required for initial port.
+
+---
+
+By following this plan, the slisp compiler will gain full ARM64 macOS support, matching the capabilities of the existing x86_64 Linux implementation.
