@@ -42,7 +42,7 @@ The interpreter provides a complete Lisp experience with rich error reporting an
 - Keyword literals like `:name` that self-evaluate and act as map keys
 - Vector literals `[...]` and helpers (`vec`, `get`, `subs`)
 - Hash map helpers (`hash-map`, `assoc`, `dissoc`, `contains?`, `get`) and `{}` literal syntax
-- Set helpers (`set`, `disj`, `contains?`) with deterministic rendering and duplicate elimination
+- Set helpers (`set`, `disj`, `contains?`) and `#{...}` literal syntax with deterministic rendering and duplicate elimination
 - Comprehensive runtime errors for arity, type, and undefined symbols
 
 ### Compiler Modes
@@ -55,7 +55,7 @@ Slisp includes a stack-based compiler that lowers expressions to an intermediate
 - Emits keyword literals (`:name`) with dedicated tagging so compiled maps and equality checks mirror interpreter semantics
 - Handles nested and multi-operand expressions
 - Performs automatic memory management for heap-allocated strings within lexical scopes
-- Generates ownership-aware code for vectors and maps, including `[...]` and `{...}` literal syntax
+- Generates ownership-aware code for vectors, maps, and sets, including `[...]`, `{...}`, and `#{...}` literal syntax
 
 ## Sample Session
 

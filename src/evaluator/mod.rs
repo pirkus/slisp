@@ -71,6 +71,7 @@ pub(crate) fn eval_with_env(node: &Node, env: &mut Environment) -> Result<Value,
         Node::List { root } => eval_list(root, env),
         Node::Vector { root } => eval_vector(root, env),
         Node::Map { entries } => eval_map_literal(entries, env),
+        Node::Set { root } => primitives::eval_set(root, env),
     }
 }
 
@@ -311,6 +312,19 @@ mod tests {
     #[test]
     fn test_set_string_rendering() {
         assert_eq!(parse_and_eval("(str (set 2 1))"), Ok(Value::String("#{1 2}".to_string())));
+    }
+
+    #[test]
+    fn test_set_literal_constructs_set() {
+        let mut expected = HashSet::new();
+        expected.insert(MapKey::Number(1));
+        expected.insert(MapKey::Number(2));
+        assert_eq!(parse_and_eval("#{1 2 1}"), Ok(Value::Set(expected)));
+    }
+
+    #[test]
+    fn test_empty_set_literal() {
+        assert_eq!(parse_and_eval("#{}"), Ok(Value::Set(HashSet::new())));
     }
 
     #[test]

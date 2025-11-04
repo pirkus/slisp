@@ -253,6 +253,7 @@ pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &
             }
             compile_hash_map(&flattened, context, program)
         }
+        Node::Set { root } => compile_set_literal(root, context, program),
     }
 }
 
@@ -1413,6 +1414,26 @@ mod tests {
         assert!(program.instructions.iter().any(|inst| matches!(
             inst,
             IRInstruction::RuntimeCall(name, 5) if name == "_map_create"
+        )));
+        assert_eq!(program.instructions.last(), Some(&IRInstruction::Return));
+    }
+
+    #[test]
+    fn test_compile_set_literal_syntax_runtime_call() {
+        let program = compile_expression("#{1 2}").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 3) if name == "_set_create"
+        )));
+        assert_eq!(program.instructions.last(), Some(&IRInstruction::Return));
+    }
+
+    #[test]
+    fn test_compile_empty_set_literal_syntax_runtime_call() {
+        let program = compile_expression("#{}").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 3) if name == "_set_create"
         )));
         assert_eq!(program.instructions.last(), Some(&IRInstruction::Return));
     }

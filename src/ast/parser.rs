@@ -17,6 +17,7 @@ enum ContainerKind {
     List,
     Vector,
     Map,
+    Set,
 }
 
 impl AstParser {
@@ -48,6 +49,14 @@ impl AstParser {
                     *offset += 1;
                     sexp.push(Self::parse_container(input, offset, true, ContainerKind::Vector));
                 }
+                '#' => {
+                    flush_buffer(&mut buffer, &mut sexp);
+                    if *offset + 1 >= input.len() || input[*offset + 1] as char != '{' {
+                        panic!("Unexpected # sequence");
+                    }
+                    *offset += 2;
+                    sexp.push(Self::parse_container(input, offset, true, ContainerKind::Set));
+                }
                 '{' => {
                     flush_buffer(&mut buffer, &mut sexp);
                     *offset += 1;
@@ -73,20 +82,24 @@ impl AstParser {
                     return Node::new_vector_from_raw(sexp);
                 }
                 '}' => {
-                    if !inside_container || kind != ContainerKind::Map {
+                    if !inside_container || (kind != ContainerKind::Map && kind != ContainerKind::Set) {
                         panic!("Unexpected closing brace");
                     }
                     flush_buffer(&mut buffer, &mut sexp);
-                    if sexp.len() % 2 != 0 {
-                        panic!("Map literal requires key/value pairs");
+                    if kind == ContainerKind::Map {
+                        if sexp.len() % 2 != 0 {
+                            panic!("Map literal requires key/value pairs");
+                        }
+                        let mut entries = Vec::with_capacity(sexp.len() / 2);
+                        let mut iter = sexp.into_iter();
+                        while let Some(key) = iter.next() {
+                            let value = iter.next().expect("missing map value");
+                            entries.push((key, value));
+                        }
+                        return Node::new_map_from_raw(entries);
+                    } else {
+                        return Node::new_set_from_raw(sexp);
                     }
-                    let mut entries = Vec::with_capacity(sexp.len() / 2);
-                    let mut iter = sexp.into_iter();
-                    while let Some(key) = iter.next() {
-                        let value = iter.next().expect("missing map value");
-                        entries.push((key, value));
-                    }
-                    return Node::new_map_from_raw(entries);
                 }
                 ';' => {
                     flush_buffer(&mut buffer, &mut sexp);
@@ -364,6 +377,18 @@ mod tests {
     fn parse_empty_map_literal() {
         let parsed = AstParser::parse_sexp_new_domain(b"{}", &mut 0);
         assert_eq!(parsed, Node::new_map_from_raw(vec![]));
+    }
+
+    #[test]
+    fn parse_set_literal() {
+        let parsed = AstParser::parse_sexp_new_domain(b"#{1 2}", &mut 0);
+        assert_eq!(parsed, Node::new_set_from_raw(vec![Node::new_number(1), Node::new_number(2)]));
+    }
+
+    #[test]
+    fn parse_empty_set_literal() {
+        let parsed = AstParser::parse_sexp_new_domain(b"#{}", &mut 0);
+        assert_eq!(parsed, Node::new_set_from_raw(vec![]));
     }
 
     #[test]
