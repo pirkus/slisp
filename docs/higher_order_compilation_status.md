@@ -29,7 +29,9 @@ Compiler infrastructure is complete and functional for `map`:
 
 **Status:**
 - ✅ `map` works in both JIT and AOT modes
-- ⚠️ `filter` and `reduce` have pre-existing compiler limitations (comparison operators not yet implemented)
+- ✅ `filter` works in both JIT and AOT modes
+- ✅ `reduce` works in both JIT and AOT modes
+- ✅ Comparison operators (`>`, `<`, `>=`, `<=`, `=`) fully implemented
 - ✅ Function pointers correctly passed to runtime helpers
 - ✅ System V ABI calling convention properly maintained
 
@@ -77,20 +79,68 @@ obj.add_relocation(text_section, ObjectRelocation {
 
 The linker resolves these to actual function addresses.
 
-## Critical Fix: Register Preservation
+## Critical Fixes
 
-**Problem:** Arithmetic instructions (mul, sub) were using RBX as a scratch register, but RBX is callee-saved in System V ABI. When runtime helpers called slisp functions, RBX was clobbered, causing crashes.
+### Fix 1: Register Preservation
+
+**Problem:** Arithmetic instructions (add, mul, sub) were using RBX as a scratch register, but RBX is callee-saved in System V ABI. When runtime helpers called slisp functions, RBX was clobbered, causing crashes.
 
 **Solution:** Changed arithmetic instructions to use RCX (caller-saved) instead:
 ```rust
 // Before: Used RBX (callee-saved - WRONG)
-vec![0x58, 0x5b, 0x48, 0x0f, 0xaf, 0xd8, 0x53]
+vec![0x58, 0x5b, 0x48, 0x01, 0xd8, 0x50]  // add
+vec![0x58, 0x5b, 0x48, 0x0f, 0xaf, 0xd8, 0x53]  // mul
 
 // After: Use RCX (caller-saved - CORRECT)
-vec![0x58, 0x59, 0x48, 0x0f, 0xaf, 0xc8, 0x51]
+vec![0x58, 0x59, 0x48, 0x01, 0xc8, 0x50]  // add
+vec![0x58, 0x59, 0x48, 0x0f, 0xaf, 0xc8, 0x51]  // mul
 ```
 
 This ensures functions preserve callee-saved registers as required by System V ABI.
+
+### Fix 2: Comparison Operators
+
+**Problem:** Compiler lowering generated comparison IR instructions, but codegen didn't implement them.
+
+**Solution:** Added x86-64 instruction generators using `cmp` and `setcc` instructions:
+```rust
+pub fn generate_greater() -> Vec<u8> {
+    vec![
+        0x58,               // pop rax (second operand)
+        0x59,               // pop rcx (first operand)
+        0x48, 0x39, 0xc1,   // cmp rcx, rax
+        0x0f, 0x9f, 0xc0,   // setg al (set AL to 1 if rcx > rax, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0,  // movzx rax, al (zero-extend)
+        0x50,               // push rax
+    ]
+}
+```
+
+Implemented: `Equal`, `Less`, `Greater`, `LessEqual`, `GreaterEqual`
+
+### Fix 3: Reduce Argument Ordering
+
+**Problem:** `compile_reduce` pushed function address and init value early, but vector creation consumed them from the stack before RuntimeCall.
+
+**Solution:** Save all arguments in local slots, then reload just before RuntimeCall:
+```rust
+// Save to locals
+let func_slot = context.allocate_temp_slot();
+instructions.push(IRInstruction::PushFunctionAddress(func_name));
+instructions.push(IRInstruction::StoreLocal(func_slot));
+
+let init_slot = context.allocate_temp_slot();
+instructions.extend(init_result.instructions);
+instructions.push(IRInstruction::StoreLocal(init_slot));
+
+// ... create vector and save to vec_slot ...
+
+// Reload in correct order for RuntimeCall
+instructions.push(IRInstruction::LoadLocal(func_slot));  // RDI
+instructions.push(IRInstruction::LoadLocal(init_slot));  // RSI
+instructions.push(IRInstruction::LoadLocal(vec_slot));   // RDX
+instructions.push(IRInstruction::RuntimeCall("_vector_reduce", 3));
+```
 
 ## Testing Results
 
@@ -105,8 +155,8 @@ This ensures functions preserve callee-saved registers as required by System V A
 | Program | Result | Notes |
 |---------|--------|-------|
 | `compiled_map_test.slisp` | ✅ PASS (exit code 5) | Maps `double` over `[1 2 3 4 5]`, counts result |
-| `compiled_filter_test.slisp` | ⚠️ FAIL (exit code 0) | Requires comparison operators (`>` not yet compiled) |
-| `compiled_reduce_test.slisp` | ⚠️ SEGFAULT | Requires additional compiler support |
+| `compiled_filter_test.slisp` | ✅ PASS (exit code 5) | Filters `[1 2 3 4 5]` where `> 0`, counts result |
+| `compiled_reduce_test.slisp` | ✅ PASS (exit code 15) | Reduces `[1 2 3 4 5]` with `add` from 0 = 15 |
 
 **Verified:**
 - ✅ Function pointers correctly passed to runtime
