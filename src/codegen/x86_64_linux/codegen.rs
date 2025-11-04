@@ -314,6 +314,12 @@ impl X86CodeGen {
                 code
             }
 
+            IRInstruction::PushFunctionAddress(func_name) => {
+                // Get the address of the named function and push it onto the stack
+                let func_addr = self.function_addresses.get(func_name).copied().unwrap_or(0) as i64;
+                instructions::generate_push(func_addr)
+            }
+
             IRInstruction::InitHeap => {
                 let current_pos = self.code.len();
                 self.generate_heap_init_code(current_pos)

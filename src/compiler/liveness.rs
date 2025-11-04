@@ -178,7 +178,7 @@ fn collect_last_uses_straight_line(instructions: &[IRInstruction], tracked: &Has
                     stack.push(StackEntry::Other);
                 }
             }
-            IRInstruction::LoadParam(_) | IRInstruction::Push(_) | IRInstruction::PushString(_) | IRInstruction::Allocate(_) => {
+            IRInstruction::LoadParam(_) | IRInstruction::Push(_) | IRInstruction::PushString(_) | IRInstruction::Allocate(_) | IRInstruction::PushFunctionAddress(_) => {
                 stack.push(StackEntry::Other);
             }
             IRInstruction::StoreLocal(_) => {

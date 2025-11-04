@@ -34,6 +34,7 @@ pub enum IRInstruction {
     DefineFunction(String, usize, usize), // (name, param_count, start_address)
     Call(String, usize),                  // (function_name, arg_count)
     LoadParam(usize),                     // Load parameter from current frame
+    PushFunctionAddress(String),          // Push address of named function onto stack
 
     // Memory allocation
     InitHeap,         // Initialize heap (mmap syscall to get memory region)

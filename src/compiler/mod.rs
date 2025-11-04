@@ -1226,6 +1226,9 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
             "dissoc" => compile_dissoc(args, context, program),
             "disj" => compile_disj(args, context, program),
             "contains?" => compile_contains(args, context, program),
+            "map" => compile_map(args, context, program),
+            "filter" => compile_filter(args, context, program),
+            "reduce" => compile_reduce(args, context, program),
             op => {
                 if let Some(func_info) = context.get_function(op) {
                     functions::compile_function_call(op, args, context, program, func_info.param_count)
@@ -1236,6 +1239,196 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
         },
         _ => Err(CompileError::InvalidExpression("First element must be a symbol".to_string())),
     }
+}
+
+/// Compile map: (map func-name vector)
+fn compile_map(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() != 2 {
+        return Err(CompileError::ArityError("map".to_string(), 2, args.len()));
+    }
+
+    // Get function name from first arg
+    let func_name = match &args[0] {
+        Node::Symbol { value } => value.clone(),
+        _ => return Err(CompileError::InvalidExpression("map: first argument must be a function name".to_string())),
+    };
+
+    // Verify function exists
+    if context.get_function(&func_name).is_none() {
+        return Err(CompileError::UndefinedVariable(func_name));
+    }
+
+    // Compile the vector argument
+    let vec_result = compile_node(&args[1], context, program)?;
+    let mut instructions = vec![];
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+
+    // Push function address
+    instructions.push(IRInstruction::PushFunctionAddress(func_name));
+
+    // Push vector
+    instructions.extend(vec_result.instructions);
+
+    // Track ownership if needed
+    let vec_slot = if vec_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        Some(slot)
+    } else {
+        None
+    };
+
+    // Call runtime map function
+    instructions.push(IRInstruction::RuntimeCall("_vector_map".to_string(), 2));
+
+    // Apply liveness plan for cleanup
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    if let Some(slot) = vec_slot {
+        context.release_temp_slot(slot);
+    }
+
+    Ok(CompileResult {
+        instructions,
+        kind: ValueKind::Vector,
+        heap_ownership: HeapOwnership::Owned,
+    })
+}
+
+/// Compile filter: (filter pred-name vector)
+fn compile_filter(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() != 2 {
+        return Err(CompileError::ArityError("filter".to_string(), 2, args.len()));
+    }
+
+    // Get predicate function name
+    let func_name = match &args[0] {
+        Node::Symbol { value } => value.clone(),
+        _ => return Err(CompileError::InvalidExpression("filter: first argument must be a function name".to_string())),
+    };
+
+    // Verify function exists
+    if context.get_function(&func_name).is_none() {
+        return Err(CompileError::UndefinedVariable(func_name));
+    }
+
+    // Compile the vector argument
+    let vec_result = compile_node(&args[1], context, program)?;
+    let mut instructions = vec![];
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+
+    // Push function address
+    instructions.push(IRInstruction::PushFunctionAddress(func_name));
+
+    // Push vector
+    instructions.extend(vec_result.instructions);
+
+    // Track ownership if needed
+    let vec_slot = if vec_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        Some(slot)
+    } else {
+        None
+    };
+
+    // Call runtime filter function
+    instructions.push(IRInstruction::RuntimeCall("_vector_filter".to_string(), 2));
+
+    // Apply liveness plan for cleanup
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    if let Some(slot) = vec_slot {
+        context.release_temp_slot(slot);
+    }
+
+    Ok(CompileResult {
+        instructions,
+        kind: ValueKind::Vector,
+        heap_ownership: HeapOwnership::Owned,
+    })
+}
+
+/// Compile reduce: (reduce func-name init vector)
+fn compile_reduce(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() != 3 {
+        return Err(CompileError::ArityError("reduce".to_string(), 3, args.len()));
+    }
+
+    // Get function name
+    let func_name = match &args[0] {
+        Node::Symbol { value } => value.clone(),
+        _ => return Err(CompileError::InvalidExpression("reduce: first argument must be a function name".to_string())),
+    };
+
+    // Verify function exists
+    if context.get_function(&func_name).is_none() {
+        return Err(CompileError::UndefinedVariable(func_name));
+    }
+
+    // Compile the initial value
+    let init_result = compile_node(&args[1], context, program)?;
+    let mut instructions = vec![];
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+
+    // Push function address
+    instructions.push(IRInstruction::PushFunctionAddress(func_name));
+
+    // Push initial value
+    instructions.extend(init_result.instructions);
+
+    // Track ownership if needed for init
+    if init_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        context.release_temp_slot(slot);
+    }
+
+    // Compile the vector argument
+    let vec_result = compile_node(&args[2], context, program)?;
+    instructions.extend(vec_result.instructions);
+
+    // Track ownership if needed for vector
+    let vec_slot = if vec_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        Some(slot)
+    } else {
+        None
+    };
+
+    // Call runtime reduce function
+    instructions.push(IRInstruction::RuntimeCall("_vector_reduce".to_string(), 3));
+
+    // Apply liveness plan for cleanup
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    if let Some(slot) = vec_slot {
+        context.release_temp_slot(slot);
+    }
+
+    Ok(CompileResult {
+        instructions,
+        kind: ValueKind::Number, // For now assume numeric result
+        heap_ownership: HeapOwnership::None,
+    })
 }
 
 #[cfg(test)]

@@ -581,3 +581,170 @@ pub unsafe extern "C" fn _vector_free(vec: *mut u8) {
     }
     _free(vec);
 }
+
+// Higher-order function support
+// Function pointer types: functions that take i64 args and return i64
+type UnaryFn = unsafe extern "C" fn(i64) -> i64;
+type BinaryFn = unsafe extern "C" fn(i64, i64) -> i64;
+
+/// # Safety
+///
+/// map: Apply a function to each element of a vector
+/// `func_ptr` must be a valid function pointer that takes an i64 and returns an i64
+/// `vec` must be null or a valid vector pointer
+#[no_mangle]
+pub unsafe extern "C" fn _vector_map(func_ptr: *const u8, vec: *const u8) -> *mut u8 {
+    if func_ptr.is_null() || vec.is_null() {
+        return null_mut();
+    }
+
+    let header = vec as *const VectorHeader;
+    let len = (*header).length as usize;
+
+    if len == 0 {
+        // Return empty vector
+        return _vector_create(null_mut(), null_mut(), 0);
+    }
+
+    // Create new vector for results
+    let result = vector_allocate(len);
+    if result.is_null() {
+        return null_mut();
+    }
+
+    let values = vector_data_ptr(header);
+    let tags = vector_tags_ptr(header);
+    let result_values = vector_data_ptr_mut(result);
+    let result_tags = vector_tags_ptr_mut(result);
+
+    // Cast function pointer
+    let func: UnaryFn = core::mem::transmute(func_ptr);
+
+    // Apply function to each element
+    let mut idx = 0;
+    while idx < len {
+        let value = *values.add(idx);
+        let result_value = func(value);
+        *result_values.add(idx) = result_value;
+        *result_tags.add(idx) = TAG_NUMBER; // For now, assume numeric results
+        idx += 1;
+    }
+
+    // Pad remaining tag bytes
+    let padded = padded_tag_bytes(len);
+    let mut idx = len;
+    while idx < padded {
+        *result_tags.add(idx) = TAG_ANY;
+        idx += 1;
+    }
+
+    result as *mut u8
+}
+
+/// # Safety
+///
+/// filter: Select elements that satisfy a predicate
+/// `pred_ptr` must be a valid function pointer that takes an i64 and returns an i64 (0 = false, non-zero = true)
+/// `vec` must be null or a valid vector pointer
+#[no_mangle]
+pub unsafe extern "C" fn _vector_filter(pred_ptr: *const u8, vec: *const u8) -> *mut u8 {
+    if pred_ptr.is_null() || vec.is_null() {
+        return null_mut();
+    }
+
+    let header = vec as *const VectorHeader;
+    let len = (*header).length as usize;
+
+    if len == 0 {
+        return _vector_create(null_mut(), null_mut(), 0);
+    }
+
+    let values = vector_data_ptr(header);
+    let tags = vector_tags_ptr(header);
+
+    // Cast function pointer
+    let pred: UnaryFn = core::mem::transmute(pred_ptr);
+
+    // First pass: count matching elements
+    let mut count = 0;
+    let mut idx = 0;
+    while idx < len {
+        let value = *values.add(idx);
+        if pred(value) != 0 {
+            count += 1;
+        }
+        idx += 1;
+    }
+
+    if count == 0 {
+        return _vector_create(null_mut(), null_mut(), 0);
+    }
+
+    // Create result vector
+    let result = vector_allocate(count);
+    if result.is_null() {
+        return null_mut();
+    }
+
+    let result_values = vector_data_ptr_mut(result);
+    let result_tags = vector_tags_ptr_mut(result);
+
+    // Second pass: copy matching elements
+    let mut result_idx = 0;
+    idx = 0;
+    while idx < len {
+        let value = *values.add(idx);
+        if pred(value) != 0 {
+            *result_values.add(result_idx) = value;
+            *result_tags.add(result_idx) = *tags.add(idx);
+            result_idx += 1;
+        }
+        idx += 1;
+    }
+
+    // Pad remaining tag bytes
+    let padded = padded_tag_bytes(count);
+    let mut idx = count;
+    while idx < padded {
+        *result_tags.add(idx) = TAG_ANY;
+        idx += 1;
+    }
+
+    result as *mut u8
+}
+
+/// # Safety
+///
+/// reduce: Fold/accumulate over a vector
+/// `func_ptr` must be a valid function pointer that takes two i64s and returns an i64
+/// `init` is the initial accumulator value
+/// `vec` must be null or a valid vector pointer
+#[no_mangle]
+pub unsafe extern "C" fn _vector_reduce(func_ptr: *const u8, init: i64, vec: *const u8) -> i64 {
+    if func_ptr.is_null() || vec.is_null() {
+        return init;
+    }
+
+    let header = vec as *const VectorHeader;
+    let len = (*header).length as usize;
+
+    if len == 0 {
+        return init;
+    }
+
+    let values = vector_data_ptr(header);
+
+    // Cast function pointer
+    let func: BinaryFn = core::mem::transmute(func_ptr);
+
+    // Apply function to accumulate
+    let mut acc = init;
+    let mut idx = 0;
+    while idx < len {
+        let value = *values.add(idx);
+        acc = func(acc, value);
+        idx += 1;
+    }
+
+    acc
+}

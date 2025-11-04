@@ -1,0 +1,5 @@
+; Test reduce function - sum elements (compiled version)
+(defn add [a b] (+ a b))
+
+(defn -main []
+  (reduce add 0 [1 2 3 4 5]))

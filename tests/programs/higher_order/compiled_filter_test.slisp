@@ -1,0 +1,7 @@
+; Test filter function - get positive numbers (compiled version)
+(defn is-positive [x] (> x 0))
+
+(defn -main []
+  (let [nums [1 2 3 4 5]
+        positives (filter is-positive nums)]
+    (count positives)))
