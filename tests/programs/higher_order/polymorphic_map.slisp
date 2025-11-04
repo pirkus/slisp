@@ -1,0 +1,9 @@
+; Test map over different collection types
+(defn double [x] (* x 2))
+(defn get-value [pair] (get pair 1))
+
+(defn -main []
+  (let [vec-result (map double [1 2 3])
+        set-result (map double #{1 2 3})
+        map-result (map get-value {:a 10 :b 20})]
+    (+ (count vec-result) (count set-result) (count map-result))))

@@ -1,0 +1,9 @@
+; Test filter preserving collection types
+(defn is-positive [x] (* x 2))
+(defn value-gt-1 [pair] (> (get pair 1) 1))
+
+(defn -main []
+  (let [vec-result (filter is-positive [1 2 3 4])
+        set-result (filter is-positive #{1 2 3 4})
+        map-result (filter value-gt-1 {:a 1 :b 2 :c 3})]
+    (+ (+ (count vec-result) (count set-result)) (count map-result))))

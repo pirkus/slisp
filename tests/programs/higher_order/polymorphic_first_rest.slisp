@@ -1,0 +1,6 @@
+; Test first/rest on different collection types
+(defn -main []
+  (let [vec-first (first [10 20 30])
+        set-count (count (rest #{1 2 3 4}))
+        map-count (count (rest {:a 1 :b 2 :c 3}))]
+    (+ vec-first (+ set-count map-count))))

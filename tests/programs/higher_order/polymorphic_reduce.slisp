@@ -1,0 +1,9 @@
+; Test reduce over different collection types
+(defn add [a b] (+ a b))
+(defn sum-values [acc pair] (+ acc (get pair 1)))
+
+(defn -main []
+  (let [vec-sum (reduce add 0 [1 2 3 4 5])
+        set-sum (reduce add 0 #{10 20 30})
+        map-sum (reduce sum-values 0 {:a 1 :b 2 :c 3})]
+    (+ (+ vec-sum set-sum) map-sum)))
