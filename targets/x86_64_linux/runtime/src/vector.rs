@@ -4,7 +4,7 @@ use core::ptr::{copy_nonoverlapping, null_mut};
 use crate::{_allocate, _free, _map_to_string, _string_clone, _string_count, _string_from_number, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL};
 
 #[repr(C)]
-struct VectorHeader {
+pub(crate) struct VectorHeader {
     length: u64,
     capacity: u64,
 }
@@ -15,7 +15,7 @@ const TAG_BOOLEAN: u8 = 2;
 const TAG_STRING: u8 = 3;
 const TAG_VECTOR: u8 = 4;
 const TAG_MAP: u8 = 5;
-const TAG_ANY: u8 = 0xff;
+pub(crate) const TAG_ANY: u8 = 0xff;
 
 #[repr(C)]
 struct ElementRender {
@@ -25,7 +25,7 @@ struct ElementRender {
 }
 
 #[inline]
-fn padded_tag_bytes(len: usize) -> usize {
+pub(crate) fn padded_tag_bytes(len: usize) -> usize {
     if len == 0 {
         return 0;
     }
@@ -45,7 +45,7 @@ unsafe fn vector_tags_ptr(vec: *const VectorHeader) -> *const u8 {
 }
 
 #[inline]
-unsafe fn vector_tags_ptr_mut(vec: *mut VectorHeader) -> *mut u8 {
+pub(crate) unsafe fn vector_tags_ptr_mut(vec: *mut VectorHeader) -> *mut u8 {
     (vec as *mut u8).add(size_of::<VectorHeader>())
 }
 
@@ -64,13 +64,13 @@ unsafe fn vector_data_ptr(vec: *const VectorHeader) -> *const i64 {
 }
 
 #[inline]
-unsafe fn vector_data_ptr_mut(vec: *mut VectorHeader) -> *mut i64 {
+pub(crate) unsafe fn vector_data_ptr_mut(vec: *mut VectorHeader) -> *mut i64 {
     let len = (*vec).length as usize;
     let offset = size_of::<VectorHeader>() + padded_tag_bytes(len);
     (vec as *mut u8).add(offset) as *mut i64
 }
 
-unsafe fn vector_allocate(len: usize) -> *mut VectorHeader {
+pub(crate) unsafe fn vector_allocate(len: usize) -> *mut VectorHeader {
     match vector_allocation_size(len) {
         Some(total) => {
             let raw = _allocate(total as u64);
@@ -747,4 +747,160 @@ pub unsafe extern "C" fn _vector_reduce(func_ptr: *const u8, init: i64, vec: *co
     }
 
     acc
+}
+
+/// Prepend an element to a collection (cons)
+/// Returns a new vector with the element prepended
+#[no_mangle]
+pub unsafe extern "C" fn _vector_cons(elem: i64, vec: *const u8) -> *mut u8 {
+    if vec.is_null() {
+        // cons on nil creates a single-element vector
+        let result = vector_allocate(1);
+        if result.is_null() {
+            return null_mut();
+        }
+
+        (*result).length = 1;
+        (*result).capacity = 1;
+
+        let data = vector_data_ptr_mut(result);
+        *data = elem;
+
+        let tags = vector_tags_ptr_mut(result);
+        *tags = TAG_NUMBER; // Assume number for now
+
+        // Pad remaining tag bytes
+        let tag_bytes = padded_tag_bytes(1);
+        let mut idx = 1;
+        while idx < tag_bytes {
+            *tags.add(idx) = 0xff;
+            idx += 1;
+        }
+
+        return result as *mut u8;
+    }
+
+    let header = vec as *const VectorHeader;
+    let old_len = (*header).length as usize;
+    let new_len = old_len + 1;
+
+    // Allocate new vector
+    let result = vector_allocate(new_len);
+    if result.is_null() {
+        return null_mut();
+    }
+
+    (*result).length = new_len as u64;
+    (*result).capacity = new_len as u64;
+
+    // Copy data - elem goes first
+    let result_data = vector_data_ptr_mut(result);
+    *result_data = elem;
+
+    let old_data = vector_data_ptr(header);
+    let mut idx = 0;
+    while idx < old_len {
+        *result_data.add(idx + 1) = *old_data.add(idx);
+        idx += 1;
+    }
+
+    // Copy tags - assume number tag for elem
+    let result_tags = vector_tags_ptr_mut(result);
+    *result_tags = TAG_NUMBER;
+
+    let old_tags = vector_tags_ptr(header);
+    idx = 0;
+    while idx < old_len {
+        *result_tags.add(idx + 1) = *old_tags.add(idx);
+        idx += 1;
+    }
+
+    // Pad remaining tag bytes
+    let tag_bytes = padded_tag_bytes(new_len);
+    idx = new_len;
+    while idx < tag_bytes {
+        *result_tags.add(idx) = 0xff;
+        idx += 1;
+    }
+
+    result as *mut u8
+}
+
+/// Append an element to a collection (conj)
+/// Returns a new vector with the element appended
+#[no_mangle]
+pub unsafe extern "C" fn _vector_conj(vec: *const u8, elem: i64) -> *mut u8 {
+    if vec.is_null() {
+        // conj on nil creates a single-element vector
+        let result = vector_allocate(1);
+        if result.is_null() {
+            return null_mut();
+        }
+
+        (*result).length = 1;
+        (*result).capacity = 1;
+
+        let data = vector_data_ptr_mut(result);
+        *data = elem;
+
+        let tags = vector_tags_ptr_mut(result);
+        *tags = TAG_NUMBER; // Assume number for now
+
+        // Pad remaining tag bytes
+        let tag_bytes = padded_tag_bytes(1);
+        let mut idx = 1;
+        while idx < tag_bytes {
+            *tags.add(idx) = 0xff;
+            idx += 1;
+        }
+
+        return result as *mut u8;
+    }
+
+    let header = vec as *const VectorHeader;
+    let old_len = (*header).length as usize;
+    let new_len = old_len + 1;
+
+    // Allocate new vector
+    let result = vector_allocate(new_len);
+    if result.is_null() {
+        return null_mut();
+    }
+
+    (*result).length = new_len as u64;
+    (*result).capacity = new_len as u64;
+
+    // Copy old data first
+    let result_data = vector_data_ptr_mut(result);
+    let old_data = vector_data_ptr(header);
+    let mut idx = 0;
+    while idx < old_len {
+        *result_data.add(idx) = *old_data.add(idx);
+        idx += 1;
+    }
+
+    // Append new element
+    *result_data.add(old_len) = elem;
+
+    // Copy old tags
+    let result_tags = vector_tags_ptr_mut(result);
+    let old_tags = vector_tags_ptr(header);
+    idx = 0;
+    while idx < old_len {
+        *result_tags.add(idx) = *old_tags.add(idx);
+        idx += 1;
+    }
+
+    // Add tag for new element
+    *result_tags.add(old_len) = TAG_NUMBER;
+
+    // Pad remaining tag bytes
+    let tag_bytes = padded_tag_bytes(new_len);
+    idx = new_len;
+    while idx < tag_bytes {
+        *result_tags.add(idx) = 0xff;
+        idx += 1;
+    }
+
+    result as *mut u8
 }

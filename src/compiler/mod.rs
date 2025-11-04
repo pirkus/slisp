@@ -1231,6 +1231,10 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
             "reduce" => compile_reduce(args, context, program),
             "first" => compile_first(args, context, program),
             "rest" => compile_rest(args, context, program),
+            "keys" => compile_keys(args, context, program),
+            "vals" => compile_vals(args, context, program),
+            "cons" => compile_cons(args, context, program),
+            "conj" => compile_conj(args, context, program),
             op => {
                 if let Some(func_info) = context.get_function(op) {
                     functions::compile_function_call(op, args, context, program, func_info.param_count)
@@ -1543,6 +1547,178 @@ fn compile_rest(args: &[Node], context: &mut CompileContext, program: &mut IRPro
         instructions,
         kind: ValueKind::Vector,
         heap_ownership: HeapOwnership::Owned, // rest returns a new vector
+    })
+}
+
+/// Compile keys: (keys map)
+fn compile_keys(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() != 1 {
+        return Err(CompileError::ArityError("keys".to_string(), 1, args.len()));
+    }
+
+    // Compile the map
+    let map_result = compile_node(&args[0], context, program)?;
+    let mut instructions = map_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+
+    // Track map ownership
+    if map_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+    }
+
+    // Call _map_keys(map)
+    instructions.push(IRInstruction::RuntimeCall("_map_keys".to_string(), 1));
+
+    // Apply liveness plan for cleanup
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    Ok(CompileResult {
+        instructions,
+        kind: ValueKind::Vector,
+        heap_ownership: HeapOwnership::Owned, // keys returns a new vector
+    })
+}
+
+/// Compile vals: (vals map)
+fn compile_vals(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() != 1 {
+        return Err(CompileError::ArityError("vals".to_string(), 1, args.len()));
+    }
+
+    // Compile the map
+    let map_result = compile_node(&args[0], context, program)?;
+    let mut instructions = map_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+
+    // Track map ownership
+    if map_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+    }
+
+    // Call _map_vals(map)
+    instructions.push(IRInstruction::RuntimeCall("_map_vals".to_string(), 1));
+
+    // Apply liveness plan for cleanup
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    Ok(CompileResult {
+        instructions,
+        kind: ValueKind::Vector,
+        heap_ownership: HeapOwnership::Owned, // vals returns a new vector
+    })
+}
+
+/// Compile cons: (cons elem coll)
+fn compile_cons(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() != 2 {
+        return Err(CompileError::ArityError("cons".to_string(), 2, args.len()));
+    }
+
+    // Compile the element to prepend
+    let elem_result = compile_node(&args[0], context, program)?;
+    let mut instructions = elem_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+
+    // Save element to local
+    let elem_slot = context.allocate_temp_slot();
+    instructions.push(IRInstruction::StoreLocal(elem_slot));
+    if elem_result.heap_ownership == HeapOwnership::Owned {
+        tracked_slots.insert(elem_slot);
+    }
+
+    // Compile the collection
+    let coll_result = compile_node(&args[1], context, program)?;
+    instructions.extend(coll_result.instructions);
+
+    // Save collection to local
+    let coll_slot = context.allocate_temp_slot();
+    instructions.push(IRInstruction::StoreLocal(coll_slot));
+    if coll_result.heap_ownership == HeapOwnership::Owned {
+        tracked_slots.insert(coll_slot);
+    }
+
+    // Call _vector_cons(elem, coll)
+    instructions.push(IRInstruction::LoadLocal(elem_slot));
+    instructions.push(IRInstruction::LoadLocal(coll_slot));
+    instructions.push(IRInstruction::RuntimeCall("_vector_cons".to_string(), 2));
+
+    // Release temporaries
+    context.release_temp_slot(elem_slot);
+    context.release_temp_slot(coll_slot);
+
+    // Apply liveness plan for cleanup
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    Ok(CompileResult {
+        instructions,
+        kind: ValueKind::Vector,
+        heap_ownership: HeapOwnership::Owned, // cons returns a new vector
+    })
+}
+
+/// Compile conj: (conj coll elem)
+fn compile_conj(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() != 2 {
+        return Err(CompileError::ArityError("conj".to_string(), 2, args.len()));
+    }
+
+    // Compile the collection
+    let coll_result = compile_node(&args[0], context, program)?;
+    let mut instructions = coll_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+
+    // Save collection to local
+    let coll_slot = context.allocate_temp_slot();
+    instructions.push(IRInstruction::StoreLocal(coll_slot));
+    if coll_result.heap_ownership == HeapOwnership::Owned {
+        tracked_slots.insert(coll_slot);
+    }
+
+    // Compile the element to append
+    let elem_result = compile_node(&args[1], context, program)?;
+    instructions.extend(elem_result.instructions);
+
+    // Save element to local
+    let elem_slot = context.allocate_temp_slot();
+    instructions.push(IRInstruction::StoreLocal(elem_slot));
+    if elem_result.heap_ownership == HeapOwnership::Owned {
+        tracked_slots.insert(elem_slot);
+    }
+
+    // Call _vector_conj(coll, elem)
+    instructions.push(IRInstruction::LoadLocal(coll_slot));
+    instructions.push(IRInstruction::LoadLocal(elem_slot));
+    instructions.push(IRInstruction::RuntimeCall("_vector_conj".to_string(), 2));
+
+    // Release temporaries
+    context.release_temp_slot(coll_slot);
+    context.release_temp_slot(elem_slot);
+
+    // Apply liveness plan for cleanup
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    Ok(CompileResult {
+        instructions,
+        kind: ValueKind::Vector,
+        heap_ownership: HeapOwnership::Owned, // conj returns a new vector
     })
 }
 

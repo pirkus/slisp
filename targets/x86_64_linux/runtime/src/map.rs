@@ -932,3 +932,101 @@ pub unsafe extern "C" fn _map_free(map: *mut u8) {
     }
     _free(map);
 }
+
+/// # Safety
+///
+/// Extract keys from a map into a vector
+/// `map` must be null or a valid map pointer
+#[no_mangle]
+pub unsafe extern "C" fn _map_keys(map: *const u8) -> *mut u8 {
+    use crate::vector::{_vector_create, vector_allocate, vector_data_ptr_mut, vector_tags_ptr_mut, padded_tag_bytes as vector_padded_tag_bytes, TAG_ANY as VECTOR_TAG_ANY};
+
+    if map.is_null() {
+        return _vector_create(null_mut(), null_mut(), 0);
+    }
+
+    let header = map as *const MapHeader;
+    let len = (*header).length as usize;
+
+    if len == 0 {
+        return _vector_create(null_mut(), null_mut(), 0);
+    }
+
+    // Allocate vector for keys
+    let result = vector_allocate(len);
+    if result.is_null() {
+        return null_mut();
+    }
+
+    let key_data = map_key_data_ptr(header);
+    let key_tags = map_key_tags_ptr(header);
+    let result_data = vector_data_ptr_mut(result);
+    let result_tags = vector_tags_ptr_mut(result);
+
+    // Copy keys
+    let mut idx = 0;
+    while idx < len {
+        *result_data.add(idx) = *key_data.add(idx);
+        *result_tags.add(idx) = *key_tags.add(idx);
+        idx += 1;
+    }
+
+    // Pad remaining tag bytes
+    let padded = vector_padded_tag_bytes(len);
+    let mut idx = len;
+    while idx < padded {
+        *result_tags.add(idx) = VECTOR_TAG_ANY;
+        idx += 1;
+    }
+
+    result as *mut u8
+}
+
+/// # Safety
+///
+/// Extract values from a map into a vector
+/// `map` must be null or a valid map pointer
+#[no_mangle]
+pub unsafe extern "C" fn _map_vals(map: *const u8) -> *mut u8 {
+    use crate::vector::{_vector_create, vector_allocate, vector_data_ptr_mut, vector_tags_ptr_mut, padded_tag_bytes as vector_padded_tag_bytes, TAG_ANY as VECTOR_TAG_ANY};
+
+    if map.is_null() {
+        return _vector_create(null_mut(), null_mut(), 0);
+    }
+
+    let header = map as *const MapHeader;
+    let len = (*header).length as usize;
+
+    if len == 0 {
+        return _vector_create(null_mut(), null_mut(), 0);
+    }
+
+    // Allocate vector for values
+    let result = vector_allocate(len);
+    if result.is_null() {
+        return null_mut();
+    }
+
+    let value_data = map_value_data_ptr(header);
+    let value_tags = map_value_tags_ptr(header);
+    let result_data = vector_data_ptr_mut(result);
+    let result_tags = vector_tags_ptr_mut(result);
+
+    // Copy values
+    let mut idx = 0;
+    while idx < len {
+        *result_data.add(idx) = *value_data.add(idx);
+        *result_tags.add(idx) = *value_tags.add(idx);
+        idx += 1;
+    }
+
+    // Pad remaining tag bytes
+    let padded = vector_padded_tag_bytes(len);
+    let mut idx = len;
+    while idx < padded {
+        *result_tags.add(idx) = VECTOR_TAG_ANY;
+        idx += 1;
+    }
+
+    result as *mut u8
+}
