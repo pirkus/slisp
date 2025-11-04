@@ -509,15 +509,43 @@ pub fn eval_map(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
         Value::Vector(items) => {
             let mut results = Vec::with_capacity(items.len());
             for item in items {
-                // Create a temporary node for the value
                 let item_node = value_to_node(&item);
                 let result = crate::evaluator::special_forms::eval_function_call(func.clone(), &[item_node], env)?;
                 results.push(result);
             }
             Ok(Value::Vector(results))
         }
+        Value::Set(entries) => {
+            let mut results = Vec::with_capacity(entries.len());
+            for entry in entries {
+                let key_node = map_key_to_node(&entry);
+                let result = crate::evaluator::special_forms::eval_function_call(func.clone(), &[key_node], env)?;
+                results.push(result);
+            }
+            Ok(Value::Vector(results))
+        }
+        Value::Map(entries) => {
+            let mut results = Vec::with_capacity(entries.len());
+            for (key, value) in entries {
+                // For maps, pass a vector [key value] to the function
+                let pair = Value::Vector(vec![
+                    match key {
+                        MapKey::Number(n) => Value::Number(n),
+                        MapKey::Boolean(b) => Value::Boolean(b),
+                        MapKey::String(s) => Value::String(s),
+                        MapKey::Keyword(k) => Value::Keyword(k),
+                        MapKey::Nil => Value::Nil,
+                    },
+                    value,
+                ]);
+                let pair_node = value_to_node(&pair);
+                let result = crate::evaluator::special_forms::eval_function_call(func.clone(), &[pair_node], env)?;
+                results.push(result);
+            }
+            Ok(Value::Vector(results))
+        }
         Value::Nil => Ok(Value::Vector(vec![])),
-        _ => Err(EvalError::TypeError("map: second argument must be a vector or nil".to_string())),
+        _ => Err(EvalError::TypeError("map: second argument must be a vector, set, map, or nil".to_string())),
     }
 }
 
@@ -542,8 +570,41 @@ pub fn eval_filter(args: &[Node], env: &mut Environment) -> Result<Value, EvalEr
             }
             Ok(Value::Vector(results))
         }
+        Value::Set(entries) => {
+            let mut results = HashSet::new();
+            for entry in entries {
+                let key_node = map_key_to_node(&entry);
+                let result = crate::evaluator::special_forms::eval_function_call(pred.clone(), &[key_node], env)?;
+                if is_truthy(&result) {
+                    results.insert(entry);
+                }
+            }
+            Ok(Value::Set(results))
+        }
+        Value::Map(entries) => {
+            let mut results = std::collections::HashMap::new();
+            for (key, value) in entries {
+                // For maps, pass a vector [key value] to the predicate
+                let pair = Value::Vector(vec![
+                    match &key {
+                        MapKey::Number(n) => Value::Number(*n),
+                        MapKey::Boolean(b) => Value::Boolean(*b),
+                        MapKey::String(s) => Value::String(s.clone()),
+                        MapKey::Keyword(k) => Value::Keyword(k.clone()),
+                        MapKey::Nil => Value::Nil,
+                    },
+                    value.clone(),
+                ]);
+                let pair_node = value_to_node(&pair);
+                let result = crate::evaluator::special_forms::eval_function_call(pred.clone(), &[pair_node], env)?;
+                if is_truthy(&result) {
+                    results.insert(key, value);
+                }
+            }
+            Ok(Value::Map(results))
+        }
         Value::Nil => Ok(Value::Vector(vec![])),
-        _ => Err(EvalError::TypeError("filter: second argument must be a vector or nil".to_string())),
+        _ => Err(EvalError::TypeError("filter: second argument must be a vector, set, map, or nil".to_string())),
     }
 }
 
@@ -568,8 +629,43 @@ pub fn eval_reduce(args: &[Node], env: &mut Environment) -> Result<Value, EvalEr
                 }
                 (items[0].clone(), Value::Vector(items[1..].to_vec()))
             }
+            Value::Set(entries) => {
+                if entries.is_empty() {
+                    return Err(EvalError::InvalidOperation("reduce: empty collection with no initial value".to_string()));
+                }
+                let first = entries.iter().next().unwrap().clone();
+                let mut remaining = entries.clone();
+                remaining.remove(&first);
+                let init_val = match &first {
+                    MapKey::Number(n) => Value::Number(*n),
+                    MapKey::Boolean(b) => Value::Boolean(*b),
+                    MapKey::String(s) => Value::String(s.clone()),
+                    MapKey::Keyword(k) => Value::Keyword(k.clone()),
+                    MapKey::Nil => Value::Nil,
+                };
+                (init_val, Value::Set(remaining))
+            }
+            Value::Map(entries) => {
+                if entries.is_empty() {
+                    return Err(EvalError::InvalidOperation("reduce: empty collection with no initial value".to_string()));
+                }
+                let (first_key, first_value) = entries.iter().next().unwrap();
+                let first_pair = Value::Vector(vec![
+                    match first_key {
+                        MapKey::Number(n) => Value::Number(*n),
+                        MapKey::Boolean(b) => Value::Boolean(*b),
+                        MapKey::String(s) => Value::String(s.clone()),
+                        MapKey::Keyword(k) => Value::Keyword(k.clone()),
+                        MapKey::Nil => Value::Nil,
+                    },
+                    first_value.clone(),
+                ]);
+                let mut remaining = entries.clone();
+                remaining.remove(first_key);
+                (first_pair, Value::Map(remaining))
+            }
             Value::Nil => return Err(EvalError::InvalidOperation("reduce: empty collection with no initial value".to_string())),
-            _ => return Err(EvalError::TypeError("reduce: second argument must be a vector or nil".to_string())),
+            _ => return Err(EvalError::TypeError("reduce: second argument must be a collection or nil".to_string())),
         }
     };
 
@@ -583,8 +679,36 @@ pub fn eval_reduce(args: &[Node], env: &mut Environment) -> Result<Value, EvalEr
             }
             Ok(acc)
         }
+        Value::Set(entries) => {
+            let mut acc = init;
+            for entry in entries {
+                let acc_node = value_to_node(&acc);
+                let key_node = map_key_to_node(&entry);
+                acc = crate::evaluator::special_forms::eval_function_call(func.clone(), &[acc_node, key_node], env)?;
+            }
+            Ok(acc)
+        }
+        Value::Map(entries) => {
+            let mut acc = init;
+            for (key, value) in entries {
+                let acc_node = value_to_node(&acc);
+                let pair = Value::Vector(vec![
+                    match key {
+                        MapKey::Number(n) => Value::Number(n),
+                        MapKey::Boolean(b) => Value::Boolean(b),
+                        MapKey::String(s) => Value::String(s),
+                        MapKey::Keyword(k) => Value::Keyword(k),
+                        MapKey::Nil => Value::Nil,
+                    },
+                    value,
+                ]);
+                let pair_node = value_to_node(&pair);
+                acc = crate::evaluator::special_forms::eval_function_call(func.clone(), &[acc_node, pair_node], env)?;
+            }
+            Ok(acc)
+        }
         Value::Nil => Ok(init),
-        _ => Err(EvalError::TypeError("reduce: collection must be a vector or nil".to_string())),
+        _ => Err(EvalError::TypeError("reduce: collection must be a collection or nil".to_string())),
     }
 }
 
@@ -603,8 +727,37 @@ pub fn eval_first(args: &[Node], env: &mut Environment) -> Result<Value, EvalErr
                 Ok(items[0].clone())
             }
         }
+        Value::Set(entries) => {
+            if let Some(entry) = entries.iter().next() {
+                Ok(match entry {
+                    MapKey::Number(n) => Value::Number(*n),
+                    MapKey::Boolean(b) => Value::Boolean(*b),
+                    MapKey::String(s) => Value::String(s.clone()),
+                    MapKey::Keyword(k) => Value::Keyword(k.clone()),
+                    MapKey::Nil => Value::Nil,
+                })
+            } else {
+                Ok(Value::Nil)
+            }
+        }
+        Value::Map(entries) => {
+            if let Some((key, value)) = entries.iter().next() {
+                Ok(Value::Vector(vec![
+                    match key {
+                        MapKey::Number(n) => Value::Number(*n),
+                        MapKey::Boolean(b) => Value::Boolean(*b),
+                        MapKey::String(s) => Value::String(s.clone()),
+                        MapKey::Keyword(k) => Value::Keyword(k.clone()),
+                        MapKey::Nil => Value::Nil,
+                    },
+                    value.clone(),
+                ]))
+            } else {
+                Ok(Value::Nil)
+            }
+        }
         Value::Nil => Ok(Value::Nil),
-        _ => Err(EvalError::TypeError("first: argument must be a vector or nil".to_string())),
+        _ => Err(EvalError::TypeError("first: argument must be a collection or nil".to_string())),
     }
 }
 
@@ -623,8 +776,28 @@ pub fn eval_rest(args: &[Node], env: &mut Environment) -> Result<Value, EvalErro
                 Ok(Value::Vector(items[1..].to_vec()))
             }
         }
+        Value::Set(entries) => {
+            if entries.is_empty() {
+                Ok(Value::Set(HashSet::new()))
+            } else {
+                let first = entries.iter().next().unwrap().clone();
+                let mut remaining = entries.clone();
+                remaining.remove(&first);
+                Ok(Value::Set(remaining))
+            }
+        }
+        Value::Map(entries) => {
+            if entries.is_empty() {
+                Ok(Value::Map(std::collections::HashMap::new()))
+            } else {
+                let first_key = entries.keys().next().unwrap().clone();
+                let mut remaining = entries.clone();
+                remaining.remove(&first_key);
+                Ok(Value::Map(remaining))
+            }
+        }
         Value::Nil => Ok(Value::Vector(vec![])),
-        _ => Err(EvalError::TypeError("rest: argument must be a vector or nil".to_string())),
+        _ => Err(EvalError::TypeError("rest: argument must be a collection or nil".to_string())),
     }
 }
 
@@ -686,8 +859,33 @@ pub fn eval_concat(args: &[Node], env: &mut Environment) -> Result<Value, EvalEr
             Value::Vector(items) => {
                 result.extend(items);
             }
+            Value::Set(entries) => {
+                for entry in entries {
+                    result.push(match entry {
+                        MapKey::Number(n) => Value::Number(n),
+                        MapKey::Boolean(b) => Value::Boolean(b),
+                        MapKey::String(s) => Value::String(s),
+                        MapKey::Keyword(k) => Value::Keyword(k),
+                        MapKey::Nil => Value::Nil,
+                    });
+                }
+            }
+            Value::Map(entries) => {
+                for (key, value) in entries {
+                    result.push(Value::Vector(vec![
+                        match key {
+                            MapKey::Number(n) => Value::Number(n),
+                            MapKey::Boolean(b) => Value::Boolean(b),
+                            MapKey::String(s) => Value::String(s),
+                            MapKey::Keyword(k) => Value::Keyword(k),
+                            MapKey::Nil => Value::Nil,
+                        },
+                        value,
+                    ]));
+                }
+            }
             Value::Nil => {}
-            _ => return Err(EvalError::TypeError("concat: arguments must be vectors or nil".to_string())),
+            _ => return Err(EvalError::TypeError("concat: arguments must be collections or nil".to_string())),
         }
     }
 

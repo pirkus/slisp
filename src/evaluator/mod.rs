@@ -796,4 +796,92 @@ mod tests {
             Ok(Value::Number(2))
         );
     }
+
+    #[test]
+    fn test_map_over_set() {
+        use super::*;
+        let mut env = HashMap::new();
+        let defn_ast = AstParser::parse_sexp_new_domain(b"(defn double [x] (* x 2))", &mut 0);
+        eval_with_env(&defn_ast, &mut env).unwrap();
+
+        let map_ast = AstParser::parse_sexp_new_domain(b"(count (map double #{1 2 3}))", &mut 0);
+        let result = eval_with_env(&map_ast, &mut env).unwrap();
+        assert_eq!(result, Value::Number(3));
+    }
+
+    #[test]
+    fn test_map_over_map() {
+        use super::*;
+        let mut env = HashMap::new();
+        let defn_ast = AstParser::parse_sexp_new_domain(b"(defn get-val [pair] (get pair 1))", &mut 0);
+        eval_with_env(&defn_ast, &mut env).unwrap();
+
+        let map_ast = AstParser::parse_sexp_new_domain(b"(count (map get-val {:a 1 :b 2}))", &mut 0);
+        let result = eval_with_env(&map_ast, &mut env).unwrap();
+        assert_eq!(result, Value::Number(2));
+    }
+
+    #[test]
+    fn test_filter_set() {
+        use super::*;
+        let mut env = HashMap::new();
+        let defn_ast = AstParser::parse_sexp_new_domain(b"(defn gt-two [x] (> x 2))", &mut 0);
+        eval_with_env(&defn_ast, &mut env).unwrap();
+
+        let filter_ast = AstParser::parse_sexp_new_domain(b"(count (filter gt-two #{1 2 3 4}))", &mut 0);
+        let result = eval_with_env(&filter_ast, &mut env).unwrap();
+        assert_eq!(result, Value::Number(2));
+    }
+
+    #[test]
+    fn test_filter_map() {
+        use super::*;
+        let mut env = HashMap::new();
+        let defn_ast = AstParser::parse_sexp_new_domain(b"(defn val-gt-one [pair] (> (get pair 1) 1))", &mut 0);
+        eval_with_env(&defn_ast, &mut env).unwrap();
+
+        let filter_ast = AstParser::parse_sexp_new_domain(b"(count (filter val-gt-one {:a 1 :b 2 :c 3}))", &mut 0);
+        let result = eval_with_env(&filter_ast, &mut env).unwrap();
+        assert_eq!(result, Value::Number(2));
+    }
+
+    #[test]
+    fn test_reduce_set() {
+        use super::*;
+        let mut env = HashMap::new();
+        let defn_ast = AstParser::parse_sexp_new_domain(b"(defn add [a b] (+ a b))", &mut 0);
+        eval_with_env(&defn_ast, &mut env).unwrap();
+
+        let reduce_ast = AstParser::parse_sexp_new_domain(b"(reduce add 0 #{1 2 3})", &mut 0);
+        let result = eval_with_env(&reduce_ast, &mut env).unwrap();
+        assert_eq!(result, Value::Number(6));
+    }
+
+    #[test]
+    fn test_first_on_set() {
+        use super::*;
+        let mut env = HashMap::new();
+        let ast = AstParser::parse_sexp_new_domain(b"(first #{})", &mut 0);
+        let result = eval_with_env(&ast, &mut env).unwrap();
+        assert_eq!(result, Value::Nil);
+    }
+
+    #[test]
+    fn test_first_on_map() {
+        use super::*;
+        let mut env = HashMap::new();
+        let ast = AstParser::parse_sexp_new_domain(b"(first {})", &mut 0);
+        let result = eval_with_env(&ast, &mut env).unwrap();
+        assert_eq!(result, Value::Nil);
+    }
+
+    #[test]
+    fn test_rest_on_set() {
+        assert_eq!(parse_and_eval("(count (rest #{1 2 3}))"), Ok(Value::Number(2)));
+    }
+
+    #[test]
+    fn test_concat_mixed_collections() {
+        assert_eq!(parse_and_eval("(count (concat [1 2] #{3 4}))"), Ok(Value::Number(4)));
+    }
 }

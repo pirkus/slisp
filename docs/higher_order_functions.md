@@ -4,53 +4,74 @@ This document describes the higher-order functions and collection utilities avai
 
 ## Higher-Order Functions
 
+All higher-order functions work polymorphically across vectors, sets, and maps.
+
 ### map
-Apply a function to each element of a collection.
+Apply a function to each element of a collection. Returns a vector.
 
 ```lisp
 (defn double [x] (* x 2))
 (map double [1 2 3 4])  ; => [2 4 6 8]
+(map double #{1 2 3})   ; => [2 4 6] (order may vary)
+
+; For maps, the function receives [key value] pairs
+(defn get-value [pair] (get pair 1))
+(map get-value {:a 1 :b 2})  ; => [1 2]
 ```
 
 ### filter
-Select elements that satisfy a predicate.
+Select elements that satisfy a predicate. Preserves collection type.
 
 ```lisp
 (defn is-positive [x] (> x 0))
 (filter is-positive [1 -2 3 -4 5])  ; => [1 3 5]
+(filter is-positive #{1 -2 3 -4})   ; => #{1 3}
+
+; For maps, the predicate receives [key value] pairs and returns a map
+(defn value-gt-1 [pair] (> (get pair 1) 1))
+(filter value-gt-1 {:a 1 :b 2 :c 3})  ; => {:b 2 :c 3}
 ```
 
 ### reduce
-Fold/accumulate over a collection.
+Fold/accumulate over a collection. Works with vectors, sets, and maps.
 
 ```lisp
 (defn add [a b] (+ a b))
 (reduce add 0 [1 2 3 4 5])  ; => 15
+(reduce add 0 #{1 2 3})     ; => 6
 
 ; Without initial value (uses first element)
 (reduce add [1 2 3 4 5])  ; => 15
+
+; For maps, the function receives [key value] pairs
+(defn sum-values [acc pair] (+ acc (get pair 1)))
+(reduce sum-values 0 {:a 1 :b 2 :c 3})  ; => 6
 ```
 
 ## Collection Operations
 
 ### first
-Get the first element of a collection (returns `nil` if empty).
+Get the first element of a collection (returns `nil` if empty). Works with vectors, sets, and maps.
 
 ```lisp
-(first [1 2 3])  ; => 1
-(first [])       ; => nil
+(first [1 2 3])     ; => 1
+(first #{1 2 3})    ; => 1 (arbitrary element)
+(first {:a 1 :b 2}) ; => [:a 1] (arbitrary entry)
+(first [])          ; => nil
 ```
 
 ### rest
-Get all but the first element of a collection.
+Get all but the first element of a collection. Preserves collection type.
 
 ```lisp
-(rest [1 2 3 4])  ; => [2 3 4]
-(rest [])         ; => []
+(rest [1 2 3 4])    ; => [2 3 4]
+(rest #{1 2 3})     ; => #{2 3} (minus arbitrary first)
+(rest {:a 1 :b 2})  ; => {:b 2} (minus arbitrary first)
+(rest [])           ; => []
 ```
 
 ### cons
-Add element to the front of a collection.
+Add element to the front of a collection (vectors only).
 
 ```lisp
 (cons 1 [2 3 4])  ; => [1 2 3 4]
@@ -64,10 +85,12 @@ Conjoin element(s) to a collection (append for vectors).
 ```
 
 ### concat
-Concatenate multiple collections.
+Concatenate multiple collections. Always returns a vector. Works with any collection type.
 
 ```lisp
 (concat [1 2] [3 4] [5 6])  ; => [1 2 3 4 5 6]
+(concat [1 2] #{3 4})       ; => [1 2 3 4]
+(concat {:a 1} {:b 2})      ; => [[:a 1] [:b 2]]
 ```
 
 ## Map Utilities
