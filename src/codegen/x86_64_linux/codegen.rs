@@ -17,6 +17,12 @@ pub(super) struct SymbolRelocation {
 }
 
 #[derive(Clone)]
+pub(super) struct FunctionAddressRelocation {
+    pub offset: usize,
+    pub symbol: String,
+}
+
+#[derive(Clone)]
 pub(super) struct StringRelocation {
     pub offset: usize,
     pub index: usize,
@@ -26,6 +32,7 @@ pub(super) struct GeneratedCode {
     pub code: Vec<u8>,
     pub string_buffers: Vec<Box<[u8]>>,
     pub symbol_relocations: Vec<SymbolRelocation>,
+    pub function_address_relocations: Vec<FunctionAddressRelocation>,
     pub string_relocations: Vec<StringRelocation>,
     pub function_addresses: HashMap<String, usize>,
     pub runtime_addresses: RuntimeAddresses,
@@ -38,6 +45,7 @@ pub(super) struct X86CodeGen {
     pub string_addresses: Vec<u64>,                 // addresses of string literals in rodata segment
     pub link_mode: LinkMode,
     pub symbol_relocations: Vec<SymbolRelocation>,
+    pub function_address_relocations: Vec<FunctionAddressRelocation>,
     pub string_relocations: Vec<StringRelocation>,
     pub string_buffers: Vec<Box<[u8]>>, // Holds string data alive for JIT mode
 }
@@ -82,6 +90,7 @@ impl X86CodeGen {
             string_addresses: Vec::new(),
             link_mode,
             symbol_relocations: Vec::new(),
+            function_address_relocations: Vec::new(),
             string_relocations: Vec::new(),
             string_buffers: Vec::new(),
         }
@@ -171,6 +180,10 @@ impl X86CodeGen {
         self.symbol_relocations.push(SymbolRelocation { offset, symbol: symbol.to_string() });
     }
 
+    pub fn record_function_address_relocation(&mut self, offset: usize, symbol: &str) {
+        self.function_address_relocations.push(FunctionAddressRelocation { offset, symbol: symbol.to_string() });
+    }
+
     pub fn record_string_relocation(&mut self, offset: usize, index: usize) {
         if let LinkMode::ObjFile = self.link_mode {
             self.string_relocations.push(StringRelocation { offset, index });
@@ -182,6 +195,7 @@ impl X86CodeGen {
             code: self.code,
             string_buffers: self.string_buffers,
             symbol_relocations: self.symbol_relocations,
+            function_address_relocations: self.function_address_relocations,
             string_relocations: self.string_relocations,
             function_addresses: self.function_addresses,
             runtime_addresses: self.runtime_addresses,
@@ -235,12 +249,14 @@ impl X86CodeGen {
 
             let saved_code = self.code.clone();
             let saved_symbol_relocs_len = self.symbol_relocations.len();
+            let saved_func_addr_relocs_len = self.function_address_relocations.len();
             let saved_string_relocs_len = self.string_relocations.len();
             self.code.clear();
             self.generate_function(program, func_info);
             let func_size = self.code.len();
             self.code = saved_code;
             self.symbol_relocations.truncate(saved_symbol_relocs_len);
+            self.function_address_relocations.truncate(saved_func_addr_relocs_len);
             self.string_relocations.truncate(saved_string_relocs_len);
 
             current_address += func_size;
@@ -315,9 +331,23 @@ impl X86CodeGen {
             }
 
             IRInstruction::PushFunctionAddress(func_name) => {
-                // Get the address of the named function and push it onto the stack
-                let func_addr = self.function_addresses.get(func_name).copied().unwrap_or(0) as i64;
-                instructions::generate_push(func_addr)
+                // Get the function offset
+                let func_offset = self.function_addresses.get(func_name).copied().unwrap_or(0);
+
+                match self.link_mode {
+                    LinkMode::Jit => {
+                        // JIT: Use PC-relative LEA to get actual runtime address
+                        let current_pos = self.code.len();
+                        instructions::generate_push_function_address_jit(func_offset, current_pos)
+                    }
+                    LinkMode::ObjFile => {
+                        // AOT: Use movabs with placeholder and record relocation
+                        let current_pos = self.code.len();
+                        let (code, reloc_offset) = instructions::generate_push_function_address_aot();
+                        self.record_function_address_relocation(current_pos + reloc_offset, func_name);
+                        code
+                    }
+                }
             }
 
             IRInstruction::InitHeap => {

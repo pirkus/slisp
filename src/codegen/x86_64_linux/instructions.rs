@@ -41,9 +41,9 @@ pub fn generate_add() -> Vec<u8> {
 pub fn generate_sub() -> Vec<u8> {
     vec![
         0x58, // pop rax
-        0x5b, // pop rbx
-        0x48, 0x29, 0xc3, // sub rbx, rax
-        0x53, // push rbx
+        0x59, // pop rcx (use rcx instead of rbx - caller-saved)
+        0x48, 0x29, 0xc1, // sub rcx, rax
+        0x51, // push rcx
     ]
 }
 
@@ -51,9 +51,9 @@ pub fn generate_sub() -> Vec<u8> {
 pub fn generate_mul() -> Vec<u8> {
     vec![
         0x58, // pop rax
-        0x5b, // pop rbx
-        0x48, 0x0f, 0xaf, 0xd8, // imul rbx, rax
-        0x53, // push rbx
+        0x59, // pop rcx (use rcx instead of rbx - caller-saved)
+        0x48, 0x0f, 0xaf, 0xc8, // imul rcx, rax
+        0x51, // push rcx
     ]
 }
 
@@ -241,6 +241,42 @@ pub fn generate_runtime_call(runtime_offset: Option<i32>, arg_count: usize) -> (
     code.push(0x50);
 
     (code, call_disp_offset)
+}
+
+/// Generate machine code to push a function address onto the stack
+/// For JIT: Uses PC-relative LEA to get runtime address
+/// For AOT: Uses movabs with placeholder (requires relocation)
+/// Returns (code, relocation_offset_if_aot)
+pub fn generate_push_function_address_jit(func_offset: usize, current_pos: usize) -> Vec<u8> {
+    // Calculate PC-relative offset
+    // LEA instruction is 7 bytes: 0x48 0x8d 0x05 [4-byte disp32]
+    // RIP points to next instruction after LEA, so that's at current_pos + 7
+    let rip_after_lea = current_pos + 7;
+    let relative_offset = (func_offset as i64) - (rip_after_lea as i64);
+
+    let mut code = Vec::new();
+    // lea rax, [rip + relative_offset]
+    code.push(0x48); // REX.W prefix
+    code.push(0x8d); // LEA opcode
+    code.push(0x05); // ModR/M byte for [rip + disp32]
+    code.extend_from_slice(&(relative_offset as i32).to_le_bytes());
+    // push rax
+    code.push(0x50);
+    code
+}
+
+/// Generate machine code to push a function address for AOT mode
+/// Returns (code, offset_of_relocation_within_code)
+pub fn generate_push_function_address_aot() -> (Vec<u8>, usize) {
+    let mut code = Vec::new();
+    // movabs rax, 0 (placeholder for linker)
+    code.push(0x48); // REX.W prefix
+    code.push(0xb8); // mov rax, imm64
+    let reloc_offset = code.len();
+    code.extend_from_slice(&0u64.to_le_bytes()); // Placeholder
+    // push rax
+    code.push(0x50);
+    (code, reloc_offset)
 }
 
 #[cfg(test)]

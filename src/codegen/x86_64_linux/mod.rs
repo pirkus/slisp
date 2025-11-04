@@ -192,6 +192,9 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
         "_vector_get",
         "_vector_slice",
         "_vector_to_string",
+        "_vector_map",
+        "_vector_filter",
+        "_vector_reduce",
         "_map_create",
         "_map_clone",
         "_map_assoc",
@@ -266,7 +269,7 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
         }
     }
 
-    // Apply relocations from generated code
+    // Apply relocations from generated code (32-bit PC-relative for calls)
     for reloc in generated.symbol_relocations {
         if let Some(symbol_id) = symbol_map.get(&reloc.symbol) {
             obj.add_relocation(
@@ -283,6 +286,26 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
                 },
             )
             .expect("failed to add relocation");
+        }
+    }
+
+    // Apply function address relocations (64-bit absolute for function pointers)
+    for reloc in generated.function_address_relocations {
+        if let Some(symbol_id) = symbol_map.get(&reloc.symbol) {
+            obj.add_relocation(
+                text_section,
+                ObjectRelocation {
+                    offset: (reloc.offset + stub_len) as u64,
+                    symbol: *symbol_id,
+                    addend: 0,
+                    flags: RelocationFlags::Generic {
+                        kind: RelocationKind::Absolute,
+                        encoding: RelocationEncoding::Generic,
+                        size: 64,
+                    },
+                },
+            )
+            .expect("failed to add function address relocation");
         }
     }
 

@@ -11,9 +11,9 @@ All higher-order functions work perfectly in interpreter mode:
 
 **Testing:** 76 unit tests passing, covering all collection types and edge cases.
 
-### 🚧 Partial: Compiler Infrastructure
+### ✅ Working: Compiler Support (JIT & AOT)
 
-The compiler infrastructure is in place but **not yet functional** for execution:
+Compiler infrastructure is complete and functional for `map`:
 
 **Completed:**
 - Runtime helpers in `targets/x86_64_linux/runtime/src/vector.rs`:
@@ -23,102 +23,116 @@ The compiler infrastructure is in place but **not yet functional** for execution
 - IR extension: `PushFunctionAddress(String)` instruction
 - Compiler lowering: `compile_map`, `compile_filter`, `compile_reduce` functions
 - Liveness analysis updated to handle function addresses
+- **JIT mode:** PC-relative LEA for runtime function addresses
+- **AOT mode:** 64-bit absolute ELF relocations for function symbols
+- **Register preservation:** Fixed arithmetic instructions to preserve callee-saved registers
 
-**Not Yet Working:**
-- ❌ JIT execution fails - function pointers are compile-time offsets, not runtime addresses
-- ❌ AOT compilation incomplete - needs symbol relocations for function references
+**Status:**
+- ✅ `map` works in both JIT and AOT modes
+- ⚠️ `filter` and `reduce` have pre-existing compiler limitations (comparison operators not yet implemented)
+- ✅ Function pointers correctly passed to runtime helpers
+- ✅ System V ABI calling convention properly maintained
 
-## The Problem: Function Pointer Address Resolution
+## Implementation Details: Function Pointer Address Resolution
 
 When compiling `(map double [1 2 3])`, the compiler needs to:
 1. Get the address of the `double` function
 2. Pass it to `_vector_map` runtime helper
 
-**What happens now:**
-```
-PushFunctionAddress("double")
-// Pushes compile-time offset (e.g., 0x100) onto stack
-```
+### ✅ Solved: JIT Mode (PC-relative addressing)
 
-**What's needed:**
+In JIT mode, code is loaded at a runtime base address. We use PC-relative LEA:
 
-### For JIT (in-memory execution):
-The generated code is loaded at a runtime base address. Function addresses need adjustment:
-```
-actual_address = base_address + function_offset
+**Generated code** (`src/codegen/x86_64_linux/instructions.rs`):
+```asm
+lea rax, [rip + relative_offset]  ; Load function address
+push rax                            ; Push onto stack
 ```
 
-This requires the JIT runner to:
-1. Track the base address where code was loaded
-2. Patch `PushFunctionAddress` instructions to add base offset
-3. Or use PC-relative addressing
+Where `relative_offset = func_offset - (current_pos + 7)`. The RIP register contains the address of the next instruction, so this calculates the actual runtime address.
 
-### For AOT (object file linking):
-Function references need proper ELF relocations:
-```
-Symbol relocation:
-  Type: R_X86_64_64 (absolute address)
-  Symbol: "double"
-  Offset: instruction_position + 2 (inside mov immediate)
+### ✅ Solved: AOT Mode (ELF relocations)
+
+For object file linking, we use 64-bit absolute relocations:
+
+**Generated code**:
+```asm
+movabs rax, 0                      ; Placeholder (will be filled by linker)
+push rax
 ```
 
-The linker will then resolve these to actual addresses.
-
-## Implementation Plan
-
-### Option 1: Fix JIT (Quickest)
-Modify `src/codegen/x86_64_linux/codegen.rs`:
+**Relocation** (`src/codegen/x86_64_linux/mod.rs`):
 ```rust
-IRInstruction::PushFunctionAddress(func_name) => {
-    // For JIT: Use PC-relative LEA instead of immediate MOV
-    // lea rax, [rip + offset_to_function]
-    // push rax
-    let func_offset = calculate_relative_offset(func_name);
-    instructions::generate_lea_rip_relative(func_offset)
-}
+obj.add_relocation(text_section, ObjectRelocation {
+    offset: (reloc.offset + stub_len) as u64,
+    symbol: *symbol_id,
+    addend: 0,
+    flags: RelocationFlags::Generic {
+        kind: RelocationKind::Absolute,  // R_X86_64_64
+        encoding: RelocationEncoding::Generic,
+        size: 64,
+    },
+})
 ```
 
-### Option 2: Fix AOT (Proper solution)
-Add function symbol relocations in `generate_instruction`:
+The linker resolves these to actual function addresses.
+
+## Critical Fix: Register Preservation
+
+**Problem:** Arithmetic instructions (mul, sub) were using RBX as a scratch register, but RBX is callee-saved in System V ABI. When runtime helpers called slisp functions, RBX was clobbered, causing crashes.
+
+**Solution:** Changed arithmetic instructions to use RCX (caller-saved) instead:
 ```rust
-IRInstruction::PushFunctionAddress(func_name) => {
-    let current_pos = self.code.len();
-    let code = instructions::generate_push(0); // Placeholder
+// Before: Used RBX (callee-saved - WRONG)
+vec![0x58, 0x5b, 0x48, 0x0f, 0xaf, 0xd8, 0x53]
 
-    if matches!(self.link_mode, LinkMode::ObjFile) {
-        // Record relocation for linker
-        self.record_function_relocation(current_pos + 2, func_name);
-    }
-    code
-}
+// After: Use RCX (caller-saved - CORRECT)
+vec![0x58, 0x59, 0x48, 0x0f, 0xaf, 0xc8, 0x51]
 ```
 
-Then add relocation handling in object file generation.
+This ensures functions preserve callee-saved registers as required by System V ABI.
 
-### Option 3: Defer to Phase 8 (Current approach)
-Higher-order functions work perfectly in interpreter mode. The compiler support is infrastructure for future closure implementation. Full compilation can wait until Phase 8 when we implement proper closure support with captured environments.
+## Testing Results
 
-## Testing Strategy
+### Interpreter Mode
+**Status:** ✅ 76 unit tests passing
+- All higher-order functions work across vectors, sets, and maps
+- Edge cases covered (empty collections, nil handling, etc.)
 
-**Current:** Unit tests cover all interpreter functionality thoroughly.
+### Compiled Mode (JIT & AOT)
+**Test programs** in `tests/programs/higher_order/compiled_*.slisp`:
 
-**When compilation works:**
-- Test programs in `tests/programs/higher_order/compiled_*.slisp`
-- Run through both JIT and AOT paths
-- Verify function pointers are passed correctly
-- Test polymorphic behavior with compiled code
+| Program | Result | Notes |
+|---------|--------|-------|
+| `compiled_map_test.slisp` | ✅ PASS (exit code 5) | Maps `double` over `[1 2 3 4 5]`, counts result |
+| `compiled_filter_test.slisp` | ⚠️ FAIL (exit code 0) | Requires comparison operators (`>` not yet compiled) |
+| `compiled_reduce_test.slisp` | ⚠️ SEGFAULT | Requires additional compiler support |
 
-## Workaround: Use Interpreter Mode
+**Verified:**
+- ✅ Function pointers correctly passed to runtime
+- ✅ PC-relative addressing works in JIT mode
+- ✅ ELF relocations work in AOT mode
+- ✅ System V ABI calling convention maintained
+- ✅ Register preservation (callee-saved registers)
 
-For now, all higher-order functions are fully usable in interpreter mode:
+## Usage
+
+### Interpreter Mode (All functions work)
 ```bash
 # Start interpreter REPL
 cargo run
 
-# Test in REPL
+# Test higher-order functions
 (defn double [x] (* x 2))
 (map double [1 2 3])  ; => [2 4 6]
 (map double #{1 2 3}) ; => [2 4 6]
+```
+
+### Compiled Mode (map works)
+```bash
+# Compile and run
+cargo run -- --compile -o my_program my_program.slisp
+./my_program
 ```
 
 ## Related Work
