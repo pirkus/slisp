@@ -31,8 +31,8 @@ pub fn generate_push_string(address: u64) -> Vec<u8> {
 pub fn generate_add() -> Vec<u8> {
     vec![
         0x58, // pop rax
-        0x5b, // pop rbx
-        0x48, 0x01, 0xd8, // add rax, rbx
+        0x59, // pop rcx (use rcx instead of rbx - caller-saved)
+        0x48, 0x01, 0xc8, // add rax, rcx
         0x50, // push rax
     ]
 }
@@ -66,6 +66,66 @@ pub fn generate_div() -> Vec<u8> {
         0x48, 0x89, 0xc1, // mov rcx, rax
         0x48, 0x99, // cqo (sign extend)
         0x48, 0xf7, 0xf9, // idiv rcx
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for equality comparison
+pub fn generate_equal() -> Vec<u8> {
+    vec![
+        0x58, // pop rax (second operand)
+        0x59, // pop rcx (first operand)
+        0x48, 0x39, 0xc1, // cmp rcx, rax
+        0x0f, 0x94, 0xc0, // sete al (set AL to 1 if equal, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al (zero-extend AL to RAX)
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for less-than comparison
+pub fn generate_less() -> Vec<u8> {
+    vec![
+        0x58, // pop rax (second operand)
+        0x59, // pop rcx (first operand)
+        0x48, 0x39, 0xc1, // cmp rcx, rax
+        0x0f, 0x9c, 0xc0, // setl al (set AL to 1 if rcx < rax, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al (zero-extend AL to RAX)
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for greater-than comparison
+pub fn generate_greater() -> Vec<u8> {
+    vec![
+        0x58, // pop rax (second operand)
+        0x59, // pop rcx (first operand)
+        0x48, 0x39, 0xc1, // cmp rcx, rax
+        0x0f, 0x9f, 0xc0, // setg al (set AL to 1 if rcx > rax, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al (zero-extend AL to RAX)
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for less-than-or-equal comparison
+pub fn generate_less_equal() -> Vec<u8> {
+    vec![
+        0x58, // pop rax (second operand)
+        0x59, // pop rcx (first operand)
+        0x48, 0x39, 0xc1, // cmp rcx, rax
+        0x0f, 0x9e, 0xc0, // setle al (set AL to 1 if rcx <= rax, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al (zero-extend AL to RAX)
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for greater-than-or-equal comparison
+pub fn generate_greater_equal() -> Vec<u8> {
+    vec![
+        0x58, // pop rax (second operand)
+        0x59, // pop rcx (first operand)
+        0x48, 0x39, 0xc1, // cmp rcx, rax
+        0x0f, 0x9d, 0xc0, // setge al (set AL to 1 if rcx >= rax, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al (zero-extend AL to RAX)
         0x50, // push rax
     ]
 }

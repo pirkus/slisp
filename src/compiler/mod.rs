@@ -1381,19 +1381,19 @@ fn compile_reduce(args: &[Node], context: &mut CompileContext, program: &mut IRP
     let mut instructions = vec![];
     let mut tracked_slots: HashSet<usize> = HashSet::new();
 
-    // Push function address
-    instructions.push(IRInstruction::PushFunctionAddress(func_name));
+    // Push function address and save to local slot
+    let func_slot = context.allocate_temp_slot();
+    instructions.push(IRInstruction::PushFunctionAddress(func_name.clone()));
+    instructions.push(IRInstruction::StoreLocal(func_slot));
 
-    // Push initial value
+    // Compile and save initial value
     instructions.extend(init_result.instructions);
+    let init_slot = context.allocate_temp_slot();
+    instructions.push(IRInstruction::StoreLocal(init_slot));
 
     // Track ownership if needed for init
     if init_result.heap_ownership == HeapOwnership::Owned {
-        let slot = context.allocate_temp_slot();
-        instructions.push(IRInstruction::StoreLocal(slot));
-        instructions.push(IRInstruction::LoadLocal(slot));
-        tracked_slots.insert(slot);
-        context.release_temp_slot(slot);
+        tracked_slots.insert(init_slot);
     }
 
     // Compile the vector argument
@@ -1404,15 +1404,27 @@ fn compile_reduce(args: &[Node], context: &mut CompileContext, program: &mut IRP
     let vec_slot = if vec_result.heap_ownership == HeapOwnership::Owned {
         let slot = context.allocate_temp_slot();
         instructions.push(IRInstruction::StoreLocal(slot));
-        instructions.push(IRInstruction::LoadLocal(slot));
         tracked_slots.insert(slot);
         Some(slot)
     } else {
-        None
+        // If vector not owned, save it temporarily
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        Some(slot)
     };
+
+    // Reload arguments in correct order for RuntimeCall
+    // System V ABI: RDI (func), RSI (init), RDX (vec)
+    instructions.push(IRInstruction::LoadLocal(func_slot));
+    instructions.push(IRInstruction::LoadLocal(init_slot));
+    instructions.push(IRInstruction::LoadLocal(vec_slot.unwrap()));
 
     // Call runtime reduce function
     instructions.push(IRInstruction::RuntimeCall("_vector_reduce".to_string(), 3));
+
+    // Clean up function and init slots
+    context.release_temp_slot(func_slot);
+    context.release_temp_slot(init_slot);
 
     // Apply liveness plan for cleanup
     if !tracked_slots.is_empty() {
