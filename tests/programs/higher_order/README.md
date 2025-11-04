@@ -42,20 +42,20 @@ These programs work in both JIT and AOT compiled modes:
 - **`compiled_comparisons_test.slisp`** - All comparison operators (>, <, >=, <=, =) ✅
 - **`compiled_pipeline_test.slisp`** - Chained map/filter/reduce ✅
 - **`compiled_empty_test.slisp`** - Edge case with empty collections ✅
+- **`compiled_first_rest_test.slisp`** - First and rest operations ✅
+- **`compiled_keys_test.slisp`** - Extract keys from map ✅
+- **`compiled_vals_test.slisp`** - Extract values from map ✅
+- **`compiled_cons_test.slisp`** - Prepend element to collection ✅
+- **`compiled_conj_test.slisp`** - Append element to collection ✅
 
 ### Not Yet Compiled (Interpreter Only)
 These programs require compiler support for additional functions:
-- **`compiled_first_rest_test.slisp`** - Needs first/rest compilation
-- **`compiled_cons_test.slisp`** - Needs cons compilation
-- **`compiled_conj_test.slisp`** - Needs conj compilation
 - **`compiled_concat_test.slisp`** - Needs concat compilation
-- **`compiled_keys_test.slisp`** - Needs keys compilation
-- **`compiled_vals_test.slisp`** - Needs vals compilation
 - **`compiled_merge_test.slisp`** - Needs merge compilation
 - **`compiled_select_keys_test.slisp`** - Needs select-keys compilation
 - **`compiled_zipmap_test.slisp`** - Needs zipmap compilation
 
-**Status:** Map, filter, and reduce work perfectly in compiled mode with full function pointer support. Comparison operators (=, <, >, <=, >=) fully functional. See `docs/higher_order_compilation_status.md` for implementation details.
+**Status:** Higher-order functions (map, filter, reduce), collection operations (first, rest, cons, conj), and map utilities (keys, vals) all work perfectly in both JIT and AOT compiled modes with full function pointer support and proper heap ownership tracking. Comparison operators (=, <, >, <=, >=) fully functional. See `docs/higher_order_compilation_status.md` for implementation details.
 
 ### Running Compiled Tests
 ```bash
@@ -65,7 +65,7 @@ These programs require compiler support for additional functions:
 echo $?  # Should output: 5
 
 # Test all working compiled programs
-for prog in compiled_map_test compiled_filter_test compiled_reduce_test compiled_equality_test compiled_comparisons_test compiled_pipeline_test compiled_empty_test; do
+for prog in compiled_map_test compiled_filter_test compiled_reduce_test compiled_equality_test compiled_comparisons_test compiled_pipeline_test compiled_empty_test compiled_first_rest_test compiled_keys_test compiled_vals_test compiled_cons_test compiled_conj_test; do
     ./target/release/slisp --compile -o /tmp/$prog tests/programs/higher_order/$prog.slisp
     /tmp/$prog
     echo "$prog: exit code $?"
@@ -80,6 +80,11 @@ Expected outputs:
 - `compiled_comparisons_test`: 11 (sum of all comparison results)
 - `compiled_pipeline_test`: 24 (double [1 2 3 4 5] -> filter > 5 -> sum)
 - `compiled_empty_test`: 0 (operations on empty collections)
+- `compiled_first_rest_test`: 30 (first + sum of rest)
+- `compiled_keys_test`: 3 (count of keys in map)
+- `compiled_vals_test`: 60 (sum of values: 10+20+30)
+- `compiled_cons_test`: 1 (first element after cons)
+- `compiled_conj_test`: 4 (count after conj)
 
 ## Mixed Workload Tests
 
