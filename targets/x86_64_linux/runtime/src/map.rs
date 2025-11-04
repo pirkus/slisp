@@ -1,7 +1,7 @@
 use core::mem::size_of;
 use core::ptr::{copy_nonoverlapping, null_mut};
 
-use crate::{_allocate, _free, _set_to_string, _string_clone, _string_count, _string_equals, _string_from_number, _vector_to_string, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL};
+use crate::{_allocate, _free, _set_to_string, _string_clone, _string_count, _string_equals, _string_from_number, _vector_equals, _vector_to_string, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL};
 
 #[repr(C)]
 struct MapHeader {
@@ -931,4 +931,107 @@ pub unsafe extern "C" fn _map_free(map: *mut u8) {
         return;
     }
     _free(map);
+}
+
+/// Compare two values with their tags for equality (used for map values)
+unsafe fn values_equal(left_tag: u8, left_value: i64, right_tag: u8, right_value: i64) -> bool {
+    if left_tag != right_tag {
+        return false;
+    }
+
+    match left_tag {
+        TAG_NIL | TAG_NUMBER => left_value == right_value,
+        TAG_BOOLEAN => {
+            let left_bool = canonical_boolean(left_value);
+            let right_bool = canonical_boolean(right_value);
+            left_bool == right_bool
+        }
+        TAG_STRING | TAG_KEYWORD => {
+            let left_ptr = left_value as *const u8;
+            let right_ptr = right_value as *const u8;
+            _string_equals(left_ptr, right_ptr) != 0
+        }
+        TAG_VECTOR => {
+            let left_ptr = left_value as *const u8;
+            let right_ptr = right_value as *const u8;
+            _vector_equals(left_ptr, right_ptr) != 0
+        }
+        TAG_MAP | TAG_SET => {
+            let left_ptr = left_value as *const u8;
+            let right_ptr = right_value as *const u8;
+            _map_equals(left_ptr, right_ptr) != 0
+        }
+        _ => left_value == right_value,
+    }
+}
+
+/// # Safety
+///
+/// Compare two maps for deep equality. Returns 1 if equal, 0 otherwise.
+/// The caller must ensure that both pointers are either null or point to valid maps.
+/// Note: Sets are internally represented as maps, so this also handles set equality.
+#[no_mangle]
+pub unsafe extern "C" fn _map_equals(left: *const u8, right: *const u8) -> i64 {
+    // Same pointer means same map
+    if left == right {
+        return 1;
+    }
+
+    // If either is null, they're not equal (unless both are, handled above)
+    if left.is_null() || right.is_null() {
+        return 0;
+    }
+
+    let left_header = left as *const MapHeader;
+    let right_header = right as *const MapHeader;
+
+    let left_len = (*left_header).length as usize;
+    let right_len = (*right_header).length as usize;
+
+    // Different lengths means not equal
+    if left_len != right_len {
+        return 0;
+    }
+
+    // Empty maps are equal
+    if left_len == 0 {
+        return 1;
+    }
+
+    let left_key_tags = map_key_tags_ptr(left_header);
+    let left_key_data = map_key_data_ptr(left_header);
+    let left_value_tags = map_value_tags_ptr(left_header);
+    let left_value_data = map_value_data_ptr(left_header);
+
+    // For each entry in left map, find it in right map and compare values
+    let mut idx = 0usize;
+    while idx < left_len {
+        let left_key_tag = *left_key_tags.add(idx);
+        let left_key_val = *left_key_data.add(idx);
+        let left_value_tag = *left_value_tags.add(idx);
+        let left_value_val = *left_value_data.add(idx);
+
+        // Find this key in the right map
+        match map_find_index(right_header, left_key_tag, left_key_val) {
+            Some(right_idx) => {
+                let right_value_tags_ptr = map_value_tags_ptr(right_header);
+                let right_value_data_ptr = map_value_data_ptr(right_header);
+                let right_value_tag = *right_value_tags_ptr.add(right_idx);
+                let right_value_val = *right_value_data_ptr.add(right_idx);
+
+                // Compare the values
+                if !values_equal(left_value_tag, left_value_val, right_value_tag, right_value_val) {
+                    return 0;
+                }
+            }
+            None => {
+                // Key not found in right map
+                return 0;
+            }
+        }
+
+        idx += 1;
+    }
+
+    1
 }

@@ -19,13 +19,13 @@ pub use strings::{
 };
 
 mod vector;
-pub use vector::{_vector_clone, _vector_count, _vector_create, _vector_free, _vector_get, _vector_slice, _vector_to_string};
+pub use vector::{_vector_clone, _vector_count, _vector_create, _vector_equals, _vector_free, _vector_get, _vector_slice, _vector_to_string};
 
 mod map;
-pub use map::{_map_assoc, _map_clone, _map_contains, _map_count, _map_create, _map_dissoc, _map_free, _map_get, _map_to_string};
+pub use map::{_map_assoc, _map_clone, _map_contains, _map_count, _map_create, _map_dissoc, _map_equals, _map_free, _map_get, _map_to_string};
 
 mod set;
-pub use set::{_set_clone, _set_contains, _set_count, _set_create, _set_disj, _set_free, _set_to_string};
+pub use set::{_set_clone, _set_contains, _set_count, _set_create, _set_disj, _set_equals, _set_free, _set_to_string};
 
 #[cfg(not(feature = "std"))]
 mod memory;

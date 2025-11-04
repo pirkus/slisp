@@ -86,11 +86,26 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
         right_kind = resolve_operand_kind(&args[1], right_kind, context);
     }
 
-    let string_equality =
-        matches!(instruction, IRInstruction::Equal) && ((left_kind == ValueKind::String && right_kind == ValueKind::String) || (left_kind == ValueKind::Keyword && right_kind == ValueKind::Keyword));
+    // Determine if we need a runtime call for complex equality checks
+    let needs_runtime_equality = matches!(instruction, IRInstruction::Equal)
+        && match (left_kind, right_kind) {
+            (ValueKind::String, ValueKind::String) => true,
+            (ValueKind::Keyword, ValueKind::Keyword) => true,
+            (ValueKind::Vector, ValueKind::Vector) => true,
+            (ValueKind::Set, ValueKind::Set) => true,
+            (ValueKind::Map, ValueKind::Map) => true,
+            _ => false,
+        };
 
-    if string_equality {
-        instructions.push(IRInstruction::RuntimeCall("_string_equals".to_string(), 2));
+    if needs_runtime_equality {
+        let runtime_fn = match (left_kind, right_kind) {
+            (ValueKind::String, ValueKind::String) | (ValueKind::Keyword, ValueKind::Keyword) => "_string_equals",
+            (ValueKind::Vector, ValueKind::Vector) => "_vector_equals",
+            (ValueKind::Set, ValueKind::Set) => "_set_equals",
+            (ValueKind::Map, ValueKind::Map) => "_map_equals",
+            _ => unreachable!("Runtime equality check with unsupported types"),
+        };
+        instructions.push(IRInstruction::RuntimeCall(runtime_fn.to_string(), 2));
     } else {
         instructions.push(instruction);
     }

@@ -1,7 +1,7 @@
 use core::mem::size_of;
 use core::ptr::{copy_nonoverlapping, null_mut};
 
-use crate::{_allocate, _free, _map_to_string, _string_clone, _string_count, _string_from_number, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL};
+use crate::{_allocate, _free, _map_equals, _map_to_string, _string_clone, _string_count, _string_equals, _string_from_number, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL};
 
 #[repr(C)]
 struct VectorHeader {
@@ -581,3 +581,91 @@ pub unsafe extern "C" fn _vector_free(vec: *mut u8) {
     }
     _free(vec);
 }
+
+/// Compare two values with their tags for equality
+unsafe fn values_equal(left_tag: u8, left_value: i64, right_tag: u8, right_value: i64) -> bool {
+    if left_tag != right_tag {
+        return false;
+    }
+
+    match left_tag {
+        TAG_NIL | TAG_NUMBER => left_value == right_value,
+        TAG_BOOLEAN => {
+            let left_bool = left_value != 0;
+            let right_bool = right_value != 0;
+            left_bool == right_bool
+        }
+        TAG_STRING => {
+            let left_ptr = left_value as *const u8;
+            let right_ptr = right_value as *const u8;
+            _string_equals(left_ptr, right_ptr) != 0
+        }
+        TAG_VECTOR => {
+            let left_ptr = left_value as *const u8;
+            let right_ptr = right_value as *const u8;
+            _vector_equals(left_ptr, right_ptr) != 0
+        }
+        TAG_MAP => {
+            let left_ptr = left_value as *const u8;
+            let right_ptr = right_value as *const u8;
+            _map_equals(left_ptr, right_ptr) != 0
+        }
+        _ => left_value == right_value,
+    }
+}
+
+/// # Safety
+///
+/// Compare two vectors for deep equality. Returns 1 if equal, 0 otherwise.
+/// The caller must ensure that both pointers are either null or point to valid vectors.
+#[no_mangle]
+pub unsafe extern "C" fn _vector_equals(left: *const u8, right: *const u8) -> i64 {
+    // Same pointer means same vector
+    if left == right {
+        return 1;
+    }
+
+    // If either is null, they're not equal (unless both are, handled above)
+    if left.is_null() || right.is_null() {
+        return 0;
+    }
+
+    let left_header = left as *const VectorHeader;
+    let right_header = right as *const VectorHeader;
+
+    let left_len = (*left_header).length as usize;
+    let right_len = (*right_header).length as usize;
+
+    // Different lengths means not equal
+    if left_len != right_len {
+        return 0;
+    }
+
+    // Empty vectors are equal
+    if left_len == 0 {
+        return 1;
+    }
+
+    let left_tags = vector_tags_ptr(left_header);
+    let right_tags = vector_tags_ptr(right_header);
+    let left_data = vector_data_ptr(left_header);
+    let right_data = vector_data_ptr(right_header);
+
+    // Compare each element
+    let mut idx = 0usize;
+    while idx < left_len {
+        let left_tag = *left_tags.add(idx);
+        let right_tag = *right_tags.add(idx);
+        let left_val = *left_data.add(idx);
+        let right_val = *right_data.add(idx);
+
+        if !values_equal(left_tag, left_val, right_tag, right_val) {
+            return 0;
+        }
+
+        idx += 1;
+    }
+
+    1
+}
+

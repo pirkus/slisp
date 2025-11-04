@@ -2,8 +2,8 @@ use core::mem::size_of;
 use core::ptr::{copy_nonoverlapping, null_mut};
 
 use crate::{
-    _allocate, _free, _map_assoc, _map_clone, _map_contains, _map_count, _map_create, _map_dissoc, _map_free, _map_to_string, _string_clone, _string_count, _string_from_number, _vector_to_string,
-    FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL,
+    _allocate, _free, _map_assoc, _map_clone, _map_contains, _map_count, _map_create, _map_dissoc, _map_equals, _map_free, _map_to_string, _string_clone, _string_count, _string_from_number,
+    _vector_to_string, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL,
 };
 
 #[repr(C)]
@@ -327,6 +327,16 @@ pub unsafe extern "C" fn _set_count(set: *const u8) -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn _set_free(set: *mut u8) {
     _map_free(set);
+}
+
+/// # Safety
+///
+/// Compare two sets for deep equality. Returns 1 if equal, 0 otherwise.
+/// The caller must ensure that both pointers are either null or point to valid sets.
+/// Sets are internally represented as maps, so this delegates to _map_equals.
+#[no_mangle]
+pub unsafe extern "C" fn _set_equals(left: *const u8, right: *const u8) -> i64 {
+    _map_equals(left, right)
 }
 
 #[no_mangle]

@@ -1,0 +1,10 @@
+(defn -main []
+  (let [m1 {:a 1 :b 2}
+        m2 {:b 2 :a 1}
+        m3 {:a 1 :b 3}
+        empty1 {}
+        empty2 {}]
+    (+ (if (= m1 m2) 10 0)
+       (if (= m1 m3) 1 0)
+       (if (= m1 empty1) 2 0)
+       (if (= empty1 empty2) 5 0))))

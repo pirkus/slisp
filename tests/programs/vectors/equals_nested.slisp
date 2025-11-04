@@ -1,0 +1,11 @@
+(defn -main []
+  (let [v1 [1 [2 3] 4]
+        v2 [1 [2 3] 4]
+        v3 [1 [2 5] 4]
+        mixed1 [1 "hello" true]
+        mixed2 [1 "hello" true]
+        mixed3 [1 "hello" false]]
+    (+ (if (= v1 v2) 10 0)
+       (if (= v1 v3) 1 0)
+       (if (= mixed1 mixed2) 5 0)
+       (if (= mixed1 mixed3) 2 0))))
