@@ -24,6 +24,9 @@ pub use vector::{_vector_clone, _vector_count, _vector_create, _vector_free, _ve
 mod map;
 pub use map::{_map_assoc, _map_clone, _map_contains, _map_count, _map_create, _map_dissoc, _map_free, _map_get, _map_to_string};
 
+mod set;
+pub use set::{_set_clone, _set_contains, _set_count, _set_create, _set_disj, _set_free, _set_to_string};
+
 #[cfg(not(feature = "std"))]
 mod memory;
 
@@ -306,6 +309,42 @@ mod tests {
             _map_free(nested_map);
             _free(nested_key);
             _free(outer_key);
+        }
+    }
+
+    #[test]
+    fn set_runtime_roundtrip() {
+        unsafe {
+            const TAG_NUMBER: i64 = 1;
+
+            let values = [1i64, 2, 2, 3];
+            let tags = [TAG_NUMBER; 4];
+
+            let set_ptr = _set_create(values.as_ptr(), tags.as_ptr(), values.len() as u64);
+            assert!(!set_ptr.is_null());
+            assert_eq!(_set_count(set_ptr), 3);
+            assert_eq!(_set_contains(set_ptr, 2, TAG_NUMBER), 1);
+            assert_eq!(_set_contains(set_ptr, 5, TAG_NUMBER), 0);
+
+            let removed_ptr = _set_disj(set_ptr, 2, TAG_NUMBER);
+            assert!(!removed_ptr.is_null());
+            assert_eq!(_set_count(removed_ptr), 2);
+            assert_eq!(_set_contains(removed_ptr, 2, TAG_NUMBER), 0);
+
+            let clone_ptr = _set_clone(removed_ptr);
+            assert!(!clone_ptr.is_null());
+            assert_eq!(_set_count(clone_ptr), 2);
+
+            let rendered = _set_to_string(clone_ptr);
+            assert!(!rendered.is_null());
+            let rendered_str = std::ffi::CStr::from_ptr(rendered as *const i8).to_str().unwrap();
+            assert!(rendered_str.starts_with("#{"));
+            assert!(rendered_str.ends_with('}'));
+
+            _free(rendered);
+            _set_free(clone_ptr);
+            _set_free(removed_ptr);
+            _set_free(set_ptr);
         }
     }
 }

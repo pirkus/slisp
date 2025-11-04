@@ -1,7 +1,7 @@
 use core::mem::size_of;
 use core::ptr::{copy_nonoverlapping, null_mut};
 
-use crate::{_allocate, _free, _string_clone, _string_count, _string_equals, _string_from_number, _vector_to_string, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL};
+use crate::{_allocate, _free, _set_to_string, _string_clone, _string_count, _string_equals, _string_from_number, _vector_to_string, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL};
 
 #[repr(C)]
 struct MapHeader {
@@ -29,6 +29,7 @@ const TAG_STRING: u8 = 3;
 const TAG_VECTOR: u8 = 4;
 const TAG_MAP: u8 = 5;
 const TAG_KEYWORD: u8 = 6;
+const TAG_SET: u8 = 7;
 const TAG_ANY: u8 = 0xff;
 
 #[inline]
@@ -489,6 +490,30 @@ unsafe fn render_map_value(tag: u8, value: i64) -> EntryRender {
                 }
             } else {
                 let rendered = _map_to_string(value as *const u8);
+                if rendered.is_null() {
+                    EntryRender {
+                        ptr: NIL_LITERAL.as_ptr() as *mut u8,
+                        len: 3,
+                        owned: false,
+                    }
+                } else {
+                    EntryRender {
+                        ptr: rendered,
+                        len: _string_count(rendered) as usize,
+                        owned: true,
+                    }
+                }
+            }
+        }
+        TAG_SET => {
+            if value == 0 {
+                EntryRender {
+                    ptr: NIL_LITERAL.as_ptr() as *mut u8,
+                    len: 3,
+                    owned: false,
+                }
+            } else {
+                let rendered = _set_to_string(value as *const u8);
                 if rendered.is_null() {
                     EntryRender {
                         ptr: NIL_LITERAL.as_ptr() as *mut u8,

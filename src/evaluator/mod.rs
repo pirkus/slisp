@@ -7,7 +7,7 @@ mod primitives;
 mod special_forms;
 
 use crate::ast::{Node, Primitive};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MapKey {
@@ -25,6 +25,7 @@ pub enum Value {
     String(String),
     Keyword(String),
     Vector(Vec<Value>),
+    Set(HashSet<MapKey>),
     Map(HashMap<MapKey, Value>),
     Nil,
     Function {
@@ -129,9 +130,11 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
             "get" => primitives::eval_get(args, env),
             "subs" => primitives::eval_subs(args, env),
             "vec" => primitives::eval_vec(args, env),
+            "set" => primitives::eval_set(args, env),
             "hash-map" => primitives::eval_hash_map(args, env),
             "assoc" => primitives::eval_assoc(args, env),
             "dissoc" => primitives::eval_dissoc(args, env),
+            "disj" => primitives::eval_disj(args, env),
             "contains?" => primitives::eval_contains(args, env),
             op => {
                 if let Some(func_value) = env.get(op) {
@@ -171,7 +174,7 @@ fn eval_map_literal(entries: &[(Node, Node)], env: &mut Environment) -> Result<V
 mod tests {
     use super::*;
     use crate::ast::{AstParser, AstParserTrt};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     fn parse_and_eval(input: &str) -> Result<Value, EvalError> {
         let ast = AstParser::parse_sexp_new_domain(input.as_bytes(), &mut 0);
@@ -278,6 +281,36 @@ mod tests {
         assert_eq!(parse_and_eval("(contains? (hash-map \"a\" 1) \"a\")"), Ok(Value::Boolean(true)));
         assert_eq!(parse_and_eval("(contains? (hash-map \"a\" 1) \"missing\")"), Ok(Value::Boolean(false)));
         assert_eq!(parse_and_eval("(count (hash-map \"a\" 1 \"b\" 2))"), Ok(Value::Number(2)));
+    }
+
+    #[test]
+    fn test_set_construction_and_count() {
+        let mut expected = HashSet::new();
+        expected.insert(MapKey::Number(1));
+        expected.insert(MapKey::Number(2));
+        expected.insert(MapKey::Number(3));
+        assert_eq!(parse_and_eval("(set 1 2 2 3)"), Ok(Value::Set(expected)));
+        assert_eq!(parse_and_eval("(count (set 1 2 2 3))"), Ok(Value::Number(3)));
+    }
+
+    #[test]
+    fn test_set_contains_and_disj() {
+        assert_eq!(parse_and_eval("(contains? (set 1 2) 2)"), Ok(Value::Boolean(true)));
+        assert_eq!(parse_and_eval("(contains? (set 1 2) 5)"), Ok(Value::Boolean(false)));
+
+        let mut expected = HashSet::new();
+        expected.insert(MapKey::Number(1));
+        assert_eq!(parse_and_eval("(disj (set 1 2 3) 2 3)"), Ok(Value::Set(expected)));
+    }
+
+    #[test]
+    fn test_disj_nil_is_empty_set() {
+        assert_eq!(parse_and_eval("(disj (set) 1 2)"), Ok(Value::Set(HashSet::new())));
+    }
+
+    #[test]
+    fn test_set_string_rendering() {
+        assert_eq!(parse_and_eval("(str (set 2 1))"), Ok(Value::String("#{1 2}".to_string())));
     }
 
     #[test]

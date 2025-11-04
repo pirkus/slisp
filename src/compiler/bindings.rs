@@ -48,6 +48,7 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
                 let runtime = match source_kind {
                     ValueKind::Vector => "_vector_clone",
                     ValueKind::Map => "_map_clone",
+                    ValueKind::Set => "_set_clone",
                     _ => "_string_clone",
                 };
                 value_result.instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
@@ -88,6 +89,7 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
             let runtime = match symbol_kind {
                 ValueKind::Vector => "_vector_clone",
                 ValueKind::Map => "_map_clone",
+                ValueKind::Set => "_set_clone",
                 _ => "_string_clone",
             };
             body_result.instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));

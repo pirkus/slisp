@@ -200,6 +200,13 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
         "_map_get",
         "_map_count",
         "_map_to_string",
+        "_set_create",
+        "_set_clone",
+        "_set_disj",
+        "_set_contains",
+        "_set_count",
+        "_set_to_string",
+        "_set_free",
     ];
 
     if program.telemetry_enabled {

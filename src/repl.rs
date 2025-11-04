@@ -140,6 +140,15 @@ fn format_value(value: &Value) -> String {
         }
         Value::Keyword(k) => format!(":{}", k),
         Value::String(s) => format!("\"{}\"", s),
+        Value::Set(entries) => {
+            if entries.is_empty() {
+                "#{}".to_string()
+            } else {
+                let mut members: Vec<String> = entries.iter().map(format_map_key).collect();
+                members.sort();
+                format!("#{{{}}}", members.join(" "))
+            }
+        }
         Value::Map(entries) => {
             if entries.is_empty() {
                 "{}".to_string()

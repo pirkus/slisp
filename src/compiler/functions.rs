@@ -67,6 +67,7 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
             ValueKind::String => Some("_string_clone"),
             ValueKind::Vector => Some("_vector_clone"),
             ValueKind::Map => Some("_map_clone"),
+            ValueKind::Set => Some("_set_clone"),
             ValueKind::Any => {
                 body_kind = ValueKind::String;
                 Some("_string_clone")

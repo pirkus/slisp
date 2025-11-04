@@ -42,6 +42,7 @@ The interpreter provides a complete Lisp experience with rich error reporting an
 - Keyword literals like `:name` that self-evaluate and act as map keys
 - Vector literals `[...]` and helpers (`vec`, `get`, `subs`)
 - Hash map helpers (`hash-map`, `assoc`, `dissoc`, `contains?`, `get`) and `{}` literal syntax
+- Set helpers (`set`, `disj`, `contains?`) with deterministic rendering and duplicate elimination
 - Comprehensive runtime errors for arity, type, and undefined symbols
 
 ### Compiler Modes

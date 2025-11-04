@@ -25,6 +25,7 @@ const TAG_STRING: i64 = 3;
 const TAG_VECTOR: i64 = 4;
 const TAG_MAP: i64 = 5;
 const TAG_KEYWORD: i64 = 6;
+const TAG_SET: i64 = 7;
 const TAG_ANY: i64 = 0xff;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -36,12 +37,13 @@ pub enum ValueKind {
     Keyword,
     Vector,
     Map,
+    Set,
     Nil,
 }
 
 impl ValueKind {
     pub fn is_heap_kind(self) -> bool {
-        matches!(self, ValueKind::String | ValueKind::Vector | ValueKind::Map)
+        matches!(self, ValueKind::String | ValueKind::Vector | ValueKind::Map | ValueKind::Set)
     }
 
     pub fn runtime_tag(self) -> i64 {
@@ -53,6 +55,7 @@ impl ValueKind {
             ValueKind::Keyword => TAG_KEYWORD,
             ValueKind::Vector => TAG_VECTOR,
             ValueKind::Map => TAG_MAP,
+            ValueKind::Set => TAG_SET,
             ValueKind::Any => TAG_ANY,
         }
     }
@@ -321,6 +324,63 @@ fn compile_vector_literal(elements: &[Node], context: &mut CompileContext, progr
     Ok(CompileResult::with_instructions(instructions, ValueKind::Vector).with_heap_ownership(HeapOwnership::Owned))
 }
 
+fn compile_set_literal(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.is_empty() {
+        return Ok(CompileResult::with_instructions(
+            vec![
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::RuntimeCall("_set_create".to_string(), 3),
+            ],
+            ValueKind::Set,
+        )
+        .with_heap_ownership(HeapOwnership::Owned));
+    }
+
+    let count = args.len();
+    let mut instructions = Vec::new();
+
+    let value_slots = context.allocate_contiguous_temp_slots(count);
+    let mut ordered_value_slots = value_slots.clone();
+    ordered_value_slots.sort_unstable();
+    ordered_value_slots.reverse();
+
+    let tag_slots = context.allocate_contiguous_temp_slots(count);
+    let mut ordered_tag_slots = tag_slots.clone();
+    ordered_tag_slots.sort_unstable();
+    ordered_tag_slots.reverse();
+
+    for idx in 0..count {
+        let value_node = &args[idx];
+        let value_slot = ordered_value_slots[idx];
+        let tag_slot = ordered_tag_slots[idx];
+
+        let value_result = compile_node(value_node, context, program)?;
+        instructions.extend(value_result.instructions);
+        instructions.push(IRInstruction::StoreLocal(value_slot));
+
+        let value_kind = resolve_map_key_kind(value_node, value_result.kind, context)?;
+        instructions.push(IRInstruction::Push(runtime_tag_for_key(value_kind)));
+        instructions.push(IRInstruction::StoreLocal(tag_slot));
+    }
+
+    instructions.push(IRInstruction::PushLocalAddress(ordered_value_slots[0]));
+    instructions.push(IRInstruction::PushLocalAddress(ordered_tag_slots[0]));
+    instructions.push(IRInstruction::Push(count as i64));
+    instructions.push(IRInstruction::RuntimeCall("_set_create".to_string(), 3));
+
+    for slot in value_slots {
+        context.release_temp_slot(slot);
+    }
+
+    for slot in tag_slots {
+        context.release_temp_slot(slot);
+    }
+
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Set).with_heap_ownership(HeapOwnership::Owned))
+}
+
 /// Compile count operation (string length)
 fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
     if args.len() != 1 {
@@ -354,6 +414,7 @@ fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRPr
     let runtime = match target_kind {
         ValueKind::Vector => "_vector_count",
         ValueKind::Map => "_map_count",
+        ValueKind::Set => "_set_count",
         _ => "_string_count",
     };
     instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
@@ -411,6 +472,7 @@ fn runtime_tag_for_value(kind: ValueKind) -> i64 {
         ValueKind::Keyword => TAG_KEYWORD,
         ValueKind::Vector => TAG_VECTOR,
         ValueKind::Map => TAG_MAP,
+        ValueKind::Set => TAG_SET,
         ValueKind::Any => TAG_ANY,
     }
 }
@@ -420,6 +482,7 @@ fn clone_runtime_for_kind(kind: ValueKind) -> Option<&'static str> {
         ValueKind::String => Some("_string_clone"),
         ValueKind::Vector => Some("_vector_clone"),
         ValueKind::Map => Some("_map_clone"),
+        ValueKind::Set => Some("_set_clone"),
         _ => None,
     }
 }
@@ -784,6 +847,10 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
                 instructions.push(IRInstruction::RuntimeCall("_map_to_string".to_string(), 1));
                 slot_needs_free = true;
             }
+            ValueKind::Set => {
+                instructions.push(IRInstruction::RuntimeCall("_set_to_string".to_string(), 1));
+                slot_needs_free = true;
+            }
             ValueKind::Boolean => {
                 instructions.push(IRInstruction::RuntimeCall("_string_from_boolean".to_string(), 1));
                 slot_needs_free = false;
@@ -1019,6 +1086,59 @@ fn compile_dissoc(args: &[Node], context: &mut CompileContext, program: &mut IRP
     Ok(CompileResult::with_instructions(instructions, ValueKind::Map).with_heap_ownership(HeapOwnership::Owned))
 }
 
+fn compile_disj(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.is_empty() {
+        return Err(CompileError::ArityError("disj".to_string(), 1, 0));
+    }
+
+    let base_result = compile_node(&args[0], context, program)?;
+    if args.len() == 1 {
+        let mut result = base_result;
+        if result.kind != ValueKind::Set {
+            result.kind = ValueKind::Set;
+        }
+        return Ok(result);
+    }
+
+    let mut instructions = base_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut temp_slots = Vec::new();
+
+    if base_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        temp_slots.push(slot);
+    }
+
+    for value_idx in 1..args.len() {
+        let mut value_result = compile_node(&args[value_idx], context, program)?;
+        instructions.extend(value_result.instructions);
+        if value_result.heap_ownership == HeapOwnership::Owned {
+            let slot = context.allocate_temp_slot();
+            instructions.push(IRInstruction::StoreLocal(slot));
+            instructions.push(IRInstruction::LoadLocal(slot));
+            tracked_slots.insert(slot);
+            temp_slots.push(slot);
+        }
+        value_result.kind = resolve_map_key_kind(&args[value_idx], value_result.kind, context)?;
+        instructions.push(IRInstruction::Push(runtime_tag_for_key(value_result.kind)));
+        instructions.push(IRInstruction::RuntimeCall("_set_disj".to_string(), 3));
+    }
+
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    for slot in temp_slots {
+        context.release_temp_slot(slot);
+    }
+
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Set).with_heap_ownership(HeapOwnership::Owned))
+}
+
 fn compile_contains(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
     if args.len() != 2 {
         return Err(CompileError::ArityError("contains?".to_string(), 2, args.len()));
@@ -1037,6 +1157,8 @@ fn compile_contains(args: &[Node], context: &mut CompileContext, program: &mut I
         temp_slots.push(slot);
     }
 
+    let target_kind = resolve_value_kind(&args[0], target_result.kind, context);
+
     let mut key_result = compile_node(&args[1], context, program)?;
     instructions.extend(key_result.instructions);
     if key_result.heap_ownership == HeapOwnership::Owned {
@@ -1048,7 +1170,8 @@ fn compile_contains(args: &[Node], context: &mut CompileContext, program: &mut I
     }
     key_result.kind = resolve_map_key_kind(&args[1], key_result.kind, context)?;
     instructions.push(IRInstruction::Push(runtime_tag_for_key(key_result.kind)));
-    instructions.push(IRInstruction::RuntimeCall("_map_contains".to_string(), 3));
+    let runtime = if target_kind == ValueKind::Set { "_set_contains" } else { "_map_contains" };
+    instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 3));
 
     if !tracked_slots.is_empty() {
         let plan = compute_liveness_plan(&instructions, &tracked_slots);
@@ -1096,9 +1219,11 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
             "subs" => compile_subs(args, context, program),
             "str" => compile_str(args, context, program),
             "vec" => compile_vector_literal(args, context, program),
+            "set" => compile_set_literal(args, context, program),
             "hash-map" => compile_hash_map(args, context, program),
             "assoc" => compile_assoc(args, context, program),
             "dissoc" => compile_dissoc(args, context, program),
+            "disj" => compile_disj(args, context, program),
             "contains?" => compile_contains(args, context, program),
             op => {
                 if let Some(func_info) = context.get_function(op) {
@@ -1237,9 +1362,27 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_set_builtin_calls_runtime() {
+        let program = compile_expression("(set 1 2)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 3) if name == "_set_create"
+        )));
+    }
+
+    #[test]
     fn test_compile_count_vector_calls_runtime() {
         let program = compile_expression("(count (vec 1 2 3))").unwrap();
         assert!(program.instructions.contains(&IRInstruction::RuntimeCall("_vector_count".to_string(), 1)));
+    }
+
+    #[test]
+    fn test_compile_count_set_calls_runtime() {
+        let program = compile_expression("(count (set 1 2))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 1) if name == "_set_count"
+        )));
     }
 
     #[test]
@@ -1309,6 +1452,24 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_contains_set_runtime_call() {
+        let program = compile_expression("(contains? (set 1 2) 1)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 3) if name == "_set_contains"
+        )));
+    }
+
+    #[test]
+    fn test_compile_disj_runtime_call() {
+        let program = compile_expression("(disj (set 1 2) 1)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 3) if name == "_set_disj"
+        )));
+    }
+
+    #[test]
     fn test_compile_str_with_number() {
         let program = compile_expression("(str 42)").unwrap();
         assert_eq!(
@@ -1361,6 +1522,15 @@ mod tests {
                 IRInstruction::Return,
             ]
         );
+    }
+
+    #[test]
+    fn test_compile_str_with_set_invokes_runtime() {
+        let program = compile_expression("(str (set 1))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 1) if name == "_set_to_string"
+        )));
     }
 
     #[test]
