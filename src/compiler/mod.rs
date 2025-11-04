@@ -1229,6 +1229,8 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
             "map" => compile_map(args, context, program),
             "filter" => compile_filter(args, context, program),
             "reduce" => compile_reduce(args, context, program),
+            "first" => compile_first(args, context, program),
+            "rest" => compile_rest(args, context, program),
             op => {
                 if let Some(func_info) = context.get_function(op) {
                     functions::compile_function_call(op, args, context, program, func_info.param_count)
@@ -1440,6 +1442,107 @@ fn compile_reduce(args: &[Node], context: &mut CompileContext, program: &mut IRP
         instructions,
         kind: ValueKind::Number, // For now assume numeric result
         heap_ownership: HeapOwnership::None,
+    })
+}
+
+/// Compile first: (first coll)
+fn compile_first(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() != 1 {
+        return Err(CompileError::ArityError("first".to_string(), 1, args.len()));
+    }
+
+    // Compile the collection
+    let coll_result = compile_node(&args[0], context, program)?;
+    let mut instructions = coll_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+
+    // Track collection ownership
+    if coll_result.heap_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+    }
+
+    // Create output slot for _vector_get
+    let out_slot = context.allocate_temp_slot();
+    instructions.push(IRInstruction::Push(0)); // Initialize out slot
+    instructions.push(IRInstruction::StoreLocal(out_slot));
+
+    // Call _vector_get(vec, 0, &out)
+    instructions.push(IRInstruction::Push(0)); // index
+    instructions.push(IRInstruction::PushLocalAddress(out_slot));
+    instructions.push(IRInstruction::RuntimeCall("_vector_get".to_string(), 3));
+
+    // RuntimeCall pushes success flag onto stack - we can ignore it for now
+    // Just load the actual result from out_slot
+    let success_slot = context.allocate_temp_slot();
+    instructions.push(IRInstruction::StoreLocal(success_slot)); // Store success flag
+    instructions.push(IRInstruction::LoadLocal(out_slot)); // Load actual value
+    context.release_temp_slot(success_slot);
+
+    // Apply liveness plan for cleanup
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    context.release_temp_slot(out_slot);
+
+    Ok(CompileResult {
+        instructions,
+        kind: ValueKind::Number, // For now assume numeric result
+        heap_ownership: HeapOwnership::None,
+    })
+}
+
+/// Compile rest: (rest coll)
+fn compile_rest(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
+    if args.len() != 1 {
+        return Err(CompileError::ArityError("rest".to_string(), 1, args.len()));
+    }
+
+    // Compile the collection
+    let coll_result = compile_node(&args[0], context, program)?;
+    let mut instructions = coll_result.instructions;
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+
+    // Save collection to local
+    let coll_slot = context.allocate_temp_slot();
+    instructions.push(IRInstruction::StoreLocal(coll_slot));
+    if coll_result.heap_ownership == HeapOwnership::Owned {
+        tracked_slots.insert(coll_slot);
+    }
+
+    // Get count: _vector_count(vec)
+    instructions.push(IRInstruction::LoadLocal(coll_slot));
+    instructions.push(IRInstruction::RuntimeCall("_vector_count".to_string(), 1));
+
+    // Save count to local
+    let count_slot = context.allocate_temp_slot();
+    instructions.push(IRInstruction::StoreLocal(count_slot));
+
+    // Call _vector_slice(vec, 1, count)
+    instructions.push(IRInstruction::LoadLocal(coll_slot));
+    instructions.push(IRInstruction::Push(1)); // start index
+    instructions.push(IRInstruction::LoadLocal(count_slot));
+    instructions.push(IRInstruction::RuntimeCall("_vector_slice".to_string(), 3));
+
+    // Clean up temporaries
+    context.release_temp_slot(count_slot);
+
+    // Apply liveness plan for cleanup
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    context.release_temp_slot(coll_slot);
+
+    Ok(CompileResult {
+        instructions,
+        kind: ValueKind::Vector,
+        heap_ownership: HeapOwnership::Owned, // rest returns a new vector
     })
 }
 
