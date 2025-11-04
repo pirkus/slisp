@@ -13,12 +13,15 @@ pub enum Primitive {
     Number(usize),
     Boolean(bool),
     String(String),
+    Keyword(String),
 }
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Node {
     List { root: Vec<Node> },
     Vector { root: Vec<Node> },
+    Map { entries: Vec<(Node, Node)> },
+    Set { root: Vec<Node> },
     Primitive { value: Primitive },
     Symbol { value: String },
 }
@@ -38,5 +41,17 @@ impl Node {
 
     pub fn new_vector_from_raw(nodes: Vec<Node>) -> Node {
         Node::Vector { root: nodes }
+    }
+
+    pub fn new_set_from_raw(nodes: Vec<Node>) -> Node {
+        Node::Set { root: nodes }
+    }
+
+    pub fn new_map_from_raw(entries: Vec<(Node, Node)>) -> Node {
+        Node::Map { entries }
+    }
+
+    pub fn new_keyword_from_raw(value: String) -> Node {
+        Node::Primitive { value: Primitive::Keyword(value) }
     }
 }

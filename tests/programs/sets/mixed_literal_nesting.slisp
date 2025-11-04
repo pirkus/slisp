@@ -1,0 +1,13 @@
+(defn -main []
+  (let [numbers #{1 2 3}
+        letters ["a" "b" "c"]
+        combos {:nums numbers
+                :letters letters
+                :tags #{:hot :cold}}
+        trimmed (assoc combos :nums (disj numbers 2))
+        nums (get trimmed :nums)
+        tags (get trimmed :tags)
+        total (+ (count nums) (count (get trimmed :letters)))]
+    (+ total
+       (if (contains? tags :hot) 10 0)
+       (if (contains? nums 2) 0 1))))

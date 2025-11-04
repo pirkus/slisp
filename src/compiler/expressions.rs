@@ -1,7 +1,9 @@
-use super::{CompileContext, CompileError, CompileResult, ValueKind};
+use super::{CompileContext, CompileError, CompileResult, HeapOwnership, ValueKind};
 /// Expression compilation - arithmetic, comparisons, conditionals, logical operations
 use crate::ast::{Node, Primitive};
+use crate::compiler::liveness::{apply_liveness_plan, compute_liveness_plan};
 use crate::ir::{IRInstruction, IRProgram};
+use std::collections::HashSet;
 
 /// Compile a primitive value (numbers, strings)
 pub fn compile_primitive(primitive: &Primitive, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
@@ -11,6 +13,11 @@ pub fn compile_primitive(primitive: &Primitive, program: &mut IRProgram) -> Resu
         Primitive::String(s) => {
             let string_index = program.add_string(s.clone());
             Ok(CompileResult::with_instructions(vec![IRInstruction::PushString(string_index)], ValueKind::String))
+        }
+        Primitive::Keyword(k) => {
+            let literal = format!(":{}", k);
+            let string_index = program.add_string(literal);
+            Ok(CompileResult::with_instructions(vec![IRInstruction::PushString(string_index)], ValueKind::Keyword))
         }
     }
 }
@@ -37,11 +44,78 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
         return Err(CompileError::ArityError(op_name.to_string(), 2, args.len()));
     }
 
-    let mut instructions = crate::compiler::compile_node(&args[0], context, program)?.instructions;
-    instructions.extend(crate::compiler::compile_node(&args[1], context, program)?.instructions);
-    instructions.push(instruction);
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut temp_slots = Vec::new();
+
+    let left_result = crate::compiler::compile_node(&args[0], context, program)?;
+    let CompileResult {
+        mut instructions,
+        kind: mut left_kind,
+        heap_ownership: left_ownership,
+    } = left_result;
+
+    if left_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        temp_slots.push(slot);
+    }
+
+    let right_result = crate::compiler::compile_node(&args[1], context, program)?;
+    let CompileResult {
+        instructions: right_instructions,
+        kind: mut right_kind,
+        heap_ownership: right_ownership,
+    } = right_result;
+
+    instructions.extend(right_instructions);
+
+    if right_ownership == HeapOwnership::Owned {
+        let slot = context.allocate_temp_slot();
+        instructions.push(IRInstruction::StoreLocal(slot));
+        instructions.push(IRInstruction::LoadLocal(slot));
+        tracked_slots.insert(slot);
+        temp_slots.push(slot);
+    }
+
+    if left_kind == ValueKind::Any {
+        left_kind = resolve_operand_kind(&args[0], left_kind, context);
+    }
+    if right_kind == ValueKind::Any {
+        right_kind = resolve_operand_kind(&args[1], right_kind, context);
+    }
+
+    let string_equality =
+        matches!(instruction, IRInstruction::Equal) && ((left_kind == ValueKind::String && right_kind == ValueKind::String) || (left_kind == ValueKind::Keyword && right_kind == ValueKind::Keyword));
+
+    if string_equality {
+        instructions.push(IRInstruction::RuntimeCall("_string_equals".to_string(), 2));
+    } else {
+        instructions.push(instruction);
+    }
+
+    if !tracked_slots.is_empty() {
+        let plan = compute_liveness_plan(&instructions, &tracked_slots);
+        instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    for slot in temp_slots {
+        context.release_temp_slot(slot);
+    }
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Boolean))
+}
+
+fn resolve_operand_kind(node: &Node, fallback: ValueKind, context: &CompileContext) -> ValueKind {
+    if fallback != ValueKind::Any {
+        return fallback;
+    }
+
+    match node {
+        Node::Symbol { value } => context.get_variable_type(value).or_else(|| context.get_parameter_type(value)).unwrap_or(fallback),
+        _ => fallback,
+    }
 }
 
 /// Compile if expression
@@ -76,8 +150,12 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
         then_result.kind
     } else if (then_result.kind == ValueKind::String && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::String) {
         ValueKind::String
+    } else if (then_result.kind == ValueKind::Keyword && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Keyword) {
+        ValueKind::Keyword
     } else if (then_result.kind == ValueKind::Vector && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Vector) {
         ValueKind::Vector
+    } else if (then_result.kind == ValueKind::Map && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Map) {
+        ValueKind::Map
     } else if (then_result.kind == ValueKind::Boolean && else_result.kind == ValueKind::Nil) || (then_result.kind == ValueKind::Nil && else_result.kind == ValueKind::Boolean) {
         ValueKind::Boolean
     } else {

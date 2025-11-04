@@ -212,32 +212,23 @@ pub fn generate_runtime_call(runtime_offset: Option<i32>, arg_count: usize) -> (
     let mut code = Vec::new();
 
     // Pop arguments from stack into registers (right-to-left for System V ABI)
-    // System V ABI: RDI, RSI, RDX, RCX, R8, R9
-    match arg_count {
-        0 => {
-            // No arguments
-        }
-        1 => {
-            // pop rdi (first argument)
-            code.push(0x5f);
-        }
-        2 => {
-            // pop rsi (second argument)
-            code.extend_from_slice(&[0x5e]);
-            // pop rdi (first argument)
-            code.push(0x5f);
-        }
-        3 => {
-            // pop rdx (third argument)
-            code.extend_from_slice(&[0x5a]);
-            // pop rsi (second argument)
-            code.extend_from_slice(&[0x5e]);
-            // pop rdi (first argument)
-            code.push(0x5f);
-        }
-        _ => {
-            // TODO: Support more arguments if needed
-            panic!("Runtime calls with more than 3 arguments not yet supported");
+    // System V ABI integer argument registers: RDI, RSI, RDX, RCX, R8, R9
+    if arg_count > 6 {
+        panic!("Runtime calls with more than 6 arguments not yet supported");
+    }
+
+    if arg_count > 0 {
+        const POP_SEQUENCES: [&[u8]; 6] = [
+            &[0x5f],       // pop rdi
+            &[0x5e],       // pop rsi
+            &[0x5a],       // pop rdx
+            &[0x59],       // pop rcx
+            &[0x41, 0x58], // pop r8
+            &[0x41, 0x59], // pop r9
+        ];
+
+        for index in (0..arg_count).rev() {
+            code.extend_from_slice(POP_SEQUENCES[index]);
         }
     }
 
@@ -274,5 +265,20 @@ mod tests {
         assert_eq!(generate_sub().len(), 6);
         assert_eq!(generate_mul().len(), 7);
         assert_eq!(generate_div().len(), 14);
+    }
+
+    #[test]
+    fn runtime_call_supports_up_to_six_args() {
+        let (code, _) = generate_runtime_call(Some(0), 5);
+        let expected_prefix = [0x41, 0x58, 0x59, 0x5a, 0x5e, 0x5f];
+        assert_eq!(&code[..6], &expected_prefix);
+        assert_eq!(code[6], 0xe8);
+        assert_eq!(code[11], 0x50);
+
+        let (code_six, _) = generate_runtime_call(Some(0), 6);
+        let expected_prefix_six = [0x41, 0x59, 0x41, 0x58, 0x59, 0x5a, 0x5e, 0x5f];
+        assert_eq!(&code_six[..8], &expected_prefix_six);
+        assert_eq!(code_six[8], 0xe8);
+        assert_eq!(code_six[13], 0x50);
     }
 }

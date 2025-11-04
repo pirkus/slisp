@@ -1,0 +1,14 @@
+(defn render-length [m]
+  (count (str m)))
+
+(defn -main []
+  (let [base (hash-map "alpha" 1 "beta" 2)
+        augmented (assoc base "gamma" (hash-map "left" 10 "right" 20))
+        expanded (assoc augmented "delta" (assoc base "epsilon" 5))
+        with-flag (assoc expanded "active" true)
+        cleaned (dissoc with-flag "alpha")
+        payload (get with-flag "gamma" nil)
+        payload-size (if (contains? with-flag "gamma") (render-length payload) 0)
+        main-size (render-length with-flag)
+        fallback (get cleaned "alpha" 99)]
+    (+ payload-size main-size fallback (count with-flag) (count cleaned))))

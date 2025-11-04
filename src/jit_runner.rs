@@ -98,6 +98,7 @@ fn resolve_runtime_symbol(addresses: &RuntimeAddresses, symbol: &str) -> Option<
         "_string_normalize" => addresses.string_normalize,
         "_string_from_number" => addresses.string_from_number,
         "_string_from_boolean" => addresses.string_from_boolean,
+        "_string_equals" => addresses.string_equals,
         _ => None,
     }
 }

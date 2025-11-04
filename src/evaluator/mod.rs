@@ -7,14 +7,26 @@ mod primitives;
 mod special_forms;
 
 use crate::ast::{Node, Primitive};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MapKey {
+    Number(isize),
+    Boolean(bool),
+    String(String),
+    Keyword(String),
+    Nil,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(isize),
     Boolean(bool),
     String(String),
+    Keyword(String),
     Vector(Vec<Value>),
+    Set(HashSet<MapKey>),
+    Map(HashMap<MapKey, Value>),
     Nil,
     Function {
         params: Vec<String>,
@@ -33,6 +45,19 @@ pub enum EvalError {
 
 pub type Environment = HashMap<String, Value>;
 
+impl MapKey {
+    pub fn try_from_value(value: &Value) -> Result<Self, EvalError> {
+        match value {
+            Value::Number(n) => Ok(MapKey::Number(*n)),
+            Value::Boolean(b) => Ok(MapKey::Boolean(*b)),
+            Value::String(s) => Ok(MapKey::String(s.clone())),
+            Value::Keyword(k) => Ok(MapKey::Keyword(k.clone())),
+            Value::Nil => Ok(MapKey::Nil),
+            _ => Err(EvalError::TypeError("map keys must be numbers, booleans, strings, keywords, or nil".to_string())),
+        }
+    }
+}
+
 /// Evaluate a node with a fresh environment
 pub fn eval_node(node: &Node) -> Result<Value, EvalError> {
     eval_with_env(node, &mut Environment::new())
@@ -45,6 +70,8 @@ pub(crate) fn eval_with_env(node: &Node, env: &mut Environment) -> Result<Value,
         Node::Symbol { value } => eval_symbol(value, env),
         Node::List { root } => eval_list(root, env),
         Node::Vector { root } => eval_vector(root, env),
+        Node::Map { entries } => eval_map_literal(entries, env),
+        Node::Set { root } => primitives::eval_set(root, env),
     }
 }
 
@@ -53,6 +80,7 @@ fn eval_primitive(primitive: &Primitive) -> Result<Value, EvalError> {
         Primitive::Number(n) => Ok(Value::Number(*n as isize)),
         Primitive::Boolean(b) => Ok(Value::Boolean(*b)),
         Primitive::String(s) => Ok(Value::String(s.clone())),
+        Primitive::Keyword(k) => Ok(Value::Keyword(k.clone())),
     }
 }
 
@@ -103,6 +131,12 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
             "get" => primitives::eval_get(args, env),
             "subs" => primitives::eval_subs(args, env),
             "vec" => primitives::eval_vec(args, env),
+            "set" => primitives::eval_set(args, env),
+            "hash-map" => primitives::eval_hash_map(args, env),
+            "assoc" => primitives::eval_assoc(args, env),
+            "dissoc" => primitives::eval_dissoc(args, env),
+            "disj" => primitives::eval_disj(args, env),
+            "contains?" => primitives::eval_contains(args, env),
             op => {
                 if let Some(func_value) = env.get(op) {
                     special_forms::eval_function_call(func_value.clone(), args, env)
@@ -126,10 +160,22 @@ fn eval_vector(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError
     Ok(Value::Vector(values))
 }
 
+fn eval_map_literal(entries: &[(Node, Node)], env: &mut Environment) -> Result<Value, EvalError> {
+    let mut map = HashMap::with_capacity(entries.len());
+    for (key_node, value_node) in entries {
+        let key_value = eval_with_env(key_node, env)?;
+        let key = MapKey::try_from_value(&key_value)?;
+        let value = eval_with_env(value_node, env)?;
+        map.insert(key, value);
+    }
+    Ok(Value::Map(map))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ast::{AstParser, AstParserTrt};
+    use std::collections::{HashMap, HashSet};
 
     fn parse_and_eval(input: &str) -> Result<Value, EvalError> {
         let ast = AstParser::parse_sexp_new_domain(input.as_bytes(), &mut 0);
@@ -191,6 +237,94 @@ mod tests {
         assert_eq!(parse_and_eval("(if (and (> 10 5) (< 3 8)) (+ 2 3) (* 2 4))"), Ok(Value::Number(5)));
 
         assert_eq!(parse_and_eval("(+ (* 2 3) (if (= 1 1) 4 0))"), Ok(Value::Number(10)));
+    }
+
+    #[test]
+    fn test_keyword_literal() {
+        assert_eq!(parse_and_eval(":hello"), Ok(Value::Keyword("hello".to_string())));
+    }
+
+    #[test]
+    fn test_map_literal_with_keyword_key() {
+        let mut expected = HashMap::new();
+        expected.insert(MapKey::Keyword("name".to_string()), Value::String("Ada".to_string()));
+        assert_eq!(parse_and_eval("{:name \"Ada\"}"), Ok(Value::Map(expected)));
+    }
+
+    #[test]
+    fn test_get_with_keyword_key() {
+        assert_eq!(parse_and_eval("(get {:name \"Ada\"} :name)"), Ok(Value::String("Ada".to_string())));
+    }
+
+    #[test]
+    fn test_map_literal() {
+        let mut expected = HashMap::new();
+        expected.insert(MapKey::String("foo".to_string()), Value::Number(1));
+        expected.insert(MapKey::String("bar".to_string()), Value::Boolean(true));
+        assert_eq!(parse_and_eval("{\"foo\" 1 \"bar\" true}"), Ok(Value::Map(expected)));
+    }
+
+    #[test]
+    fn test_hash_map_literal_and_assoc() {
+        let mut expected = HashMap::new();
+        expected.insert(MapKey::String("a".to_string()), Value::Number(1));
+        expected.insert(MapKey::String("b".to_string()), Value::Number(2));
+        assert_eq!(parse_and_eval("(assoc (hash-map \"a\" 1) \"b\" 2)"), Ok(Value::Map(expected)));
+    }
+
+    #[test]
+    fn test_hash_map_dissoc_and_get_default() {
+        assert_eq!(parse_and_eval("(get (dissoc (hash-map \"a\" 1 \"b\" 2) \"a\") \"a\" 42)"), Ok(Value::Number(42)));
+    }
+
+    #[test]
+    fn test_hash_map_contains_and_count() {
+        assert_eq!(parse_and_eval("(contains? (hash-map \"a\" 1) \"a\")"), Ok(Value::Boolean(true)));
+        assert_eq!(parse_and_eval("(contains? (hash-map \"a\" 1) \"missing\")"), Ok(Value::Boolean(false)));
+        assert_eq!(parse_and_eval("(count (hash-map \"a\" 1 \"b\" 2))"), Ok(Value::Number(2)));
+    }
+
+    #[test]
+    fn test_set_construction_and_count() {
+        let mut expected = HashSet::new();
+        expected.insert(MapKey::Number(1));
+        expected.insert(MapKey::Number(2));
+        expected.insert(MapKey::Number(3));
+        assert_eq!(parse_and_eval("(set 1 2 2 3)"), Ok(Value::Set(expected)));
+        assert_eq!(parse_and_eval("(count (set 1 2 2 3))"), Ok(Value::Number(3)));
+    }
+
+    #[test]
+    fn test_set_contains_and_disj() {
+        assert_eq!(parse_and_eval("(contains? (set 1 2) 2)"), Ok(Value::Boolean(true)));
+        assert_eq!(parse_and_eval("(contains? (set 1 2) 5)"), Ok(Value::Boolean(false)));
+
+        let mut expected = HashSet::new();
+        expected.insert(MapKey::Number(1));
+        assert_eq!(parse_and_eval("(disj (set 1 2 3) 2 3)"), Ok(Value::Set(expected)));
+    }
+
+    #[test]
+    fn test_disj_nil_is_empty_set() {
+        assert_eq!(parse_and_eval("(disj (set) 1 2)"), Ok(Value::Set(HashSet::new())));
+    }
+
+    #[test]
+    fn test_set_string_rendering() {
+        assert_eq!(parse_and_eval("(str (set 2 1))"), Ok(Value::String("#{1 2}".to_string())));
+    }
+
+    #[test]
+    fn test_set_literal_constructs_set() {
+        let mut expected = HashSet::new();
+        expected.insert(MapKey::Number(1));
+        expected.insert(MapKey::Number(2));
+        assert_eq!(parse_and_eval("#{1 2 1}"), Ok(Value::Set(expected)));
+    }
+
+    #[test]
+    fn test_empty_set_literal() {
+        assert_eq!(parse_and_eval("#{}"), Ok(Value::Set(HashSet::new())));
     }
 
     #[test]

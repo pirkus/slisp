@@ -265,7 +265,7 @@ impl CompileContext {
     /// Mark a variable as holding a heap-allocated pointer
     pub fn mark_heap_allocated(&mut self, name: &str, kind: ValueKind) {
         self.heap_allocated_vars.insert(name.to_string(), true);
-        if matches!(kind, ValueKind::String | ValueKind::Vector) {
+        if matches!(kind, ValueKind::String | ValueKind::Vector | ValueKind::Map | ValueKind::Set) {
             if self.variables.contains_key(name) {
                 self.variable_types.insert(name.to_string(), kind);
             } else if self.parameters.contains_key(name) {

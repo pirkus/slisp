@@ -126,6 +126,33 @@ pub unsafe extern "C" fn _string_clone(src: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn _string_equals(left: *const u8, right: *const u8) -> i64 {
+    if left == right {
+        return 1;
+    }
+
+    if left.is_null() || right.is_null() {
+        return 0;
+    }
+
+    let left_len = _string_count(left) as usize;
+    let right_len = _string_count(right) as usize;
+    if left_len != right_len {
+        return 0;
+    }
+
+    let mut idx = 0usize;
+    while idx < left_len {
+        if *left.add(idx) != *right.add(idx) {
+            return 0;
+        }
+        idx += 1;
+    }
+
+    1
+}
+
+#[no_mangle]
 pub extern "C" fn _string_from_boolean(value: i64) -> *mut u8 {
     if value == 0 {
         FALSE_LITERAL.as_ptr() as *mut u8

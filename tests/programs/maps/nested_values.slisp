@@ -1,0 +1,7 @@
+(defn -main []
+  (let [nums (vec 7 11 13)
+        data (hash-map "numbers" nums)
+        extracted (get data "numbers" (vec))
+        mid (get extracted 1 0)
+        fallback (get (dissoc data "numbers") "numbers" (vec 99))]
+    (+ mid (count extracted) (count fallback))))

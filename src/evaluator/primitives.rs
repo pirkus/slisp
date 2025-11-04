@@ -1,6 +1,7 @@
-use super::{Environment, EvalError, Value};
+use super::{Environment, EvalError, MapKey, Value};
 /// Primitive operations - arithmetic and comparisons
 use crate::ast::Node;
+use std::collections::HashSet;
 
 /// Evaluate arithmetic operations (+, -, *, /)
 pub fn eval_arithmetic_op<F>(args: &[Node], env: &mut Environment, op: F, op_name: &str) -> Result<Value, EvalError>
@@ -42,7 +43,10 @@ pub fn eval_equal(args: &[Node], env: &mut Environment) -> Result<Value, EvalErr
         (Value::Number(a), Value::Number(b)) => a == b,
         (Value::Boolean(a), Value::Boolean(b)) => a == b,
         (Value::String(a), Value::String(b)) => a == b,
+        (Value::Keyword(a), Value::Keyword(b)) => a == b,
         (Value::Vector(a), Value::Vector(b)) => a == b,
+        (Value::Set(a), Value::Set(b)) => a == b,
+        (Value::Map(a), Value::Map(b)) => a == b,
         (Value::Nil, Value::Nil) => true,
         _ => false, // Different types are not equal
     };
@@ -119,8 +123,11 @@ fn is_truthy(val: &Value) -> bool {
         Value::Number(n) => *n != 0,
         Value::Nil => false,
         Value::Function { .. } => true, // Functions are always truthy
+        Value::Keyword(_) => true,
         Value::String(s) => !s.is_empty(),
         Value::Vector(items) => !items.is_empty(),
+        Value::Set(entries) => !entries.is_empty(),
+        Value::Map(entries) => !entries.is_empty(),
     }
 }
 
@@ -129,6 +136,7 @@ fn value_to_string(value: &Value) -> String {
         Value::Number(n) => n.to_string(),
         Value::Boolean(b) => b.to_string(),
         Value::String(s) => s.clone(),
+        Value::Keyword(k) => format!(":{}", k),
         Value::Nil => "nil".to_string(),
         Value::Function { .. } => "#<function>".to_string(),
         Value::Vector(items) => {
@@ -146,6 +154,53 @@ fn value_to_string(value: &Value) -> String {
                 out
             }
         }
+        Value::Set(entries) => {
+            if entries.is_empty() {
+                "#{}".to_string()
+            } else {
+                let mut rendered: Vec<String> = entries.iter().map(map_key_to_string).collect();
+                rendered.sort();
+                let mut out = String::from("#{");
+                for (idx, item) in rendered.iter().enumerate() {
+                    if idx > 0 {
+                        out.push(' ');
+                    }
+                    out.push_str(item);
+                }
+                out.push('}');
+                out
+            }
+        }
+        Value::Map(entries) => {
+            if entries.is_empty() {
+                "{}".to_string()
+            } else {
+                let mut rendered: Vec<(String, String)> = entries.iter().map(|(key, value)| (map_key_to_string(key), value_to_string(value))).collect();
+                rendered.sort_by(|(ka, _), (kb, _)| ka.cmp(kb));
+                let mut out = String::from("{");
+                for (idx, (key, value)) in rendered.iter().enumerate() {
+                    if idx > 0 {
+                        out.push(' ');
+                    }
+                    out.push_str(key);
+                    out.push(' ');
+                    out.push_str(value);
+                }
+                out.push('}');
+                out
+            }
+        }
+    }
+}
+
+fn map_key_to_string(key: &MapKey) -> String {
+    match key {
+        MapKey::Number(n) => n.to_string(),
+        MapKey::Boolean(true) => "true".to_string(),
+        MapKey::Boolean(false) => "false".to_string(),
+        MapKey::String(s) => format!("\"{}\"", s),
+        MapKey::Keyword(k) => format!(":{}", k),
+        MapKey::Nil => "nil".to_string(),
     }
 }
 
@@ -180,7 +235,10 @@ pub fn eval_count(args: &[Node], env: &mut Environment) -> Result<Value, EvalErr
     match val {
         Value::String(s) => Ok(Value::Number(s.len() as isize)),
         Value::Vector(items) => Ok(Value::Number(items.len() as isize)),
-        _ => Err(EvalError::TypeError("count requires a string or vector argument".to_string())),
+        Value::Set(entries) => Ok(Value::Number(entries.len() as isize)),
+        Value::Map(entries) => Ok(Value::Number(entries.len() as isize)),
+        Value::Nil => Ok(Value::Number(0)),
+        _ => Err(EvalError::TypeError("count requires a string, vector, map, set, or nil argument".to_string())),
     }
 }
 
@@ -213,8 +271,16 @@ pub fn eval_get(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
             }
             Ok(items[idx as usize].clone())
         }
+        (Value::Map(entries), key_value) => {
+            let key = MapKey::try_from_value(&key_value)?;
+            if let Some(found) = entries.get(&key) {
+                Ok(found.clone())
+            } else {
+                resolve_default(default, env)
+            }
+        }
         (Value::String(_), _) | (Value::Vector(_), _) => Err(EvalError::TypeError("get: index must be a number".to_string())),
-        _ => Err(EvalError::TypeError("get: first argument must be a string or vector".to_string())),
+        _ => Err(EvalError::TypeError("get: first argument must be a string, vector, or map".to_string())),
     }
 }
 
@@ -292,4 +358,140 @@ pub fn eval_vec(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
         values.push(crate::evaluator::eval_with_env(arg, env)?);
     }
     Ok(Value::Vector(values))
+}
+
+/// set - Construct a set from evaluated arguments (duplicates removed)
+pub fn eval_set(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    let mut entries = HashSet::with_capacity(args.len());
+    for arg in args {
+        let value = crate::evaluator::eval_with_env(arg, env)?;
+        let key = MapKey::try_from_value(&value)?;
+        entries.insert(key);
+    }
+    Ok(Value::Set(entries))
+}
+
+pub fn eval_hash_map(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() % 2 != 0 {
+        return Err(EvalError::InvalidOperation("hash-map requires key/value pairs".to_string()));
+    }
+
+    let mut entries = std::collections::HashMap::with_capacity(args.len() / 2);
+    let mut idx = 0usize;
+    while idx < args.len() {
+        let key_val = crate::evaluator::eval_with_env(&args[idx], env)?;
+        let value_val = crate::evaluator::eval_with_env(&args[idx + 1], env)?;
+        let key = MapKey::try_from_value(&key_val)?;
+        entries.insert(key, value_val);
+        idx += 2;
+    }
+    Ok(Value::Map(entries))
+}
+
+pub fn eval_assoc(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() < 3 {
+        return Err(EvalError::ArityError("assoc".to_string(), 3, args.len()));
+    }
+
+    if (args.len() - 1) % 2 != 0 {
+        return Err(EvalError::InvalidOperation("assoc expects key/value pairs".to_string()));
+    }
+
+    let base = crate::evaluator::eval_with_env(&args[0], env)?;
+    let mut entries = match base {
+        Value::Map(map) => map,
+        Value::Nil => std::collections::HashMap::new(),
+        _ => return Err(EvalError::TypeError("assoc: first argument must be a map or nil".to_string())),
+    };
+
+    let mut idx = 1usize;
+    while idx < args.len() {
+        let key_val = crate::evaluator::eval_with_env(&args[idx], env)?;
+        let value_val = crate::evaluator::eval_with_env(&args[idx + 1], env)?;
+        let key = MapKey::try_from_value(&key_val)?;
+        entries.insert(key, value_val);
+        idx += 2;
+    }
+
+    Ok(Value::Map(entries))
+}
+
+pub fn eval_dissoc(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() < 1 {
+        return Err(EvalError::ArityError("dissoc".to_string(), 1, 0));
+    }
+
+    let base = crate::evaluator::eval_with_env(&args[0], env)?;
+    if args.len() == 1 {
+        return match base {
+            Value::Map(map) => Ok(Value::Map(map)),
+            Value::Nil => Ok(Value::Map(std::collections::HashMap::new())),
+            _ => Err(EvalError::TypeError("dissoc: first argument must be a map or nil".to_string())),
+        };
+    }
+
+    let mut entries = match base {
+        Value::Map(map) => map,
+        Value::Nil => std::collections::HashMap::new(),
+        _ => return Err(EvalError::TypeError("dissoc: first argument must be a map or nil".to_string())),
+    };
+
+    for key_expr in &args[1..] {
+        let key_val = crate::evaluator::eval_with_env(key_expr, env)?;
+        let key = MapKey::try_from_value(&key_val)?;
+        entries.remove(&key);
+    }
+
+    Ok(Value::Map(entries))
+}
+
+pub fn eval_disj(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.is_empty() {
+        return Err(EvalError::ArityError("disj".to_string(), 1, 0));
+    }
+
+    let base = crate::evaluator::eval_with_env(&args[0], env)?;
+    if args.len() == 1 {
+        return match base {
+            Value::Set(entries) => Ok(Value::Set(entries)),
+            Value::Nil => Ok(Value::Set(HashSet::new())),
+            _ => Err(EvalError::TypeError("disj: first argument must be a set or nil".to_string())),
+        };
+    }
+
+    let mut entries = match base {
+        Value::Set(entries) => entries,
+        Value::Nil => HashSet::with_capacity(args.len() - 1),
+        _ => return Err(EvalError::TypeError("disj: first argument must be a set or nil".to_string())),
+    };
+
+    for expr in &args[1..] {
+        let value = crate::evaluator::eval_with_env(expr, env)?;
+        let key = MapKey::try_from_value(&value)?;
+        entries.remove(&key);
+    }
+
+    Ok(Value::Set(entries))
+}
+
+pub fn eval_contains(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() != 2 {
+        return Err(EvalError::ArityError("contains?".to_string(), 2, args.len()));
+    }
+
+    let target = crate::evaluator::eval_with_env(&args[0], env)?;
+    let key_val = crate::evaluator::eval_with_env(&args[1], env)?;
+
+    match target {
+        Value::Map(entries) => {
+            let key = MapKey::try_from_value(&key_val)?;
+            Ok(Value::Boolean(entries.contains_key(&key)))
+        }
+        Value::Set(entries) => {
+            let key = MapKey::try_from_value(&key_val)?;
+            Ok(Value::Boolean(entries.contains(&key)))
+        }
+        Value::Nil => Ok(Value::Boolean(false)),
+        _ => Err(EvalError::TypeError("contains?: first argument must be a map, set, or nil".to_string())),
+    }
 }

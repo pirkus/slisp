@@ -14,8 +14,11 @@ pub fn eval_if(args: &[Node], env: &mut Environment) -> Result<Value, EvalError>
         Value::Number(n) => n != 0,
         Value::Nil => false,
         Value::Function { .. } => true, // Functions are always truthy
+        Value::Keyword(_) => true,
         Value::String(s) => !s.is_empty(),
         Value::Vector(items) => !items.is_empty(),
+        Value::Set(entries) => !entries.is_empty(),
+        Value::Map(entries) => !entries.is_empty(),
     };
 
     if is_truthy {

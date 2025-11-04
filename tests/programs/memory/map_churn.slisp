@@ -1,0 +1,20 @@
+(defn churn-once [seed active-flag]
+  (let [base (hash-map)
+        with-user (assoc base "user" seed)
+        with-role (assoc with-user "role" "admin")
+        toggled (assoc with-role "active" active-flag)
+        meta (hash-map "visits" (+ seed 1) "source" "batch")
+        with-meta (assoc toggled "meta" meta)
+        trimmed (dissoc with-meta "role")
+        user (get with-meta "user" 0)
+        fallback (get trimmed "user" 5)
+        has-active (contains? with-meta "active")
+        meta-visits (get meta "visits" 0)
+        meta-render (count (str meta))]
+    (+ user fallback meta-visits meta-render (if has-active 7 0) (count with-meta) (count trimmed))))
+
+(defn -main []
+  (let [first (churn-once 40 true)
+        second (churn-once 41 false)
+        third (churn-once 42 true)]
+    (+ first second third)))

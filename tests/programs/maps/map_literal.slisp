@@ -1,0 +1,8 @@
+(defn -main []
+  (let [prefs {"color" "blue" "notifications" true}
+        with-default (assoc prefs "volume" 5)
+        has-color (contains? with-default "color")
+        maybe-volume (get with-default "volume" 0)]
+    (if has-color
+      (+ (count with-default) (count (subs "tone" 0 2)) maybe-volume)
+      0)))

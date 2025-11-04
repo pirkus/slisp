@@ -1,0 +1,25 @@
+(defn stage-set [seed n]
+  (let [n-val (+ n 0)
+        base (set n-val (+ n-val 1) (+ n-val 2) (+ (* n-val n-val) 3))
+        trimmed (disj base (+ n-val 2))
+        expanded (set (count base) (count trimmed) n-val)
+        blended (if (contains? seed n-val)
+                  (set (count expanded) (+ n-val 4))
+                  (set (count seed) (count expanded) (+ n-val 5)))]
+    blended))
+
+(defn -main []
+  (let [initial (set 1 2 3 4)
+        stage1 (stage-set initial 5)
+        stage2 (stage-set stage1 9)
+        stage3 (stage-set stage2 13)
+        stage4 (stage-set stage3 17)
+        totals (+ (count initial)
+                  (count stage1)
+                  (count stage2)
+                  (count stage3)
+                  (count stage4))
+        combined (set totals
+                      (count (set (count stage1) (count stage3)))
+                      (count (disj stage4 17)))]
+    (+ totals (count combined))))

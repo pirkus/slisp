@@ -1,0 +1,10 @@
+(defn -main []
+  (let [profile {:name "Ada" :role :admin}
+        login-role (get profile :role)
+        extended (assoc profile :logins 5)
+        sanitized (dissoc extended :role)
+        maybe-role (get sanitized :role :none)
+        has-name (contains? sanitized :name)]
+    (if (and has-name (= login-role :admin) (= maybe-role :none))
+      (+ (count sanitized) 37)
+      0)))
