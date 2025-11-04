@@ -66,6 +66,13 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
   - ✅ **6.4.8 Set runtime groundwork:** Added runtime set helpers (create/clone/contains/count/disj/to_string) layered on the map primitives, extended the interpreter with `set`/`disj`/`contains?` support and uniqueness-aware semantics, wired the compiler to lower set construction and operations with liveness-aware freeing, and backfilled runtime plus interpreter tests covering churn and rendering edge cases.
   - ✅ **6.4.9 Set literal syntax:** Extend the reader/compiler to recognise `#{}` forms, lowering them onto the set runtime helpers while maintaining ownership and telemetry coverage alongside new fixtures.
   - ✅ **6.4.10 Spillover ergonomics:** Introduced higher-order functions (`map`, `filter`, `reduce`, `first`, `rest`, `cons`, `conj`) and map utilities (`keys`, `vals`) in both interpreter and compiled modes. Added runtime helpers (`_vector_map`, `_vector_filter`, `_vector_reduce`, `_vector_cons`, `_vector_conj`, `_map_keys`, `_map_vals`), extended IR with `PushFunctionAddress` and comparison operators (`=`, `<`, `>`, `<=`, `>=`), implemented PC-relative addressing for JIT and 64-bit absolute relocations for AOT, and fixed register preservation (RBX→RCX) in arithmetic ops to maintain System V ABI compliance. All higher-order functions and collection operations now work in both JIT and AOT modes with proper heap ownership tracking. Created 12 comprehensive test programs demonstrating compiled mode functionality. All 182 tests pass with no regressions.
+  - **6.4.11 Remaining collection utilities (planned):** Complete compiler support for remaining interpreter-only functions to achieve full REPL/JIT/AOT feature parity for collection operations.
+    - **concat:** Add `_vector_concat` runtime helper to merge multiple collections into a single vector. Implement `compile_concat` with variadic argument handling and proper heap ownership tracking. Test with chained concatenations and mixed collection types.
+    - **merge:** Add `_map_merge` runtime helper to combine multiple maps (later keys override earlier ones). Implement `compile_merge` with variadic support and ensure key uniqueness. Test with overlapping keys and multiple map merges.
+    - **select-keys:** Add `_map_select_keys` runtime helper that takes a map and vector of keys, returns new map with only those keys. Implement `compile_select_keys` with proper argument ordering and ownership. Test with missing keys and empty selections.
+    - **zipmap:** Add `_map_zipmap` runtime helper that takes two vectors (keys and values) and creates a map. Handle length mismatches (truncate to shorter). Implement `compile_zipmap` and ensure both vectors are properly freed. Test with equal and unequal length vectors.
+    - Create 4 additional test programs (`compiled_concat_test.slisp`, `compiled_merge_test.slisp`, `compiled_select_keys_test.slisp`, `compiled_zipmap_test.slisp`) demonstrating compiled functionality.
+    - Update documentation to reflect complete feature parity between REPL and compiled modes for all collection operations.
 - **6.5 Type inference pass (planned):**
   - **6.5.1 Analysis scaffolding:** Build a reusable analysis pipeline over the AST/IR that iterates until stable `ValueKind` assignments emerge for locals, parameters, and returns.
   - **6.5.2 Constraint solving & propagation:** Encode primitive operations, runtime helpers, and composite data semantics as constraints; ensure borrowed/owned markers survive the pass so codegen can keep clone/free behaviour correct.
@@ -85,8 +92,9 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
 - **7.3 Module system:** `(require ...)` semantics, dependency compilation order, and optional namespaces/standard library packaging.
 
 ### Phase 8 – Advanced Language Features 🚀
-- **8.1 Closures in compiled code:** Environment capture layout, closure call conventions, and heap-stored activation records.
+- **8.1 Closures and anonymous functions in compiled code:** Environment capture layout, closure call conventions, and heap-stored activation records. This phase will enable anonymous `fn` expressions in compiled mode (currently interpreter-only).
   - ⏳ Align interpreter/JIT closure capture semantics by cloning captured values up front so compiled closures can share borrow/ownership rules.
+  - ⏳ Extend compiler to support anonymous `fn` expressions by generating closure objects with captured environment and function pointer.
 - **8.2 Control flow:** `loop`/`recur`, pattern matching, and structured error handling (`try`/`catch`).
 - **8.3 Optimisations:** Constant folding, dead code elimination, tail-call optimisation, register allocation, and selective inlining.
 
