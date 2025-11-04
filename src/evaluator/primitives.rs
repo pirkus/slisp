@@ -495,3 +495,360 @@ pub fn eval_contains(args: &[Node], env: &mut Environment) -> Result<Value, Eval
         _ => Err(EvalError::TypeError("contains?: first argument must be a map, set, or nil".to_string())),
     }
 }
+
+/// map - Apply a function to each element of a collection
+pub fn eval_map(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() != 2 {
+        return Err(EvalError::ArityError("map".to_string(), 2, args.len()));
+    }
+
+    let func = crate::evaluator::eval_with_env(&args[0], env)?;
+    let coll = crate::evaluator::eval_with_env(&args[1], env)?;
+
+    match coll {
+        Value::Vector(items) => {
+            let mut results = Vec::with_capacity(items.len());
+            for item in items {
+                // Create a temporary node for the value
+                let item_node = value_to_node(&item);
+                let result = crate::evaluator::special_forms::eval_function_call(func.clone(), &[item_node], env)?;
+                results.push(result);
+            }
+            Ok(Value::Vector(results))
+        }
+        Value::Nil => Ok(Value::Vector(vec![])),
+        _ => Err(EvalError::TypeError("map: second argument must be a vector or nil".to_string())),
+    }
+}
+
+/// filter - Select elements that satisfy a predicate
+pub fn eval_filter(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() != 2 {
+        return Err(EvalError::ArityError("filter".to_string(), 2, args.len()));
+    }
+
+    let pred = crate::evaluator::eval_with_env(&args[0], env)?;
+    let coll = crate::evaluator::eval_with_env(&args[1], env)?;
+
+    match coll {
+        Value::Vector(items) => {
+            let mut results = Vec::new();
+            for item in items {
+                let item_node = value_to_node(&item);
+                let result = crate::evaluator::special_forms::eval_function_call(pred.clone(), &[item_node], env)?;
+                if is_truthy(&result) {
+                    results.push(item);
+                }
+            }
+            Ok(Value::Vector(results))
+        }
+        Value::Nil => Ok(Value::Vector(vec![])),
+        _ => Err(EvalError::TypeError("filter: second argument must be a vector or nil".to_string())),
+    }
+}
+
+/// reduce - Fold/accumulate over a collection
+pub fn eval_reduce(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(EvalError::ArityError("reduce".to_string(), 2, args.len()));
+    }
+
+    let func = crate::evaluator::eval_with_env(&args[0], env)?;
+
+    let (init, coll) = if args.len() == 3 {
+        let init = crate::evaluator::eval_with_env(&args[1], env)?;
+        let coll = crate::evaluator::eval_with_env(&args[2], env)?;
+        (init, coll)
+    } else {
+        let coll = crate::evaluator::eval_with_env(&args[1], env)?;
+        match &coll {
+            Value::Vector(items) => {
+                if items.is_empty() {
+                    return Err(EvalError::InvalidOperation("reduce: empty collection with no initial value".to_string()));
+                }
+                (items[0].clone(), Value::Vector(items[1..].to_vec()))
+            }
+            Value::Nil => return Err(EvalError::InvalidOperation("reduce: empty collection with no initial value".to_string())),
+            _ => return Err(EvalError::TypeError("reduce: second argument must be a vector or nil".to_string())),
+        }
+    };
+
+    match coll {
+        Value::Vector(items) => {
+            let mut acc = init;
+            for item in items {
+                let acc_node = value_to_node(&acc);
+                let item_node = value_to_node(&item);
+                acc = crate::evaluator::special_forms::eval_function_call(func.clone(), &[acc_node, item_node], env)?;
+            }
+            Ok(acc)
+        }
+        Value::Nil => Ok(init),
+        _ => Err(EvalError::TypeError("reduce: collection must be a vector or nil".to_string())),
+    }
+}
+
+/// first - Get the first element of a collection
+pub fn eval_first(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() != 1 {
+        return Err(EvalError::ArityError("first".to_string(), 1, args.len()));
+    }
+
+    let coll = crate::evaluator::eval_with_env(&args[0], env)?;
+    match coll {
+        Value::Vector(items) => {
+            if items.is_empty() {
+                Ok(Value::Nil)
+            } else {
+                Ok(items[0].clone())
+            }
+        }
+        Value::Nil => Ok(Value::Nil),
+        _ => Err(EvalError::TypeError("first: argument must be a vector or nil".to_string())),
+    }
+}
+
+/// rest - Get all but the first element of a collection
+pub fn eval_rest(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() != 1 {
+        return Err(EvalError::ArityError("rest".to_string(), 1, args.len()));
+    }
+
+    let coll = crate::evaluator::eval_with_env(&args[0], env)?;
+    match coll {
+        Value::Vector(items) => {
+            if items.is_empty() {
+                Ok(Value::Vector(vec![]))
+            } else {
+                Ok(Value::Vector(items[1..].to_vec()))
+            }
+        }
+        Value::Nil => Ok(Value::Vector(vec![])),
+        _ => Err(EvalError::TypeError("rest: argument must be a vector or nil".to_string())),
+    }
+}
+
+/// cons - Add element to the front of a collection
+pub fn eval_cons(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() != 2 {
+        return Err(EvalError::ArityError("cons".to_string(), 2, args.len()));
+    }
+
+    let elem = crate::evaluator::eval_with_env(&args[0], env)?;
+    let coll = crate::evaluator::eval_with_env(&args[1], env)?;
+
+    match coll {
+        Value::Vector(items) => {
+            let mut result = vec![elem];
+            result.extend(items);
+            Ok(Value::Vector(result))
+        }
+        Value::Nil => Ok(Value::Vector(vec![elem])),
+        _ => Err(EvalError::TypeError("cons: second argument must be a vector or nil".to_string())),
+    }
+}
+
+/// conj - Conjoin element to a collection (append for vectors)
+pub fn eval_conj(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() < 2 {
+        return Err(EvalError::ArityError("conj".to_string(), 2, args.len()));
+    }
+
+    let coll = crate::evaluator::eval_with_env(&args[0], env)?;
+
+    match coll {
+        Value::Vector(mut items) => {
+            for arg in &args[1..] {
+                let elem = crate::evaluator::eval_with_env(arg, env)?;
+                items.push(elem);
+            }
+            Ok(Value::Vector(items))
+        }
+        Value::Nil => {
+            let mut items = Vec::with_capacity(args.len() - 1);
+            for arg in &args[1..] {
+                let elem = crate::evaluator::eval_with_env(arg, env)?;
+                items.push(elem);
+            }
+            Ok(Value::Vector(items))
+        }
+        _ => Err(EvalError::TypeError("conj: first argument must be a vector or nil".to_string())),
+    }
+}
+
+/// concat - Concatenate multiple collections
+pub fn eval_concat(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    let mut result = Vec::new();
+
+    for arg in args {
+        let coll = crate::evaluator::eval_with_env(arg, env)?;
+        match coll {
+            Value::Vector(items) => {
+                result.extend(items);
+            }
+            Value::Nil => {}
+            _ => return Err(EvalError::TypeError("concat: arguments must be vectors or nil".to_string())),
+        }
+    }
+
+    Ok(Value::Vector(result))
+}
+
+/// keys - Get all keys from a map
+pub fn eval_keys(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() != 1 {
+        return Err(EvalError::ArityError("keys".to_string(), 1, args.len()));
+    }
+
+    let coll = crate::evaluator::eval_with_env(&args[0], env)?;
+    match coll {
+        Value::Map(entries) => {
+            let keys: Vec<Value> = entries.keys().map(|k| match k {
+                MapKey::Number(n) => Value::Number(*n),
+                MapKey::Boolean(b) => Value::Boolean(*b),
+                MapKey::String(s) => Value::String(s.clone()),
+                MapKey::Keyword(k) => Value::Keyword(k.clone()),
+                MapKey::Nil => Value::Nil,
+            }).collect();
+            Ok(Value::Vector(keys))
+        }
+        Value::Nil => Ok(Value::Vector(vec![])),
+        _ => Err(EvalError::TypeError("keys: argument must be a map or nil".to_string())),
+    }
+}
+
+/// vals - Get all values from a map
+pub fn eval_vals(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() != 1 {
+        return Err(EvalError::ArityError("vals".to_string(), 1, args.len()));
+    }
+
+    let coll = crate::evaluator::eval_with_env(&args[0], env)?;
+    match coll {
+        Value::Map(entries) => {
+            let values: Vec<Value> = entries.values().cloned().collect();
+            Ok(Value::Vector(values))
+        }
+        Value::Nil => Ok(Value::Vector(vec![])),
+        _ => Err(EvalError::TypeError("vals: argument must be a map or nil".to_string())),
+    }
+}
+
+/// merge - Merge multiple maps (right-associative)
+pub fn eval_merge(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    let mut result = std::collections::HashMap::new();
+
+    for arg in args {
+        let coll = crate::evaluator::eval_with_env(arg, env)?;
+        match coll {
+            Value::Map(entries) => {
+                for (k, v) in entries {
+                    result.insert(k, v);
+                }
+            }
+            Value::Nil => {}
+            _ => return Err(EvalError::TypeError("merge: arguments must be maps or nil".to_string())),
+        }
+    }
+
+    Ok(Value::Map(result))
+}
+
+/// select-keys - Select a subset of keys from a map
+pub fn eval_select_keys(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() != 2 {
+        return Err(EvalError::ArityError("select-keys".to_string(), 2, args.len()));
+    }
+
+    let map_val = crate::evaluator::eval_with_env(&args[0], env)?;
+    let keys_val = crate::evaluator::eval_with_env(&args[1], env)?;
+
+    let entries = match map_val {
+        Value::Map(e) => e,
+        Value::Nil => return Ok(Value::Map(std::collections::HashMap::new())),
+        _ => return Err(EvalError::TypeError("select-keys: first argument must be a map or nil".to_string())),
+    };
+
+    let keys_vec = match keys_val {
+        Value::Vector(v) => v,
+        _ => return Err(EvalError::TypeError("select-keys: second argument must be a vector".to_string())),
+    };
+
+    let mut result = std::collections::HashMap::new();
+    for key_val in keys_vec {
+        let key = MapKey::try_from_value(&key_val)?;
+        if let Some(value) = entries.get(&key) {
+            result.insert(key, value.clone());
+        }
+    }
+
+    Ok(Value::Map(result))
+}
+
+/// zipmap - Create a map from a vector of keys and a vector of values
+pub fn eval_zipmap(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
+    if args.len() != 2 {
+        return Err(EvalError::ArityError("zipmap".to_string(), 2, args.len()));
+    }
+
+    let keys_val = crate::evaluator::eval_with_env(&args[0], env)?;
+    let vals_val = crate::evaluator::eval_with_env(&args[1], env)?;
+
+    let keys_vec = match keys_val {
+        Value::Vector(v) => v,
+        Value::Nil => return Ok(Value::Map(std::collections::HashMap::new())),
+        _ => return Err(EvalError::TypeError("zipmap: first argument must be a vector or nil".to_string())),
+    };
+
+    let vals_vec = match vals_val {
+        Value::Vector(v) => v,
+        Value::Nil => vec![],
+        _ => return Err(EvalError::TypeError("zipmap: second argument must be a vector or nil".to_string())),
+    };
+
+    let mut result = std::collections::HashMap::new();
+    for (key_val, value) in keys_vec.into_iter().zip(vals_vec.into_iter()) {
+        let key = MapKey::try_from_value(&key_val)?;
+        result.insert(key, value);
+    }
+
+    Ok(Value::Map(result))
+}
+
+/// Helper function to convert Value back to Node for function application
+fn value_to_node(value: &Value) -> Node {
+    match value {
+        Value::Number(n) => Node::Primitive { value: crate::ast::Primitive::Number(*n as usize) },
+        Value::Boolean(b) => Node::Primitive { value: crate::ast::Primitive::Boolean(*b) },
+        Value::String(s) => Node::Primitive { value: crate::ast::Primitive::String(s.clone()) },
+        Value::Keyword(k) => Node::Primitive { value: crate::ast::Primitive::Keyword(k.clone()) },
+        Value::Nil => Node::List { root: vec![] },
+        Value::Vector(items) => {
+            let nodes: Vec<Node> = items.iter().map(value_to_node).collect();
+            Node::Vector { root: nodes }
+        }
+        Value::Set(entries) => {
+            let nodes: Vec<Node> = entries.iter().map(|key| map_key_to_node(key)).collect();
+            Node::Set { root: nodes }
+        }
+        Value::Map(entries) => {
+            let nodes: Vec<(Node, Node)> = entries.iter().map(|(k, v)| (map_key_to_node(k), value_to_node(v))).collect();
+            Node::Map { entries: nodes }
+        }
+        Value::Function { .. } => {
+            // Functions can't be converted back to nodes directly
+            // This is a limitation, but for higher-order functions we pass them as Values
+            Node::List { root: vec![] }
+        }
+    }
+}
+
+fn map_key_to_node(key: &MapKey) -> Node {
+    match key {
+        MapKey::Number(n) => Node::Primitive { value: crate::ast::Primitive::Number(*n as usize) },
+        MapKey::Boolean(b) => Node::Primitive { value: crate::ast::Primitive::Boolean(*b) },
+        MapKey::String(s) => Node::Primitive { value: crate::ast::Primitive::String(s.clone()) },
+        MapKey::Keyword(k) => Node::Primitive { value: crate::ast::Primitive::Keyword(k.clone()) },
+        MapKey::Nil => Node::List { root: vec![] },
+    }
+}

@@ -137,6 +137,19 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
             "dissoc" => primitives::eval_dissoc(args, env),
             "disj" => primitives::eval_disj(args, env),
             "contains?" => primitives::eval_contains(args, env),
+            "map" => primitives::eval_map(args, env),
+            "filter" => primitives::eval_filter(args, env),
+            "reduce" => primitives::eval_reduce(args, env),
+            "first" => primitives::eval_first(args, env),
+            "rest" => primitives::eval_rest(args, env),
+            "cons" => primitives::eval_cons(args, env),
+            "conj" => primitives::eval_conj(args, env),
+            "concat" => primitives::eval_concat(args, env),
+            "keys" => primitives::eval_keys(args, env),
+            "vals" => primitives::eval_vals(args, env),
+            "merge" => primitives::eval_merge(args, env),
+            "select-keys" => primitives::eval_select_keys(args, env),
+            "zipmap" => primitives::eval_zipmap(args, env),
             op => {
                 if let Some(func_value) = env.get(op) {
                     special_forms::eval_function_call(func_value.clone(), args, env)
@@ -687,5 +700,100 @@ mod tests {
     fn test_str_vector() {
         assert_eq!(parse_and_eval("(str [1 2])"), Ok(Value::String("[1 2]".to_string())));
         assert_eq!(parse_and_eval("(str (vec))"), Ok(Value::String("[]".to_string())));
+    }
+
+    #[test]
+    fn test_map_higher_order() {
+        use super::*;
+        let mut env = HashMap::new();
+        let defn_ast = AstParser::parse_sexp_new_domain(b"(defn double [x] (* x 2))", &mut 0);
+        eval_with_env(&defn_ast, &mut env).unwrap();
+
+        let map_ast = AstParser::parse_sexp_new_domain(b"(map double [1 2 3])", &mut 0);
+        let result = eval_with_env(&map_ast, &mut env).unwrap();
+        assert_eq!(result, Value::Vector(vec![Value::Number(2), Value::Number(4), Value::Number(6)]));
+    }
+
+    #[test]
+    fn test_filter_higher_order() {
+        use super::*;
+        let mut env = HashMap::new();
+        let defn_ast = AstParser::parse_sexp_new_domain(b"(defn is-positive [x] (> x 0))", &mut 0);
+        eval_with_env(&defn_ast, &mut env).unwrap();
+
+        let filter_ast = AstParser::parse_sexp_new_domain(b"(filter is-positive [(- 0 1) 2 (- 0 3) 4])", &mut 0);
+        let result = eval_with_env(&filter_ast, &mut env).unwrap();
+        assert_eq!(result, Value::Vector(vec![Value::Number(2), Value::Number(4)]));
+    }
+
+    #[test]
+    fn test_reduce_higher_order() {
+        use super::*;
+        let mut env = HashMap::new();
+        let defn_ast = AstParser::parse_sexp_new_domain(b"(defn add [a b] (+ a b))", &mut 0);
+        eval_with_env(&defn_ast, &mut env).unwrap();
+
+        let reduce_ast = AstParser::parse_sexp_new_domain(b"(reduce add 0 [1 2 3 4])", &mut 0);
+        let result = eval_with_env(&reduce_ast, &mut env).unwrap();
+        assert_eq!(result, Value::Number(10));
+    }
+
+    #[test]
+    fn test_first_and_rest() {
+        assert_eq!(parse_and_eval("(first [1 2 3])"), Ok(Value::Number(1)));
+        assert_eq!(parse_and_eval("(first [])"), Ok(Value::Nil));
+        assert_eq!(parse_and_eval("(rest [1 2 3])"), Ok(Value::Vector(vec![Value::Number(2), Value::Number(3)])));
+        assert_eq!(parse_and_eval("(rest [])"), Ok(Value::Vector(vec![])));
+    }
+
+    #[test]
+    fn test_cons_and_conj() {
+        assert_eq!(parse_and_eval("(cons 1 [2 3])"), Ok(Value::Vector(vec![Value::Number(1), Value::Number(2), Value::Number(3)])));
+        assert_eq!(parse_and_eval("(conj [1 2] 3 4)"), Ok(Value::Vector(vec![Value::Number(1), Value::Number(2), Value::Number(3), Value::Number(4)])));
+    }
+
+    #[test]
+    fn test_concat() {
+        assert_eq!(parse_and_eval("(concat [1 2] [3 4] [5])"), Ok(Value::Vector(vec![Value::Number(1), Value::Number(2), Value::Number(3), Value::Number(4), Value::Number(5)])));
+    }
+
+    #[test]
+    fn test_keys_and_vals() {
+        use super::*;
+        let mut env = HashMap::new();
+        let map_ast = AstParser::parse_sexp_new_domain(b"(def m {:a 1 :b 2})", &mut 0);
+        eval_with_env(&map_ast, &mut env).unwrap();
+
+        let keys_ast = AstParser::parse_sexp_new_domain(b"(count (keys m))", &mut 0);
+        let keys_result = eval_with_env(&keys_ast, &mut env).unwrap();
+        assert_eq!(keys_result, Value::Number(2));
+
+        let vals_ast = AstParser::parse_sexp_new_domain(b"(count (vals m))", &mut 0);
+        let vals_result = eval_with_env(&vals_ast, &mut env).unwrap();
+        assert_eq!(vals_result, Value::Number(2));
+    }
+
+    #[test]
+    fn test_merge() {
+        assert_eq!(
+            parse_and_eval("(get (merge {:a 1} {:b 2} {:a 3}) :a)"),
+            Ok(Value::Number(3))
+        );
+    }
+
+    #[test]
+    fn test_select_keys() {
+        assert_eq!(
+            parse_and_eval("(count (select-keys {:a 1 :b 2 :c 3} [:a :c]))"),
+            Ok(Value::Number(2))
+        );
+    }
+
+    #[test]
+    fn test_zipmap() {
+        assert_eq!(
+            parse_and_eval("(get (zipmap [:a :b :c] [1 2 3]) :b)"),
+            Ok(Value::Number(2))
+        );
     }
 }

@@ -1,0 +1,5 @@
+; Test filter function - get even numbers
+(defn is-even [x] (= (/ (* x 2) 2) x))
+
+(defn -main []
+  (str (filter is-even [1 2 3 4 5 6])))

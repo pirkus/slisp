@@ -1,0 +1,28 @@
+; Pipeline transforms: chained operations on collections
+; Tests multiple allocations and transformations
+
+(defn inc-val [x] (+ x 1))
+(defn is-even [x] (= 0 (- x (* 2 (/ x 2)))))
+(defn multiply [a b] (* a b))
+
+(defn -main []
+  (let [base [1 2 3 4 5 6 7 8 9 10]
+        ; Multiple transformations
+        step1 (map inc-val base)
+        step2 (filter is-even step1)
+        step3 (map inc-val step2)
+        product (reduce multiply 1 step3)
+
+        ; Build a map through transformations
+        indices [0 1 2 3 4]
+        values ["a" "b" "c" "d" "e"]
+        map1 (zipmap indices values)
+
+        ; Merge with another map
+        map2 (zipmap [5 6] ["f" "g"])
+        combined (merge map1 map2)
+
+        ; Extract and transform
+        all-values (vals combined)
+        concatenated (reduce str "" all-values)]
+    (str "Product: " product " String: " concatenated)))

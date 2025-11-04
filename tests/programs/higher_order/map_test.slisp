@@ -1,0 +1,5 @@
+; Test map function - double each element
+(defn double [x] (* x 2))
+
+(defn -main []
+  (str (map double [1 2 3 4 5])))

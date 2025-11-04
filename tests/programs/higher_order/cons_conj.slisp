@@ -1,0 +1,6 @@
+; Test cons and conj
+(defn -main []
+  (let [nums [2 3 4]
+        with-cons (cons 1 nums)
+        with-conj (conj nums 5)]
+    (str "Cons: " with-cons " Conj: " with-conj)))

@@ -1,0 +1,36 @@
+; Mixed workload: higher-order functions with containers
+; Tests allocator pressure with map/filter/reduce over collections
+
+(defn double [x] (* x 2))
+(defn is-positive [x] (> x 0))
+(defn add [a b] (+ a b))
+
+(defn -main []
+  (let [numbers [1 2 3 4 5]
+        doubled (map double numbers)
+        filtered (filter is-positive doubled)
+        sum (reduce add 0 filtered)
+
+        ; Create a map from vectors
+        keys-vec [:a :b :c]
+        vals-vec [10 20 30]
+        m (zipmap keys-vec vals-vec)
+
+        ; Merge maps
+        m2 {:d 40 :e 50}
+        merged (merge m m2)
+
+        ; Get keys and values
+        all-keys (keys merged)
+        all-vals (vals merged)
+
+        ; Select subset
+        selected (select-keys merged [:a :c :e])
+
+        ; Work with sets
+        s1 #{1 2 3}
+        s2 (conj s1 4 5)
+
+        ; Concat vectors
+        result (concat doubled filtered [sum])]
+    (str "Sum: " sum " Keys: " (count all-keys) " Result: " result)))

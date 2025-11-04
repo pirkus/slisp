@@ -1,0 +1,6 @@
+; Test first and rest
+(defn -main []
+  (let [nums [10 20 30 40]
+        f (first nums)
+        r (rest nums)]
+    (str "First: " f " Rest: " r)))
