@@ -1,0 +1,9 @@
+; Test vals function (compiled version)
+
+(defn add [a b] (+ a b))
+
+(defn -main []
+  (let [m {:a 10 :b 20 :c 30}
+        v (vals m)
+        total (reduce add 0 v)]
+    total))

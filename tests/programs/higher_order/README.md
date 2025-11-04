@@ -30,15 +30,56 @@ cargo run
 # Then paste the code from any .slisp file
 ```
 
-## Compiler Mode Tests (🚧 Infrastructure Only)
+## Compiler Mode Tests (✅ Fully Working)
 
-These demonstrate the compiler infrastructure (not yet functional):
+These programs work in both JIT and AOT compiled modes:
 
-- **`compiled_map_test.slisp`** - Compiler lowering for map
-- **`compiled_filter_test.slisp`** - Compiler lowering for filter
-- **`compiled_reduce_test.slisp`** - Compiler lowering for reduce
+### Fully Implemented
+- **`compiled_map_test.slisp`** - Map with function pointers ✅
+- **`compiled_filter_test.slisp`** - Filter with predicates ✅
+- **`compiled_reduce_test.slisp`** - Reduce with accumulator ✅
+- **`compiled_equality_test.slisp`** - Equality operator (=) ✅
+- **`compiled_comparisons_test.slisp`** - All comparison operators (>, <, >=, <=, =) ✅
+- **`compiled_pipeline_test.slisp`** - Chained map/filter/reduce ✅
+- **`compiled_empty_test.slisp`** - Edge case with empty collections ✅
 
-**Status:** Compilation succeeds, but execution fails due to function pointer address resolution issues. See `docs/higher_order_compilation_status.md` for details.
+### Not Yet Compiled (Interpreter Only)
+These programs require compiler support for additional functions:
+- **`compiled_first_rest_test.slisp`** - Needs first/rest compilation
+- **`compiled_cons_test.slisp`** - Needs cons compilation
+- **`compiled_conj_test.slisp`** - Needs conj compilation
+- **`compiled_concat_test.slisp`** - Needs concat compilation
+- **`compiled_keys_test.slisp`** - Needs keys compilation
+- **`compiled_vals_test.slisp`** - Needs vals compilation
+- **`compiled_merge_test.slisp`** - Needs merge compilation
+- **`compiled_select_keys_test.slisp`** - Needs select-keys compilation
+- **`compiled_zipmap_test.slisp`** - Needs zipmap compilation
+
+**Status:** Map, filter, and reduce work perfectly in compiled mode with full function pointer support. Comparison operators (=, <, >, <=, >=) fully functional. See `docs/higher_order_compilation_status.md` for implementation details.
+
+### Running Compiled Tests
+```bash
+# Compile and run
+./target/release/slisp --compile -o test_map tests/programs/higher_order/compiled_map_test.slisp
+./test_map
+echo $?  # Should output: 5
+
+# Test all working compiled programs
+for prog in compiled_map_test compiled_filter_test compiled_reduce_test compiled_equality_test compiled_comparisons_test compiled_pipeline_test compiled_empty_test; do
+    ./target/release/slisp --compile -o /tmp/$prog tests/programs/higher_order/$prog.slisp
+    /tmp/$prog
+    echo "$prog: exit code $?"
+done
+```
+
+Expected outputs:
+- `compiled_map_test`: 5 (count of mapped vector)
+- `compiled_filter_test`: 5 (all 5 numbers are positive)
+- `compiled_reduce_test`: 15 (sum 1+2+3+4+5)
+- `compiled_equality_test`: 1 (one element equals 5)
+- `compiled_comparisons_test`: 11 (sum of all comparison results)
+- `compiled_pipeline_test`: 24 (double [1 2 3 4 5] -> filter > 5 -> sum)
+- `compiled_empty_test`: 0 (operations on empty collections)
 
 ## Mixed Workload Tests
 

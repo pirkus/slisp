@@ -1,0 +1,6 @@
+; Test cons function (compiled version)
+
+(defn -main []
+  (let [nums [2 3 4]
+        result (cons 1 nums)]
+    (first result)))

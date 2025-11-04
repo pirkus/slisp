@@ -1,0 +1,16 @@
+; Test all comparison operators (compiled version)
+
+(defn gt-five [x] (> x 5))
+(defn lt-five [x] (< x 5))
+(defn gte-five [x] (>= x 5))
+(defn lte-five [x] (<= x 5))
+(defn eq-five [x] (= x 5))
+
+(defn -main []
+  (let [nums [1 3 5 7 9]
+        gt (count (filter gt-five nums))
+        lt (count (filter lt-five nums))
+        gte (count (filter gte-five nums))
+        lte (count (filter lte-five nums))
+        eq (count (filter eq-five nums))]
+    (+ (+ (+ gt lt) (+ gte lte)) eq)))

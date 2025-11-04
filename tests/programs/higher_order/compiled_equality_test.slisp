@@ -1,0 +1,8 @@
+; Test equality operator (compiled version)
+
+(defn is-five [x] (= x 5))
+
+(defn -main []
+  (let [nums [1 3 5 7 9]
+        fives (filter is-five nums)]
+    (count fives)))

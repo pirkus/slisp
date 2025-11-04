@@ -1,0 +1,7 @@
+; Test zipmap function (compiled version)
+
+(defn -main []
+  (let [keys [:a :b :c]
+        vals [1 2 3]
+        result (zipmap keys vals)]
+    (count result)))

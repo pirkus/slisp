@@ -1,0 +1,7 @@
+; Test select-keys function (compiled version)
+
+(defn -main []
+  (let [m {:a 1 :b 2 :c 3 :d 4}
+        selected (select-keys m [:a :c])
+        result (count selected)]
+    result))

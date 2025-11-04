@@ -1,0 +1,10 @@
+; Test higher-order functions with empty collections (compiled version)
+
+(defn double [x] (* x 2))
+(defn add [a b] (+ a b))
+
+(defn -main []
+  (let [empty-vec []
+        mapped (map double empty-vec)
+        reduced (reduce add 0 empty-vec)]
+    (+ (count mapped) reduced)))

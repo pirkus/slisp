@@ -1,0 +1,12 @@
+; Test chained higher-order functions (compiled version)
+
+(defn double [x] (* x 2))
+(defn is-big [x] (> x 5))
+(defn add [a b] (+ a b))
+
+(defn -main []
+  (let [nums [1 2 3 4 5]
+        doubled (map double nums)
+        big-ones (filter is-big doubled)
+        total (reduce add 0 big-ones)]
+    total))

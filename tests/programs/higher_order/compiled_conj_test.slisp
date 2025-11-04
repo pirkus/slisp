@@ -1,0 +1,6 @@
+; Test conj function (compiled version)
+
+(defn -main []
+  (let [nums [1 2 3]
+        result (conj nums 4)]
+    (count result)))

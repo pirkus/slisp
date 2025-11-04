@@ -1,0 +1,7 @@
+; Test merge function (compiled version)
+
+(defn -main []
+  (let [m1 {:a 1 :b 2}
+        m2 {:b 3 :c 4}
+        result (merge m1 m2)]
+    (count result)))
