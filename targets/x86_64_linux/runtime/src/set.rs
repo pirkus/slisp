@@ -2,7 +2,7 @@ use core::mem::size_of;
 use core::ptr::{copy_nonoverlapping, null_mut};
 
 use crate::{
-    _allocate, _free, _map_assoc, _map_clone, _map_contains, _map_count, _map_create, _map_dissoc, _map_free, _map_to_string, _string_clone, _string_count, _string_equals, _string_from_number,
+    _allocate, _free, _map_assoc, _map_clone, _map_contains, _map_count, _map_create, _map_dissoc, _map_free, _map_to_string, _string_clone, _string_count, _string_from_number,
     _vector_to_string, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL,
 };
 
@@ -26,7 +26,6 @@ const TAG_STRING: u8 = 3;
 const TAG_VECTOR: u8 = 4;
 const TAG_MAP: u8 = 5;
 const TAG_KEYWORD: u8 = 6;
-const TAG_SET: u8 = 7;
 const TAG_BOOLEAN_I64: i64 = TAG_BOOLEAN as i64;
 
 // Forward declarations for cross-module equality comparisons
@@ -459,32 +458,6 @@ pub unsafe extern "C" fn _set_to_string(set: *const u8) -> *mut u8 {
 
     release_entries(entries, len);
     dst
-}
-
-/// Helper function to compare two tagged values for set element equality
-unsafe fn set_elements_equal(left_tag: u8, left_val: i64, right_tag: u8, right_val: i64) -> bool {
-    if left_tag != right_tag {
-        return false;
-    }
-
-    match left_tag {
-        TAG_NIL => true,
-        TAG_NUMBER => left_val == right_val,
-        TAG_BOOLEAN => canonical_boolean(left_val) == canonical_boolean(right_val),
-        TAG_STRING | TAG_KEYWORD => {
-            _string_equals(left_val as *const u8, right_val as *const u8) != 0
-        }
-        TAG_VECTOR => {
-            _vector_equals(left_val as *const u8, right_val as *const u8) != 0
-        }
-        TAG_MAP => {
-            _map_equals(left_val as *const u8, right_val as *const u8) != 0
-        }
-        TAG_SET => {
-            _set_equals(left_val as *const u8, right_val as *const u8) != 0
-        }
-        _ => left_val == right_val,
-    }
 }
 
 /// # Safety

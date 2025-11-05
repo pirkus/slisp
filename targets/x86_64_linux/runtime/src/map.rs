@@ -185,7 +185,21 @@ unsafe fn map_keys_equal(stored_tag: u8, stored_value: i64, query_tag: u8, query
             let right = query_value as *const u8;
             _string_equals(left, right) != 0
         }
-        TAG_VECTOR | TAG_MAP => stored_value == query_value,
+        TAG_VECTOR => {
+            let left = stored_value as *const u8;
+            let right = query_value as *const u8;
+            _vector_equals(left, right) != 0
+        }
+        TAG_MAP => {
+            // For map keys, use pointer equality to avoid infinite recursion
+            // Deep structural equality for map keys could cause cycles
+            stored_value == query_value
+        }
+        TAG_SET => {
+            let left = stored_value as *const u8;
+            let right = query_value as *const u8;
+            _set_equals(left, right) != 0
+        }
         _ => false,
     }
 }
