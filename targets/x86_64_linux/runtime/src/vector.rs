@@ -1,7 +1,7 @@
 use core::mem::size_of;
 use core::ptr::{copy_nonoverlapping, null_mut};
 
-use crate::{_allocate, _free, _map_to_string, _string_clone, _string_count, _string_from_number, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL};
+use crate::{_allocate, _free, _map_to_string, _string_clone, _string_count, _string_equals, _string_from_number, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL};
 
 #[repr(C)]
 struct VectorHeader {
@@ -15,7 +15,15 @@ const TAG_BOOLEAN: u8 = 2;
 const TAG_STRING: u8 = 3;
 const TAG_VECTOR: u8 = 4;
 const TAG_MAP: u8 = 5;
+const TAG_KEYWORD: u8 = 6;
+const TAG_SET: u8 = 7;
 const TAG_ANY: u8 = 0xff;
+
+// Forward declarations for cross-module equality comparisons
+extern "C" {
+    fn _map_equals(left: *const u8, right: *const u8) -> i64;
+    fn _set_equals(left: *const u8, right: *const u8) -> i64;
+}
 
 #[repr(C)]
 struct ElementRender {
@@ -580,4 +588,83 @@ pub unsafe extern "C" fn _vector_free(vec: *mut u8) {
         return;
     }
     _free(vec);
+}
+
+/// # Safety
+///
+/// The caller must ensure that `left` and `right` are either null or point to vectors created by the runtime.
+/// Returns 1 if the vectors are equal, 0 otherwise.
+#[no_mangle]
+pub unsafe extern "C" fn _vector_equals(left: *const u8, right: *const u8) -> i64 {
+    // Fast path: same pointer
+    if left == right {
+        return 1;
+    }
+
+    // If either is null, they're not equal (we already checked if both are the same)
+    if left.is_null() || right.is_null() {
+        return 0;
+    }
+
+    let left_header = left as *const VectorHeader;
+    let right_header = right as *const VectorHeader;
+
+    // Compare lengths
+    let left_len = (*left_header).length;
+    let right_len = (*right_header).length;
+    if left_len != right_len {
+        return 0;
+    }
+
+    let len = left_len as usize;
+    if len == 0 {
+        return 1; // Both empty
+    }
+
+    let left_data = vector_data_ptr(left_header);
+    let right_data = vector_data_ptr(right_header);
+    let left_tags = vector_tags_ptr(left_header);
+    let right_tags = vector_tags_ptr(right_header);
+
+    // Compare each element
+    let mut idx = 0usize;
+    while idx < len {
+        let left_tag = *left_tags.add(idx);
+        let right_tag = *right_tags.add(idx);
+
+        // Tags must match
+        if left_tag != right_tag {
+            return 0;
+        }
+
+        let left_val = *left_data.add(idx);
+        let right_val = *right_data.add(idx);
+
+        // Compare based on tag type
+        let equal = match left_tag {
+            TAG_NIL => true,
+            TAG_NUMBER | TAG_BOOLEAN => left_val == right_val,
+            TAG_STRING | TAG_KEYWORD => {
+                _string_equals(left_val as *const u8, right_val as *const u8) != 0
+            }
+            TAG_VECTOR => {
+                _vector_equals(left_val as *const u8, right_val as *const u8) != 0
+            }
+            TAG_MAP => {
+                _map_equals(left_val as *const u8, right_val as *const u8) != 0
+            }
+            TAG_SET => {
+                _set_equals(left_val as *const u8, right_val as *const u8) != 0
+            }
+            _ => left_val == right_val, // TAG_ANY or unknown, fall back to value comparison
+        };
+
+        if !equal {
+            return 0;
+        }
+
+        idx += 1;
+    }
+
+    1
 }

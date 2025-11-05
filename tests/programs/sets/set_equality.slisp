@@ -1,0 +1,11 @@
+(defn -main []
+  (let [s1 #{1 2 3}
+        s2 #{3 2 1}
+        s3 #{1 2 4}
+        s4 #{1 2}
+        empty1 #{}
+        empty2 #{}]
+    (+ (if (= s1 s2) 100 0)
+       (if (= s1 s3) 0 10)
+       (if (= s1 s4) 0 1)
+       (if (= empty1 empty2) 1 0))))

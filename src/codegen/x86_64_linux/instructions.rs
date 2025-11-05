@@ -243,6 +243,103 @@ pub fn generate_runtime_call(runtime_offset: Option<i32>, arg_count: usize) -> (
     (code, call_disp_offset)
 }
 
+/// Generate machine code for equality comparison
+/// Pops two values, compares them, pushes 1 if equal or 0 if not equal
+pub fn generate_equal() -> Vec<u8> {
+    vec![
+        0x58, // pop rax (right operand)
+        0x5b, // pop rbx (left operand)
+        0x48, 0x39, 0xc3, // cmp rbx, rax
+        0x0f, 0x94, 0xc0, // sete al (set AL to 1 if equal, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al (zero-extend AL to RAX)
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for less-than comparison
+/// Pops two values, pushes 1 if second < first, 0 otherwise
+pub fn generate_less() -> Vec<u8> {
+    vec![
+        0x58, // pop rax (right/first operand)
+        0x5b, // pop rbx (left/second operand)
+        0x48, 0x39, 0xc3, // cmp rbx, rax (compare left to right)
+        0x0f, 0x9c, 0xc0, // setl al (set AL to 1 if less, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for greater-than comparison
+/// Pops two values, pushes 1 if second > first, 0 otherwise
+pub fn generate_greater() -> Vec<u8> {
+    vec![
+        0x58, // pop rax (right/first operand)
+        0x5b, // pop rbx (left/second operand)
+        0x48, 0x39, 0xc3, // cmp rbx, rax
+        0x0f, 0x9f, 0xc0, // setg al (set AL to 1 if greater, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for less-than-or-equal comparison
+/// Pops two values, pushes 1 if second <= first, 0 otherwise
+pub fn generate_less_equal() -> Vec<u8> {
+    vec![
+        0x58, // pop rax (right/first operand)
+        0x5b, // pop rbx (left/second operand)
+        0x48, 0x39, 0xc3, // cmp rbx, rax
+        0x0f, 0x9e, 0xc0, // setle al (set AL to 1 if less or equal, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for greater-than-or-equal comparison
+/// Pops two values, pushes 1 if second >= first, 0 otherwise
+pub fn generate_greater_equal() -> Vec<u8> {
+    vec![
+        0x58, // pop rax (right/first operand)
+        0x5b, // pop rbx (left/second operand)
+        0x48, 0x39, 0xc3, // cmp rbx, rax
+        0x0f, 0x9d, 0xc0, // setge al (set AL to 1 if greater or equal, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for Not (logical negation)
+/// Pops a value, pushes 1 if it was 0, or 0 if it was non-zero
+pub fn generate_not() -> Vec<u8> {
+    vec![
+        0x58, // pop rax
+        0x48, 0x85, 0xc0, // test rax, rax
+        0x0f, 0x94, 0xc0, // setz al (set AL to 1 if zero, 0 otherwise)
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for conditional jump (jump if top of stack is zero)
+/// Returns the code and the offset where the jump target should be patched
+pub fn generate_jump_if_zero(target_offset: i32) -> Vec<u8> {
+    let mut code = vec![
+        0x58, // pop rax
+        0x48, 0x85, 0xc0, // test rax, rax
+        0x0f, 0x84, // jz (jump if zero) - 4-byte relative offset follows
+    ];
+    code.extend_from_slice(&target_offset.to_le_bytes());
+    code
+}
+
+/// Generate machine code for unconditional jump
+/// Returns the code with the jump target offset
+pub fn generate_jump(target_offset: i32) -> Vec<u8> {
+    let mut code = vec![0xe9]; // jmp - 4-byte relative offset follows
+    code.extend_from_slice(&target_offset.to_le_bytes());
+    code
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

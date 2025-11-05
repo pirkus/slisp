@@ -2,8 +2,8 @@ use core::mem::size_of;
 use core::ptr::{copy_nonoverlapping, null_mut};
 
 use crate::{
-    _allocate, _free, _map_assoc, _map_clone, _map_contains, _map_count, _map_create, _map_dissoc, _map_free, _map_to_string, _string_clone, _string_count, _string_from_number, _vector_to_string,
-    FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL,
+    _allocate, _free, _map_assoc, _map_clone, _map_contains, _map_count, _map_create, _map_dissoc, _map_free, _map_to_string, _string_clone, _string_count, _string_from_number,
+    _vector_to_string, FALSE_LITERAL, NIL_LITERAL, TRUE_LITERAL,
 };
 
 #[repr(C)]
@@ -27,6 +27,12 @@ const TAG_VECTOR: u8 = 4;
 const TAG_MAP: u8 = 5;
 const TAG_KEYWORD: u8 = 6;
 const TAG_BOOLEAN_I64: i64 = TAG_BOOLEAN as i64;
+
+// Forward declarations for cross-module equality comparisons
+extern "C" {
+    fn _vector_equals(left: *const u8, right: *const u8) -> i64;
+    fn _map_equals(left: *const u8, right: *const u8) -> i64;
+}
 
 #[inline]
 fn padded_tag_bytes(len: usize) -> usize {
@@ -452,4 +458,58 @@ pub unsafe extern "C" fn _set_to_string(set: *const u8) -> *mut u8 {
 
     release_entries(entries, len);
     dst
+}
+
+/// # Safety
+///
+/// The caller must ensure that `left` and `right` are either null or point to sets created by the runtime.
+/// Returns 1 if the sets are equal, 0 otherwise.
+#[no_mangle]
+pub unsafe extern "C" fn _set_equals(left: *const u8, right: *const u8) -> i64 {
+    // Fast path: same pointer
+    if left == right {
+        return 1;
+    }
+
+    // If either is null, they're not equal (we already checked if both are the same)
+    if left.is_null() || right.is_null() {
+        return 0;
+    }
+
+    // Sets are implemented as maps, so use map structure
+    let left_header = left as *const MapHeader;
+    let right_header = right as *const MapHeader;
+
+    // Compare counts
+    let left_count = (*left_header).length;
+    let right_count = (*right_header).length;
+    if left_count != right_count {
+        return 0;
+    }
+
+    let len = left_count as usize;
+    if len == 0 {
+        return 1; // Both empty
+    }
+
+    // Get pointers to key data (sets only use keys, values are just presence indicators)
+    let left_key_data = map_key_data_ptr(left_header);
+    let left_key_tags = map_key_tags_ptr(left_header);
+
+    // For each element in left set, check if it exists in right set
+    let mut idx = 0usize;
+    while idx < len {
+        let left_element = *left_key_data.add(idx);
+        let left_tag = *left_key_tags.add(idx);
+
+        // Check if this element exists in the right set
+        let contains = _set_contains(right, left_element, left_tag as i64);
+        if contains == 0 {
+            return 0; // Element not found in right set
+        }
+
+        idx += 1;
+    }
+
+    1
 }

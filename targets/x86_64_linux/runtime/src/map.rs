@@ -32,6 +32,12 @@ const TAG_KEYWORD: u8 = 6;
 const TAG_SET: u8 = 7;
 const TAG_ANY: u8 = 0xff;
 
+// Forward declarations for cross-module equality comparisons
+extern "C" {
+    fn _vector_equals(left: *const u8, right: *const u8) -> i64;
+    fn _set_equals(left: *const u8, right: *const u8) -> i64;
+}
+
 #[inline]
 fn padded_tag_bytes(len: usize) -> usize {
     if len == 0 {
@@ -179,7 +185,21 @@ unsafe fn map_keys_equal(stored_tag: u8, stored_value: i64, query_tag: u8, query
             let right = query_value as *const u8;
             _string_equals(left, right) != 0
         }
-        TAG_VECTOR | TAG_MAP => stored_value == query_value,
+        TAG_VECTOR => {
+            let left = stored_value as *const u8;
+            let right = query_value as *const u8;
+            _vector_equals(left, right) != 0
+        }
+        TAG_MAP => {
+            // For map keys, use pointer equality to avoid infinite recursion
+            // Deep structural equality for map keys could cause cycles
+            stored_value == query_value
+        }
+        TAG_SET => {
+            let left = stored_value as *const u8;
+            let right = query_value as *const u8;
+            _set_equals(left, right) != 0
+        }
         _ => false,
     }
 }
@@ -931,4 +951,101 @@ pub unsafe extern "C" fn _map_free(map: *mut u8) {
         return;
     }
     _free(map);
+}
+
+/// Helper function to compare two tagged values for equality
+unsafe fn tagged_values_equal(left_tag: u8, left_val: i64, right_tag: u8, right_val: i64) -> bool {
+    if left_tag != right_tag {
+        return false;
+    }
+
+    match left_tag {
+        TAG_NIL => true,
+        TAG_NUMBER => left_val == right_val,
+        TAG_BOOLEAN => canonical_boolean(left_val) == canonical_boolean(right_val),
+        TAG_STRING | TAG_KEYWORD => {
+            _string_equals(left_val as *const u8, right_val as *const u8) != 0
+        }
+        TAG_VECTOR => {
+            _vector_equals(left_val as *const u8, right_val as *const u8) != 0
+        }
+        TAG_MAP => {
+            _map_equals(left_val as *const u8, right_val as *const u8) != 0
+        }
+        TAG_SET => {
+            _set_equals(left_val as *const u8, right_val as *const u8) != 0
+        }
+        _ => left_val == right_val,
+    }
+}
+
+/// # Safety
+///
+/// The caller must ensure that `left` and `right` are either null or point to maps created by the runtime.
+/// Returns 1 if the maps are equal, 0 otherwise.
+#[no_mangle]
+pub unsafe extern "C" fn _map_equals(left: *const u8, right: *const u8) -> i64 {
+    // Fast path: same pointer
+    if left == right {
+        return 1;
+    }
+
+    // If either is null, they're not equal (we already checked if both are the same)
+    if left.is_null() || right.is_null() {
+        return 0;
+    }
+
+    let left_header = left as *const MapHeader;
+    let right_header = right as *const MapHeader;
+
+    // Compare counts
+    let left_count = (*left_header).length;
+    let right_count = (*right_header).length;
+    if left_count != right_count {
+        return 0;
+    }
+
+    let len = left_count as usize;
+    if len == 0 {
+        return 1; // Both empty
+    }
+
+    // Get pointers to key and value data
+    let left_key_data = map_key_data_ptr(left_header);
+    let left_key_tags = map_key_tags_ptr(left_header);
+    let left_value_data = map_value_data_ptr(left_header);
+    let left_value_tags = map_value_tags_ptr(left_header);
+
+    // For each key-value pair in left map, check if it exists in right map with same value
+    let mut idx = 0usize;
+    while idx < len {
+        let left_key = *left_key_data.add(idx);
+        let left_key_tag = *left_key_tags.add(idx);
+        let left_value = *left_value_data.add(idx);
+        let left_value_tag = *left_value_tags.add(idx);
+
+        // Look up this key in the right map
+        let mut right_value = 0i64;
+        let mut right_value_tag = 0u8;
+        let found = _map_get(
+            right,
+            left_key,
+            left_key_tag as i64,
+            &mut right_value,
+            &mut right_value_tag,
+        );
+
+        if found == 0 {
+            return 0; // Key not found in right map
+        }
+
+        // Compare the values
+        if !tagged_values_equal(left_value_tag, left_value, right_value_tag, right_value) {
+            return 0;
+        }
+
+        idx += 1;
+    }
+
+    1
 }

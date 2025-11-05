@@ -279,8 +279,49 @@ impl X86CodeGen {
             }
         }
 
-        for inst in &function_instructions {
+        // First pass: generate instructions and build offset map
+        let mut ir_to_offset: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for (idx, inst) in function_instructions.iter().enumerate() {
+            ir_to_offset.insert(idx, self.code.len());
             self.generate_instruction(inst, func_info);
+        }
+        ir_to_offset.insert(function_instructions.len(), self.code.len());
+
+        // Second pass: patch jumps (need to map back to original IR indices)
+        for (local_idx, inst) in function_instructions.iter().enumerate() {
+            match inst {
+                IRInstruction::JumpIfZero(target) | IRInstruction::Jump(target) => {
+                    let jump_start = ir_to_offset[&local_idx];
+
+                    // Find the target's local index in function_instructions
+                    // The target in the IR is an absolute index, we need to find its position in function_instructions
+                    // This is tricky - the target index refers to the original program.instructions
+                    // For now, assume jumps are relative within the function (which should be the case for if/let/etc)
+                    // We'll need to adjust this if jumps can cross function boundaries
+                    let target_offset = ir_to_offset.get(target).copied().unwrap_or_else(|| {
+                        // If target not in our map, it might be outside the function
+                        // For now, use the last offset
+                        self.code.len()
+                    });
+
+                    match inst {
+                        IRInstruction::JumpIfZero(_) => {
+                            let offset_pos = jump_start + 6;
+                            let jump_end = jump_start + 10;
+                            let relative_offset = (target_offset as i32) - (jump_end as i32);
+                            self.code[offset_pos..offset_pos + 4].copy_from_slice(&relative_offset.to_le_bytes());
+                        }
+                        IRInstruction::Jump(_) => {
+                            let offset_pos = jump_start + 1;
+                            let jump_end = jump_start + 5;
+                            let relative_offset = (target_offset as i32) - (jump_end as i32);
+                            self.code[offset_pos..offset_pos + 4].copy_from_slice(&relative_offset.to_le_bytes());
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -339,6 +380,23 @@ impl X86CodeGen {
                 self.generate_runtime_call_code(func_name, *arg_count, current_pos)
             }
 
+            IRInstruction::Equal => instructions::generate_equal(),
+            IRInstruction::Less => instructions::generate_less(),
+            IRInstruction::Greater => instructions::generate_greater(),
+            IRInstruction::LessEqual => instructions::generate_less_equal(),
+            IRInstruction::GreaterEqual => instructions::generate_greater_equal(),
+            IRInstruction::Not => instructions::generate_not(),
+
+            IRInstruction::JumpIfZero(_) => {
+                // Generate placeholder with 0 offset, will be patched in second pass
+                instructions::generate_jump_if_zero(0)
+            }
+
+            IRInstruction::Jump(_) => {
+                // Generate placeholder with 0 offset, will be patched in second pass
+                instructions::generate_jump(0)
+            }
+
             IRInstruction::Return => {
                 let mut code = instructions::generate_return();
                 code.extend(abi::generate_epilogue());
@@ -346,8 +404,6 @@ impl X86CodeGen {
             }
 
             IRInstruction::DefineFunction(_, _, _) => Vec::new(),
-
-            _ => Vec::new(),
         };
 
         self.code.extend(code);
@@ -366,8 +422,59 @@ impl X86CodeGen {
 
         self.code.extend(abi::generate_prologue(&stub_info));
 
-        for inst in &program.instructions {
+        // First pass: generate all instructions with placeholder jumps and build offset map
+        let mut ir_to_offset: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for (idx, inst) in program.instructions.iter().enumerate() {
+            ir_to_offset.insert(idx, self.code.len());
             self.generate_instruction(inst, &stub_info);
+        }
+
+        // Record the final offset (after all instructions)
+        ir_to_offset.insert(program.instructions.len(), self.code.len());
+
+        // Second pass: patch jump offsets
+        for (idx, inst) in program.instructions.iter().enumerate() {
+            match inst {
+                IRInstruction::JumpIfZero(target) => {
+                    let jump_start = ir_to_offset[&idx];
+                    let target_offset = ir_to_offset.get(target).copied().unwrap_or_else(|| {
+                        eprintln!("WARNING: JumpIfZero target {} not found in offset map (IR has {} instructions)", target, program.instructions.len());
+                        self.code.len()
+                    });
+
+                    // JumpIfZero: pop rax (1) + test rax,rax (3) + jz (2) + offset (4) = 10 bytes
+                    // Offset is stored at jump_start + 6
+                    let offset_pos = jump_start + 6;
+                    let jump_end = jump_start + 10;
+                    let relative_offset = (target_offset as i32) - (jump_end as i32);
+
+                    eprintln!("DEBUG: Patching JumpIfZero at IR idx={} (code offset={}) to target IR idx={} (code offset={}), relative_offset={}",
+                        idx, jump_start, target, target_offset, relative_offset);
+
+                    // Patch the 4-byte offset
+                    self.code[offset_pos..offset_pos + 4].copy_from_slice(&relative_offset.to_le_bytes());
+                }
+                IRInstruction::Jump(target) => {
+                    let jump_start = ir_to_offset[&idx];
+                    let target_offset = ir_to_offset.get(target).copied().unwrap_or_else(|| {
+                        eprintln!("WARNING: Jump target {} not found in offset map (IR has {} instructions)", target, program.instructions.len());
+                        self.code.len()
+                    });
+
+                    // Jump: jmp (1) + offset (4) = 5 bytes
+                    // Offset is stored at jump_start + 1
+                    let offset_pos = jump_start + 1;
+                    let jump_end = jump_start + 5;
+                    let relative_offset = (target_offset as i32) - (jump_end as i32);
+
+                    eprintln!("DEBUG: Patching Jump at IR idx={} (code offset={}) to target IR idx={} (code offset={}), relative_offset={}",
+                        idx, jump_start, target, target_offset, relative_offset);
+
+                    // Patch the 4-byte offset
+                    self.code[offset_pos..offset_pos + 4].copy_from_slice(&relative_offset.to_le_bytes());
+                }
+                _ => {}
+            }
         }
 
         self.code.clone()

@@ -86,11 +86,26 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
         right_kind = resolve_operand_kind(&args[1], right_kind, context);
     }
 
-    let string_equality =
-        matches!(instruction, IRInstruction::Equal) && ((left_kind == ValueKind::String && right_kind == ValueKind::String) || (left_kind == ValueKind::Keyword && right_kind == ValueKind::Keyword));
-
-    if string_equality {
-        instructions.push(IRInstruction::RuntimeCall("_string_equals".to_string(), 2));
+    // Determine if we need specialized equality comparison
+    if matches!(instruction, IRInstruction::Equal) && left_kind == right_kind {
+        match left_kind {
+            ValueKind::String | ValueKind::Keyword => {
+                instructions.push(IRInstruction::RuntimeCall("_string_equals".to_string(), 2));
+            }
+            ValueKind::Vector => {
+                instructions.push(IRInstruction::RuntimeCall("_vector_equals".to_string(), 2));
+            }
+            ValueKind::Map => {
+                instructions.push(IRInstruction::RuntimeCall("_map_equals".to_string(), 2));
+            }
+            ValueKind::Set => {
+                instructions.push(IRInstruction::RuntimeCall("_set_equals".to_string(), 2));
+            }
+            _ => {
+                // For other types (Number, Boolean, Nil, Any), use basic comparison
+                instructions.push(instruction);
+            }
+        }
     } else {
         instructions.push(instruction);
     }
@@ -130,7 +145,8 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
     instructions.push(IRInstruction::JumpIfZero(0));
 
     let then_result = crate::compiler::compile_node(&args[1], context, program)?;
-    let then_instructions = then_result.instructions;
+    let then_offset = instructions.len();
+    let then_instructions = crate::compiler::adjust_jump_targets(then_result.instructions, then_offset);
     instructions.extend(then_instructions);
 
     let end_jump_pos = instructions.len();
@@ -140,7 +156,8 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
     instructions[else_jump_pos] = IRInstruction::JumpIfZero(else_start);
 
     let else_result = crate::compiler::compile_node(&args[2], context, program)?;
-    let else_instructions = else_result.instructions;
+    let else_offset = instructions.len();
+    let else_instructions = crate::compiler::adjust_jump_targets(else_result.instructions, else_offset);
     instructions.extend(else_instructions);
 
     let end_pos = instructions.len();
@@ -199,7 +216,9 @@ fn compile_variadic_logical(
         instructions.push(IRInstruction::JumpIfZero(0));
         jump_sites.push(jump_site);
 
-        instructions.extend(crate::compiler::compile_node(arg, context, program)?.instructions);
+        let arg_offset = instructions.len();
+        let arg_instructions = crate::compiler::adjust_jump_targets(crate::compiler::compile_node(arg, context, program)?.instructions, arg_offset);
+        instructions.extend(arg_instructions);
     }
 
     instructions.extend([IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);

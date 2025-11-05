@@ -19,13 +19,13 @@ pub use strings::{
 };
 
 mod vector;
-pub use vector::{_vector_clone, _vector_count, _vector_create, _vector_free, _vector_get, _vector_slice, _vector_to_string};
+pub use vector::{_vector_clone, _vector_count, _vector_create, _vector_equals, _vector_free, _vector_get, _vector_slice, _vector_to_string};
 
 mod map;
-pub use map::{_map_assoc, _map_clone, _map_contains, _map_count, _map_create, _map_dissoc, _map_free, _map_get, _map_to_string};
+pub use map::{_map_assoc, _map_clone, _map_contains, _map_count, _map_create, _map_dissoc, _map_equals, _map_free, _map_get, _map_to_string};
 
 mod set;
-pub use set::{_set_clone, _set_contains, _set_count, _set_create, _set_disj, _set_free, _set_to_string};
+pub use set::{_set_clone, _set_contains, _set_count, _set_create, _set_disj, _set_equals, _set_free, _set_to_string};
 
 #[cfg(not(feature = "std"))]
 mod memory;
@@ -345,6 +345,109 @@ mod tests {
             _set_free(clone_ptr);
             _set_free(removed_ptr);
             _set_free(set_ptr);
+        }
+    }
+
+    #[test]
+    fn vector_equals_basic() {
+        unsafe {
+            const TAG_NUMBER: i64 = 1;
+
+            let values1 = [1i64, 2, 3];
+            let values2 = [1i64, 2, 3];
+            let values3 = [1i64, 2, 4];
+
+            let tags = [TAG_NUMBER; 3];
+
+            let vec1 = _vector_create(values1.as_ptr(), tags.as_ptr(), 3);
+            let vec2 = _vector_create(values2.as_ptr(), tags.as_ptr(), 3);
+            let vec3 = _vector_create(values3.as_ptr(), tags.as_ptr(), 3);
+
+            assert!(!vec1.is_null());
+            assert!(!vec2.is_null());
+            assert!(!vec3.is_null());
+
+            // Same vectors should be equal
+            assert_eq!(_vector_equals(vec1, vec2), 1);
+            // Different vectors should not be equal
+            assert_eq!(_vector_equals(vec1, vec3), 0);
+            // Same pointer should be equal
+            assert_eq!(_vector_equals(vec1, vec1), 1);
+
+            _vector_free(vec1);
+            _vector_free(vec2);
+            _vector_free(vec3);
+        }
+    }
+
+    #[test]
+    fn map_equals_basic() {
+        unsafe {
+            const TAG_NUMBER: i64 = 1;
+            const TAG_STRING: i64 = 3;
+
+            let key_a = _string_from_number(10);
+            let key_b = _string_from_number(20);
+
+            let keys = [key_a as i64, key_b as i64];
+            let key_tags = [TAG_STRING, TAG_STRING];
+            let values1 = [100i64, 200i64];
+            let values2 = [100i64, 200i64];
+            let values3 = [100i64, 999i64];
+            let value_tags = [TAG_NUMBER, TAG_NUMBER];
+
+            let map1 = _map_create(keys.as_ptr(), key_tags.as_ptr(), values1.as_ptr(), value_tags.as_ptr(), 2);
+            let map2 = _map_create(keys.as_ptr(), key_tags.as_ptr(), values2.as_ptr(), value_tags.as_ptr(), 2);
+            let map3 = _map_create(keys.as_ptr(), key_tags.as_ptr(), values3.as_ptr(), value_tags.as_ptr(), 2);
+
+            assert!(!map1.is_null());
+            assert!(!map2.is_null());
+            assert!(!map3.is_null());
+
+            // Same maps should be equal
+            assert_eq!(_map_equals(map1, map2), 1);
+            // Different maps should not be equal
+            assert_eq!(_map_equals(map1, map3), 0);
+            // Same pointer should be equal
+            assert_eq!(_map_equals(map1, map1), 1);
+
+            _map_free(map1);
+            _map_free(map2);
+            _map_free(map3);
+            _free(key_a);
+            _free(key_b);
+        }
+    }
+
+    #[test]
+    fn set_equals_basic() {
+        unsafe {
+            const TAG_NUMBER: i64 = 1;
+
+            let values1 = [1i64, 2, 3];
+            let values2 = [3i64, 2, 1]; // Different order, but sets should be equal
+            let values3 = [1i64, 2, 4];
+
+            let tags = [TAG_NUMBER; 3];
+
+            let set1 = _set_create(values1.as_ptr(), tags.as_ptr(), 3);
+            let set2 = _set_create(values2.as_ptr(), tags.as_ptr(), 3);
+            let set3 = _set_create(values3.as_ptr(), tags.as_ptr(), 3);
+
+            assert!(!set1.is_null());
+            assert!(!set2.is_null());
+            assert!(!set3.is_null());
+
+            // Same sets should be equal (order doesn't matter)
+            assert_eq!(_set_equals(set1, set2), 1);
+            // Different sets should not be equal
+            assert_eq!(_set_equals(set1, set3), 0);
+            // Same pointer should be equal
+            assert_eq!(_set_equals(set1, set1), 1);
+
+            _set_free(set1);
+            _set_free(set2);
+            _set_free(set3);
         }
     }
 }

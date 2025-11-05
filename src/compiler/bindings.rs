@@ -98,8 +98,8 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
         }
     }
 
+    // Apply liveness plan first (works with local indices)
     let mut body_instructions = body_result.instructions;
-
     let mut freed_on_all_paths: HashSet<usize> = HashSet::new();
 
     let tracked_slots_for_plan: HashSet<usize> = binding_infos.iter().filter(|info| info.owns_heap).map(|info| info.slot).collect();
@@ -111,6 +111,10 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
         }
         freed_on_all_paths.extend(plan.freed_everywhere.iter().copied());
     }
+
+    // THEN adjust jump targets to account for the offset where they'll be inserted (after liveness analysis)
+    let body_offset = instructions.len();
+    body_instructions = crate::compiler::adjust_jump_targets(body_instructions, body_offset);
 
     instructions.extend(body_instructions);
 

@@ -1,0 +1,10 @@
+;; Test sets containing keywords (order-independent equality)
+(defn -main []
+  (let [s1 #{:red :green :blue}
+        s2 #{:blue :red :green}
+        s3 #{:red :green :yellow}]
+    (if (= s1 s2)
+        (if (= s1 s3) 99 42)
+        99)))
+
+;; Expected: 42 (s1 == s2 even though order differs, s1 != s3)

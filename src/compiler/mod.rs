@@ -102,6 +102,22 @@ impl CompileResult {
     }
 }
 
+/// Adjust jump targets in a list of instructions by an offset.
+/// This is used when combining instruction lists from nested expressions.
+pub(crate) fn adjust_jump_targets(instructions: Vec<IRInstruction>, offset: usize) -> Vec<IRInstruction> {
+    if offset == 0 {
+        return instructions;
+    }
+
+    instructions.into_iter().map(|inst| {
+        match inst {
+            IRInstruction::Jump(target) => IRInstruction::Jump(target + offset),
+            IRInstruction::JumpIfZero(target) => IRInstruction::JumpIfZero(target + offset),
+            other => other,
+        }
+    }).collect()
+}
+
 /// Determine if a symbol refers to a heap-allocated local variable in the current context.
 pub(crate) fn is_heap_allocated_symbol(name: &str, context: &CompileContext) -> bool {
     (context.get_variable(name).is_some() || context.get_parameter(name).is_some()) && context.is_heap_allocated(name)

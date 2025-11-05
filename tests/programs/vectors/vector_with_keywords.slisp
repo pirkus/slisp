@@ -1,0 +1,10 @@
+;; Test vectors containing keywords
+(defn -main []
+  (let [v1 (vec :a :b :c)
+        v2 (vec :a :b :c)
+        v3 (vec :a :b :d)]
+    (if (= v1 v2)
+        (if (= v1 v3) 99 42)
+        99)))
+
+;; Expected: 42

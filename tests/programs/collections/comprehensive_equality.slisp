@@ -1,0 +1,71 @@
+;; Comprehensive collection equality tests covering all data types
+(defn -main []
+  (let [;; Vectors with different types
+        v-nums1 (vec 1 2 3)
+        v-nums2 (vec 1 2 3)
+        v-strs1 (vec "hello" "world")
+        v-strs2 (vec "hello" "world")
+        v-strs3 (vec "hello" "earth")
+        v-keys1 (vec :a :b :c)
+        v-keys2 (vec :a :b :c)
+        v-keys3 (vec :a :b :d)
+
+        ;; Sets with different types
+        s-nums1 #{1 2 3}
+        s-nums2 #{3 2 1}  ; order shouldn't matter
+        s-strs1 #{"x" "y" "z"}
+        s-strs2 #{"z" "y" "x"}
+        s-strs3 #{"x" "y" "w"}
+        s-keys1 #{:red :green :blue}
+        s-keys2 #{:blue :red :green}
+        s-keys3 #{:red :green :yellow}
+
+        ;; Maps with different key/value types
+        m-num-keys1 {1 "one" 2 "two"}
+        m-num-keys2 {2 "two" 1 "one"}  ; order shouldn't matter
+        m-str-keys1 {"name" "Alice" "role" "admin"}
+        m-str-keys2 {"role" "admin" "name" "Alice"}
+        m-key-keys1 {:name "Bob" :age 30}
+        m-key-keys2 {:age 30 :name "Bob"}
+        m-key-keys3 {:name "Bob" :age 31}
+
+        ;; Nested collections
+        v-nested1 (vec (vec 1 2) (vec 3 4))
+        v-nested2 (vec (vec 1 2) (vec 3 4))
+        v-nested3 (vec (vec 1 2) (vec 3 5))
+
+        ;; Mixed nesting with keywords and strings
+        m-complex1 {:users (vec "alice" "bob") :tags #{:admin :user}}
+        m-complex2 {:tags #{:user :admin} :users (vec "alice" "bob")}
+        m-complex3 {:users (vec "alice" "bob") :tags #{:admin :guest}}]
+
+    ;; Sum up all the equality checks (should be 112)
+    (+ ;; Vector equality tests
+       (if (= v-nums1 v-nums2) 1 0)         ; 1
+       (if (= v-strs1 v-strs2) 1 0)         ; 1
+       (if (= v-strs1 v-strs3) 0 1000)      ; 0 - different
+       (if (= v-keys1 v-keys2) 1 0)         ; 1
+       (if (= v-keys1 v-keys3) 0 1000)      ; 0 - different
+
+       ;; Set equality tests (order independent)
+       (if (= s-nums1 s-nums2) 10 0)        ; 10
+       (if (= s-strs1 s-strs2) 10 0)        ; 10
+       (if (= s-strs1 s-strs3) 0 1000)      ; 0 - different
+       (if (= s-keys1 s-keys2) 10 0)        ; 10
+       (if (= s-keys1 s-keys3) 0 1000)      ; 0 - different
+
+       ;; Map equality tests (order independent)
+       (if (= m-num-keys1 m-num-keys2) 10 0)    ; 10
+       (if (= m-str-keys1 m-str-keys2) 10 0)    ; 10
+       (if (= m-key-keys1 m-key-keys2) 10 0)    ; 10
+       (if (= m-key-keys1 m-key-keys3) 0 1000)  ; 0 - different
+
+       ;; Nested collection equality
+       (if (= v-nested1 v-nested2) 10 0)    ; 10
+       (if (= v-nested1 v-nested3) 0 1000)  ; 0 - different
+
+       ;; Complex nested equality with keywords and strings
+       (if (= m-complex1 m-complex2) 20 0)  ; 20
+       (if (= m-complex1 m-complex3) 0 1000))))  ; 0 - different
+
+;; Expected result: 1+1+1+10+10+10+10+10+10+10+10+10+20 = 112
