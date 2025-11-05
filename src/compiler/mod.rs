@@ -305,7 +305,9 @@ fn compile_vector_literal(elements: &[Node], context: &mut CompileContext, progr
         let tag_slot = ordered_tag_slots[idx];
 
         let element_result = compile_node(element, context, program)?;
-        instructions.extend(element_result.instructions);
+        let element_offset = instructions.len();
+        let element_instructions = adjust_jump_targets(element_result.instructions, element_offset);
+        instructions.extend(element_instructions);
         instructions.push(IRInstruction::StoreLocal(value_slot));
 
         let mut element_kind = element_result.kind;
@@ -374,7 +376,9 @@ fn compile_set_literal(args: &[Node], context: &mut CompileContext, program: &mu
         let tag_slot = ordered_tag_slots[idx];
 
         let value_result = compile_node(value_node, context, program)?;
-        instructions.extend(value_result.instructions);
+        let value_offset = instructions.len();
+        let value_instructions = adjust_jump_targets(value_result.instructions, value_offset);
+        instructions.extend(value_instructions);
         instructions.push(IRInstruction::StoreLocal(value_slot));
 
         let value_kind = resolve_map_key_kind(value_node, value_result.kind, context)?;
@@ -639,6 +643,8 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
         kind: mut key_kind,
         heap_ownership: key_ownership,
     } = compile_node(&args[1], context, program)?;
+    let key_offset = instructions.len();
+    let key_instructions = adjust_jump_targets(key_instructions, key_offset);
     instructions.extend(key_instructions);
 
     let mut default_slot = None;
@@ -648,7 +654,9 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
     if args.len() == 3 {
         let default_result = compile_node(&args[2], context, program)?;
         default_kind = resolve_value_kind(&args[2], default_result.kind, context);
-        instructions.extend(default_result.instructions);
+        let default_offset = instructions.len();
+        let default_instructions = adjust_jump_targets(default_result.instructions, default_offset);
+        instructions.extend(default_instructions);
         let slot = context.allocate_temp_slot();
         instructions.push(IRInstruction::StoreLocal(slot));
         default_owned = default_result.heap_ownership == HeapOwnership::Owned;
@@ -755,10 +763,14 @@ fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRPro
         temp_slots.push(slot);
     }
 
-    instructions.extend(compile_node(&args[1], context, program)?.instructions);
+    let arg1_offset = instructions.len();
+    let arg1_instructions = adjust_jump_targets(compile_node(&args[1], context, program)?.instructions, arg1_offset);
+    instructions.extend(arg1_instructions);
 
     if args.len() == 3 {
-        instructions.extend(compile_node(&args[2], context, program)?.instructions);
+        let arg2_offset = instructions.len();
+        let arg2_instructions = adjust_jump_targets(compile_node(&args[2], context, program)?.instructions, arg2_offset);
+        instructions.extend(arg2_instructions);
     } else {
         instructions.push(IRInstruction::Push(-1));
     }
@@ -813,7 +825,9 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
 
     for (arg, slot) in args.iter().zip(ordered_slots.iter()) {
         let arg_result = compile_node(arg, context, program)?;
-        instructions.extend(arg_result.instructions);
+        let arg_offset = instructions.len();
+        let arg_instructions = adjust_jump_targets(arg_result.instructions, arg_offset);
+        instructions.extend(arg_instructions);
 
         let mut slot_needs_free = arg_result.heap_ownership == HeapOwnership::Owned;
 
@@ -953,14 +967,18 @@ fn compile_hash_map(args: &[Node], context: &mut CompileContext, program: &mut I
         let value_tag_slot = ordered_value_tag_slots[idx];
 
         let key_result = compile_node(key_node, context, program)?;
-        instructions.extend(key_result.instructions);
+        let key_offset = instructions.len();
+        let key_instructions = adjust_jump_targets(key_result.instructions, key_offset);
+        instructions.extend(key_instructions);
         instructions.push(IRInstruction::StoreLocal(key_slot));
         let key_kind = resolve_map_key_kind(key_node, key_result.kind, context)?;
         instructions.push(IRInstruction::Push(runtime_tag_for_key(key_kind)));
         instructions.push(IRInstruction::StoreLocal(key_tag_slot));
 
         let value_result = compile_node(value_node, context, program)?;
-        instructions.extend(value_result.instructions);
+        let value_offset = instructions.len();
+        let value_instructions = adjust_jump_targets(value_result.instructions, value_offset);
+        instructions.extend(value_instructions);
         instructions.push(IRInstruction::StoreLocal(value_slot));
         let value_kind = resolve_value_kind(value_node, value_result.kind, context);
         instructions.push(IRInstruction::Push(runtime_tag_for_value(value_kind)));
@@ -1016,7 +1034,9 @@ fn compile_assoc(args: &[Node], context: &mut CompileContext, program: &mut IRPr
         let value_index = key_index + 1;
 
         let mut key_result = compile_node(&args[key_index], context, program)?;
-        instructions.extend(key_result.instructions);
+        let key_offset = instructions.len();
+        let key_instructions = adjust_jump_targets(key_result.instructions, key_offset);
+        instructions.extend(key_instructions);
         if key_result.heap_ownership == HeapOwnership::Owned {
             let slot = context.allocate_temp_slot();
             instructions.push(IRInstruction::StoreLocal(slot));
@@ -1028,7 +1048,9 @@ fn compile_assoc(args: &[Node], context: &mut CompileContext, program: &mut IRPr
         instructions.push(IRInstruction::Push(runtime_tag_for_key(key_result.kind)));
 
         let mut value_result = compile_node(&args[value_index], context, program)?;
-        instructions.extend(value_result.instructions);
+        let value_offset = instructions.len();
+        let value_instructions = adjust_jump_targets(value_result.instructions, value_offset);
+        instructions.extend(value_instructions);
         if value_result.heap_ownership == HeapOwnership::Owned {
             let slot = context.allocate_temp_slot();
             instructions.push(IRInstruction::StoreLocal(slot));
@@ -1078,7 +1100,9 @@ fn compile_dissoc(args: &[Node], context: &mut CompileContext, program: &mut IRP
 
     for key_idx in 1..args.len() {
         let mut key_result = compile_node(&args[key_idx], context, program)?;
-        instructions.extend(key_result.instructions);
+        let key_offset = instructions.len();
+        let key_instructions = adjust_jump_targets(key_result.instructions, key_offset);
+        instructions.extend(key_instructions);
         if key_result.heap_ownership == HeapOwnership::Owned {
             let slot = context.allocate_temp_slot();
             instructions.push(IRInstruction::StoreLocal(slot));
@@ -1131,7 +1155,9 @@ fn compile_disj(args: &[Node], context: &mut CompileContext, program: &mut IRPro
 
     for value_idx in 1..args.len() {
         let mut value_result = compile_node(&args[value_idx], context, program)?;
-        instructions.extend(value_result.instructions);
+        let value_offset = instructions.len();
+        let value_instructions = adjust_jump_targets(value_result.instructions, value_offset);
+        instructions.extend(value_instructions);
         if value_result.heap_ownership == HeapOwnership::Owned {
             let slot = context.allocate_temp_slot();
             instructions.push(IRInstruction::StoreLocal(slot));
@@ -1177,7 +1203,9 @@ fn compile_contains(args: &[Node], context: &mut CompileContext, program: &mut I
     let target_kind = resolve_value_kind(&args[0], target_result.kind, context);
 
     let mut key_result = compile_node(&args[1], context, program)?;
-    instructions.extend(key_result.instructions);
+    let key_offset = instructions.len();
+    let key_instructions = adjust_jump_targets(key_result.instructions, key_offset);
+    instructions.extend(key_instructions);
     if key_result.heap_ownership == HeapOwnership::Owned {
         let slot = context.allocate_temp_slot();
         instructions.push(IRInstruction::StoreLocal(slot));
