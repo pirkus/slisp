@@ -404,8 +404,6 @@ impl X86CodeGen {
             }
 
             IRInstruction::DefineFunction(_, _, _) => Vec::new(),
-
-            _ => Vec::new(),
         };
 
         self.code.extend(code);
