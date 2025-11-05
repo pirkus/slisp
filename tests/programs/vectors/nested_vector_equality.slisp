@@ -1,0 +1,9 @@
+(defn -main []
+  (let [v1 (vec (vec 1 2) (vec 3 4))
+        v2 (vec (vec 1 2) (vec 3 4))
+        v3 (vec (vec 1 2) (vec 3 5))
+        v4 (vec "hello" "world")
+        v5 (vec "hello" "world")]
+    (+ (if (= v1 v2) 100 0)
+       (if (= v1 v3) 0 10)
+       (if (= v4 v5) 1 0))))

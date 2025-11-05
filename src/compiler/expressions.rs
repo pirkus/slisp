@@ -86,11 +86,26 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
         right_kind = resolve_operand_kind(&args[1], right_kind, context);
     }
 
-    let string_equality =
-        matches!(instruction, IRInstruction::Equal) && ((left_kind == ValueKind::String && right_kind == ValueKind::String) || (left_kind == ValueKind::Keyword && right_kind == ValueKind::Keyword));
-
-    if string_equality {
-        instructions.push(IRInstruction::RuntimeCall("_string_equals".to_string(), 2));
+    // Determine if we need specialized equality comparison
+    if matches!(instruction, IRInstruction::Equal) && left_kind == right_kind {
+        match left_kind {
+            ValueKind::String | ValueKind::Keyword => {
+                instructions.push(IRInstruction::RuntimeCall("_string_equals".to_string(), 2));
+            }
+            ValueKind::Vector => {
+                instructions.push(IRInstruction::RuntimeCall("_vector_equals".to_string(), 2));
+            }
+            ValueKind::Map => {
+                instructions.push(IRInstruction::RuntimeCall("_map_equals".to_string(), 2));
+            }
+            ValueKind::Set => {
+                instructions.push(IRInstruction::RuntimeCall("_set_equals".to_string(), 2));
+            }
+            _ => {
+                // For other types (Number, Boolean, Nil, Any), use basic comparison
+                instructions.push(instruction);
+            }
+        }
     } else {
         instructions.push(instruction);
     }
