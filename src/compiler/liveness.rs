@@ -17,7 +17,7 @@ pub fn apply_liveness_plan(original: Vec<IRInstruction>, plan: &LivenessPlan) ->
     }
 
     let mut new_instructions = Vec::with_capacity(original.len() + plan.insert_after.len());
-    let mut index_map = Vec::with_capacity(original.len());
+    let mut index_map = Vec::with_capacity(original.len() + 1);
 
     for (idx, inst) in original.into_iter().enumerate() {
         index_map.push(new_instructions.len());
@@ -29,8 +29,11 @@ pub fn apply_liveness_plan(original: Vec<IRInstruction>, plan: &LivenessPlan) ->
         }
     }
 
+    // Add final mapping for the "end" position
+    index_map.push(new_instructions.len());
+
     // Adjust jump targets to account for inserted instructions
-    for inst in &mut new_instructions {
+    for (_idx, inst) in new_instructions.iter_mut().enumerate() {
         match inst {
             IRInstruction::Jump(target) | IRInstruction::JumpIfZero(target) => {
                 if let Some(&mapped) = index_map.get(*target) {

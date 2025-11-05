@@ -145,7 +145,8 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
     instructions.push(IRInstruction::JumpIfZero(0));
 
     let then_result = crate::compiler::compile_node(&args[1], context, program)?;
-    let then_instructions = then_result.instructions;
+    let then_offset = instructions.len();
+    let then_instructions = crate::compiler::adjust_jump_targets(then_result.instructions, then_offset);
     instructions.extend(then_instructions);
 
     let end_jump_pos = instructions.len();
@@ -155,7 +156,8 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
     instructions[else_jump_pos] = IRInstruction::JumpIfZero(else_start);
 
     let else_result = crate::compiler::compile_node(&args[2], context, program)?;
-    let else_instructions = else_result.instructions;
+    let else_offset = instructions.len();
+    let else_instructions = crate::compiler::adjust_jump_targets(else_result.instructions, else_offset);
     instructions.extend(else_instructions);
 
     let end_pos = instructions.len();
@@ -214,7 +216,9 @@ fn compile_variadic_logical(
         instructions.push(IRInstruction::JumpIfZero(0));
         jump_sites.push(jump_site);
 
-        instructions.extend(crate::compiler::compile_node(arg, context, program)?.instructions);
+        let arg_offset = instructions.len();
+        let arg_instructions = crate::compiler::adjust_jump_targets(crate::compiler::compile_node(arg, context, program)?.instructions, arg_offset);
+        instructions.extend(arg_instructions);
     }
 
     instructions.extend([IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
