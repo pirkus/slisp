@@ -1,4 +1,5 @@
 (defn -main []
   (let [nested (vec (vec 1 2) 3)
-        rendered (str nested)]
-    (count rendered)))
+        rendered (str nested)
+        result (count rendered)]
+    (if (= result 9) 0 1)))

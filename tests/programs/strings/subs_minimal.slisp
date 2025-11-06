@@ -1,4 +1,4 @@
 (defn identity [x] x)
 
 (defn -main []
-  (identity 5))
+  (if (= (identity 5) 5) 0 1))

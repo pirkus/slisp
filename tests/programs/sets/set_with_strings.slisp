@@ -2,9 +2,10 @@
 (defn -main []
   (let [s1 #{"apple" "banana" "cherry"}
         s2 #{"cherry" "banana" "apple"}
-        s3 #{"apple" "banana" "date"}]
-    (if (= s1 s2)
-        (if (= s1 s3) 99 42)
-        99)))
+        s3 #{"apple" "banana" "date"}
+        result (if (= s1 s2)
+                   (if (= s1 s3) 99 42)
+                   99)]
+    (if (= result 42) 0 1)))
 
 ;; Expected: 42 (s1 == s2 even though order differs, s1 != s3)

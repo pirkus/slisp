@@ -1,3 +1,4 @@
 (defn multiply [x y] (* x y))
 
-(defn -main [] (multiply 6 7))
+(defn -main []
+  (if (= (multiply 6 7) 42) 0 1))

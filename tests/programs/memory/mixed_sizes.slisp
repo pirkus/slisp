@@ -11,4 +11,5 @@
     (count (str a b c))))
 
 (defn -main []
-  (+ (churn-mixed) (+ (churn-mixed) (churn-mixed))))
+  (let [result (+ (churn-mixed) (+ (churn-mixed) (churn-mixed)))]
+    (if (= result 86) 0 1)))

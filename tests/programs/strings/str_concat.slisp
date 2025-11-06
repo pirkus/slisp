@@ -1,2 +1,2 @@
 (defn -main []
-  (count (str "hello" " " "world")))
+  (if (= (count (str "hello" " " "world")) 11) 0 1))

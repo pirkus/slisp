@@ -1,3 +1,4 @@
 (defn add [x y] (+ x y))
 
-(defn -main [] (add 3 4))
+(defn -main []
+  (if (= (add 3 4) 7) 0 1))
