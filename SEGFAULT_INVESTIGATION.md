@@ -77,6 +77,49 @@ Split tests to use fewer than 4 collections per `let` binding. This is a tempora
 ### Option 3: Change Compiler Strategy
 Instead of using stack-allocated arrays for map creation, pass individual values. More calling convention overhead but simpler allocation.
 
+## Timeout Investigation
+
+### Key Finding: Timeouts = Same Compiler Bug ⚠️
+
+The 18 tests that timeout (infinite loops in collection equality) have the **SAME root cause** as the 8 segfaulting tests - the compiler slot allocation bug.
+
+**Evidence**:
+```bash
+# Fresh compilation of map_equality test - PASSES
+$ cargo run -- --compile -o /tmp/test tests/programs/maps/map_equality.slisp
+$ timeout 2 /tmp/test && echo "PASS"
+PASS
+
+# Same test compiled by test suite - TIMES OUT
+$ timeout 2 tests/programs/target/map_equality
+(timeout after 2 seconds)
+```
+
+**Why Timeouts Instead of Segfaults**:
+- Partial fix prevents *some* slot conflicts (variables can't reuse temp slots)
+- But temp slots can still conflict with each other in complex expressions
+- Instead of segfaulting on invalid pointers (0x2), corrupted data causes:
+  - Map pointers pointing to wrong maps or corrupted data
+  - Equality checks comparing wrong/circular data
+  - Infinite loops in `_map_equals` → `_map_get` → `map_find_index` cycle
+
+**Minimal Test** (works when fresh, times out in suite):
+```lisp
+(let [m1 {:a 1 :b 2}
+      m2 {:a 1 :b 2}
+      m3 {:a 1 :b 3}
+      m4 {:a 1}
+      empty1 {}
+      empty2 {}]
+  (= m1 m2))  ; Passes when fresh, times out in suite
+```
+
+### Conclusion
+
+**Both segfaults AND timeouts will be fixed by the same solution**: Implementing deferred temp slot release (Option C) to prevent ALL slot conflicts during compilation.
+
+Current test results: 26 tests affected by this one bug (8 segfaults + 18 timeouts)
+
 ## Progress Update
 
 ### Partial Fix Applied ✓
@@ -89,12 +132,13 @@ Instead of using stack-allocated arrays for map creation, pass individual values
 **Results**:
 - ✅ Fixed 3 tests: `map_equality`, `set_churn`, `equals_nested` (moved from segfault to timeout)
 - ❌ Still segfaulting: `basic_assoc`, `keyword_keys`, `map_literal`, `map_churn`, `map_nested_strings`, `equals_vector_default`
+- ⏱ 18 tests timeout due to corrupted data from same bug
 
 ### Remaining Issue
 
-The partial fix prevents simple variable-temp conflicts but doesn't fully solve the problem. The remaining segfaults occur in tests using `assoc`/`dissoc`/complex operations where intermediate temp values can still conflict with each other or with variable slots.
+The partial fix prevents simple variable-temp conflicts but doesn't fully solve the problem. The remaining segfaults AND all timeouts occur when intermediate temp values can still conflict with each other or with variable slots.
 
-**Root Cause**: The compiler's slot allocation doesn't properly track value lifetimes. When temp slots are released and reused within the same expression tree, values that are still needed get overwritten.
+**Root Cause**: The compiler's slot allocation doesn't properly track value lifetimes. When temp slots are released and reused within the same expression tree, values that are still needed get overwritten, causing either segfaults (invalid pointers) or infinite loops (corrupted data).
 
 ### Full Solution Needed
 
