@@ -186,3 +186,50 @@ Minimal reproduction:
 ```
 
 Compile and run - will segfault.
+
+## Option C Implementation Attempt
+
+### What Was Tried
+
+Implemented deferred temp slot release strategy:
+1. Added `deferred_temp_slots` field to CompileContext
+2. Added `defer_temp_slot_release()` and `release_deferred_temp_slots()` methods
+3. Modified `compile_hash_map`, `compile_set_literal`, `compile_assoc`, `compile_dissoc` to defer releases
+4. Called `release_deferred_temp_slots()` after let bindings complete
+
+### Results: Made Things Worse ❌
+
+**Before Option C**: 21 passing, 8 failing (5 segfault + 3 moved to timeout), 18 timeout
+**After Option C**: 21 passing, 10 failing (8 segfault + 2 logic), 16 timeout
+
+- `set_churn` regressed from timeout → segfault
+- `vector_with_sets` new segfault
+- Overall: 2 more segfaults, 2 fewer timeouts
+
+### Why It Failed
+
+The simple "defer all temp releases until scope boundary" approach caused new problems:
+
+1. **Excessive slot usage**: Deferring ALL releases across ALL bindings in a let uses too many slots
+2. **Liveness tracker conflicts**: `compile_assoc`/`compile_dissoc` use liveness tracking that expects slots to be available for reuse within expressions
+3. **Interaction with existing optimizations**: The codebase already has sophisticated liveness analysis that conflicts with blanket deferral
+
+### Lessons Learned
+
+A working solution needs to be more sophisticated:
+- Can't defer ALL temp releases blindly
+- Need to distinguish between:
+  - Collection creation temp arrays (keys/values/tags) - these SHOULD be deferred
+  - Other temp slots for tracking heap ownership - these can be released immediately
+- Need to respect existing liveness analysis infrastructure
+- May need per-expression scope tracking rather than per-let-binding scope
+
+### Correct Solution (Future Work)
+
+The right fix likely involves:
+1. **Selective deferral**: Only defer temp slots for collection creation arrays
+2. **Per-binding release**: Release deferred slots after EACH binding, not all bindings
+3. **Respecting liveness**: Don't defer slots tracked by liveness analysis
+4. **Expression-scoped contexts**: Create temp slot "generation" or "epoch" markers to prevent cross-generation reuse
+
+This is a complex refactoring requiring careful analysis of temp slot usage patterns across the entire compiler.
