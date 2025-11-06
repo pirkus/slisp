@@ -37,10 +37,10 @@
         ;; Mixed nesting with keywords and strings
         m-complex1 {:users (vec "alice" "bob") :tags #{:admin :user}}
         m-complex2 {:tags #{:user :admin} :users (vec "alice" "bob")}
-        m-complex3 {:users (vec "alice" "bob") :tags #{:admin :guest}}]
+        m-complex3 {:users (vec "alice" "bob") :tags #{:admin :guest}}
 
-    ;; Sum up all the equality checks (should be 112)
-    result (+ ;; Vector equality tests
+        ;; Sum up all the equality checks (should be 112)
+        result (+ ;; Vector equality tests
               (if (= v-nums1 v-nums2) 1 0)         ; 1
               (if (= v-strs1 v-strs2) 1 0)         ; 1
               (if (= v-strs1 v-strs3) 0 1000)      ; 0 - different
