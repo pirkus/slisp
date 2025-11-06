@@ -64,15 +64,17 @@ impl CompileContext {
     }
 
     /// Add a variable to the context and return its slot index
+    ///
+    /// Variables always get fresh slots (never reuse from free_slots) to prevent
+    /// temp slot recycling from corrupting variable storage. This fixes a bug where
+    /// creating multiple maps/sets in a let binding would cause temp slots used
+    /// during collection creation to be reused for variable storage, leading to
+    /// data corruption.
     pub fn add_variable(&mut self, name: String) -> usize {
-        // Try to reuse a freed slot first
-        let slot = if let Some(free_slot) = self.free_slots.pop() {
-            free_slot
-        } else {
-            let slot = self.next_slot;
-            self.next_slot += 1;
-            slot
-        };
+        // Always allocate a fresh slot for variables to avoid reusing
+        // temp slots that might interfere with ongoing compilation
+        let slot = self.next_slot;
+        self.next_slot += 1;
         self.variables.insert(name, slot);
         slot
     }
@@ -199,6 +201,10 @@ impl CompileContext {
     /// no longer needed so it can be reused.
     pub fn allocate_temp_slot(&mut self) -> usize {
         if let Some(slot) = self.free_slots.pop() {
+            // Track the high water mark to prevent variable slots from overlapping
+            if slot >= self.next_slot {
+                self.next_slot = slot + 1;
+            }
             slot
         } else {
             let slot = self.next_slot;

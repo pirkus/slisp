@@ -77,18 +77,49 @@ Split tests to use fewer than 4 collections per `let` binding. This is a tempora
 ### Option 3: Change Compiler Strategy
 Instead of using stack-allocated arrays for map creation, pass individual values. More calling convention overhead but simpler allocation.
 
-## Next Steps
+## Progress Update
 
-1. **Examine** `src/compiler/mod.rs`:
-   - `CompileContext::allocate_contiguous_temp_slots()`
-   - `CompileContext::release_temp_slot()`
-   - `compile_hash_map()` temp slot lifecycle
+### Partial Fix Applied ✓
 
-2. **Debug** with print statements in codegen to trace when slots are allocated/released
+**Changed**: `src/compiler/context.rs`
+- Modified `add_variable()` to never reuse slots from `free_slots`
+- Variables now always get fresh slots using `next_slot`
+- Modified `allocate_temp_slot()` to track high water mark
 
-3. **Fix** the allocation logic to prevent premature reuse
+**Results**:
+- ✅ Fixed 3 tests: `map_equality`, `set_churn`, `equals_nested` (moved from segfault to timeout)
+- ❌ Still segfaulting: `basic_assoc`, `keyword_keys`, `map_literal`, `map_churn`, `map_nested_strings`, `equals_vector_default`
 
-4. **Test** all 8 segfaulting tests to verify fix
+### Remaining Issue
+
+The partial fix prevents simple variable-temp conflicts but doesn't fully solve the problem. The remaining segfaults occur in tests using `assoc`/`dissoc`/complex operations where intermediate temp values can still conflict with each other or with variable slots.
+
+**Root Cause**: The compiler's slot allocation doesn't properly track value lifetimes. When temp slots are released and reused within the same expression tree, values that are still needed get overwritten.
+
+### Full Solution Needed
+
+A complete fix requires rethinking the slot allocation strategy:
+
+1. **Option A**: Implement proper lifetime tracking
+   - Track which slots are "live" at each point in compilation
+   - Only reuse slots that are provably dead
+   - Most correct but complex
+
+2. **Option B**: Separate temp and variable slot ranges
+   - Variables use slots [0...N)
+   - Temps use slots [N...∞)
+   - Simple but wastes stack space
+
+3. **Option C**: Defer all temp slot releases until expression completes
+   - Don't release temp slots during expression compilation
+   - Release all at once when result is stored
+   - Balance of simplicity and efficiency
+
+### Next Steps
+
+1. **Implement Option C** as it's the best balance
+2. Test all 8 originally segfaulting tests
+3. Verify no regressions in passing tests
 
 ## Files to Investigate
 
