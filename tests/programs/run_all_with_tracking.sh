@@ -45,37 +45,28 @@ while IFS= read -r -d '' file; do
     # Run with timeout (10 seconds per test)
     # Capture output to show allocation stats
     output_file="$output_dir/${program_name}_alloc.log"
-    if timeout 10s "$binary_path" > "$output_file" 2>&1; then
-        status=$?
-        if [ $status -eq 0 ]; then
-            echo "  ✓ PASSED (exit code 0)"
-            successful_tests+=("$program_name")
+    timeout 10s "$binary_path" > "$output_file" 2>&1
+    status=$?
 
-            # Extract and display allocation stats
-            if grep -q "Allocation stats" "$output_file"; then
-                echo "  📊 Allocation stats:"
-                grep -A 10 "Allocation stats" "$output_file" | sed 's/^/    /'
-            fi
-        else
-            echo "  ✗ FAILED (exit code $status)"
-            failed_tests+=("$program_name:$status")
-            # Show output for failed tests
+    if [ $status -eq 0 ]; then
+        echo "  ✓ PASSED (exit code 0)"
+        successful_tests+=("$program_name")
+
+        # Extract and display allocation stats
+        if grep -q "Allocation stats" "$output_file"; then
+            echo "  📊 Allocation stats:"
+            grep -A 10 "Allocation stats" "$output_file" | sed 's/^/    /'
+        fi
+    elif [ $status -eq 124 ]; then
+        echo "  ⏱ TIMEOUT (exceeded 10s)"
+        timed_out_tests+=("$program_name")
+    else
+        echo "  ✗ FAILED (exit code $status)"
+        failed_tests+=("$program_name:$status")
+        # Show output for failed tests
+        if [ -f "$output_file" ]; then
             echo "  Output:"
             cat "$output_file" | sed 's/^/    /'
-        fi
-    else
-        timeout_status=$?
-        if [ $timeout_status -eq 124 ]; then
-            echo "  ⏱ TIMEOUT (exceeded 10s)"
-            timed_out_tests+=("$program_name")
-        else
-            echo "  ✗ FAILED (exit code $timeout_status)"
-            failed_tests+=("$program_name:$timeout_status")
-            # Show output for failed tests
-            if [ -f "$output_file" ]; then
-                echo "  Output:"
-                cat "$output_file" | sed 's/^/    /'
-            fi
         fi
     fi
     echo

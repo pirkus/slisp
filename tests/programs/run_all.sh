@@ -43,24 +43,18 @@ while IFS= read -r -d '' file; do
     echo "  Running $rel_binary"
 
     # Run with timeout (10 seconds per test)
-    if timeout 10s "$binary_path" > /dev/null 2>&1; then
-        status=$?
-        if [ $status -eq 0 ]; then
-            echo "  ✓ PASSED (exit code 0)"
-            successful_tests+=("$program_name")
-        else
-            echo "  ✗ FAILED (exit code $status)"
-            failed_tests+=("$program_name:$status")
-        fi
+    timeout 10s "$binary_path" > /dev/null 2>&1
+    status=$?
+
+    if [ $status -eq 0 ]; then
+        echo "  ✓ PASSED (exit code 0)"
+        successful_tests+=("$program_name")
+    elif [ $status -eq 124 ]; then
+        echo "  ⏱ TIMEOUT (exceeded 10s)"
+        timed_out_tests+=("$program_name")
     else
-        timeout_status=$?
-        if [ $timeout_status -eq 124 ]; then
-            echo "  ⏱ TIMEOUT (exceeded 10s)"
-            timed_out_tests+=("$program_name")
-        else
-            echo "  ✗ FAILED (exit code $timeout_status)"
-            failed_tests+=("$program_name:$timeout_status")
-        fi
+        echo "  ✗ FAILED (exit code $status)"
+        failed_tests+=("$program_name:$status")
     fi
     echo
 done < <(find "$script_dir" -type f -name '*.slisp' -print0 | sort -z)
