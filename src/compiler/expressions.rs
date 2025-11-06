@@ -31,7 +31,12 @@ pub fn compile_arithmetic_op(args: &[Node], context: &mut CompileContext, progra
     let mut instructions = crate::compiler::compile_node(&args[0], context, program)?.instructions;
 
     for arg in &args[1..] {
-        instructions.extend(crate::compiler::compile_node(arg, context, program)?.instructions);
+        let arg_offset = instructions.len();
+        let arg_instructions = crate::compiler::adjust_jump_targets(
+            crate::compiler::compile_node(arg, context, program)?.instructions,
+            arg_offset
+        );
+        instructions.extend(arg_instructions);
         instructions.push(instruction.clone());
     }
 
@@ -69,6 +74,8 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
         heap_ownership: right_ownership,
     } = right_result;
 
+    let right_offset = instructions.len();
+    let right_instructions = crate::compiler::adjust_jump_targets(right_instructions, right_offset);
     instructions.extend(right_instructions);
 
     if right_ownership == HeapOwnership::Owned {

@@ -183,11 +183,19 @@ unsafe fn map_keys_equal(stored_tag: u8, stored_value: i64, query_tag: u8, query
         TAG_STRING | TAG_KEYWORD => {
             let left = stored_value as *const u8;
             let right = query_value as *const u8;
+            // Add null check before calling _string_equals
+            if left.is_null() || right.is_null() {
+                return left == right;
+            }
             _string_equals(left, right) != 0
         }
         TAG_VECTOR => {
             let left = stored_value as *const u8;
             let right = query_value as *const u8;
+            // Add null check before calling _vector_equals
+            if left.is_null() || right.is_null() {
+                return left == right;
+            }
             _vector_equals(left, right) != 0
         }
         TAG_MAP => {
@@ -198,6 +206,10 @@ unsafe fn map_keys_equal(stored_tag: u8, stored_value: i64, query_tag: u8, query
         TAG_SET => {
             let left = stored_value as *const u8;
             let right = query_value as *const u8;
+            // Add null check before calling _set_equals
+            if left.is_null() || right.is_null() {
+                return left == right;
+            }
             _set_equals(left, right) != 0
         }
         _ => false,
@@ -964,16 +976,36 @@ unsafe fn tagged_values_equal(left_tag: u8, left_val: i64, right_tag: u8, right_
         TAG_NUMBER => left_val == right_val,
         TAG_BOOLEAN => canonical_boolean(left_val) == canonical_boolean(right_val),
         TAG_STRING | TAG_KEYWORD => {
-            _string_equals(left_val as *const u8, right_val as *const u8) != 0
+            let left_ptr = left_val as *const u8;
+            let right_ptr = right_val as *const u8;
+            if left_ptr.is_null() || right_ptr.is_null() {
+                return left_ptr == right_ptr;
+            }
+            _string_equals(left_ptr, right_ptr) != 0
         }
         TAG_VECTOR => {
-            _vector_equals(left_val as *const u8, right_val as *const u8) != 0
+            let left_ptr = left_val as *const u8;
+            let right_ptr = right_val as *const u8;
+            if left_ptr.is_null() || right_ptr.is_null() {
+                return left_ptr == right_ptr;
+            }
+            _vector_equals(left_ptr, right_ptr) != 0
         }
         TAG_MAP => {
-            _map_equals(left_val as *const u8, right_val as *const u8) != 0
+            let left_ptr = left_val as *const u8;
+            let right_ptr = right_val as *const u8;
+            if left_ptr.is_null() || right_ptr.is_null() {
+                return left_ptr == right_ptr;
+            }
+            _map_equals(left_ptr, right_ptr) != 0
         }
         TAG_SET => {
-            _set_equals(left_val as *const u8, right_val as *const u8) != 0
+            let left_ptr = left_val as *const u8;
+            let right_ptr = right_val as *const u8;
+            if left_ptr.is_null() || right_ptr.is_null() {
+                return left_ptr == right_ptr;
+            }
+            _set_equals(left_ptr, right_ptr) != 0
         }
         _ => left_val == right_val,
     }
