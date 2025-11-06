@@ -574,22 +574,18 @@ fn emit_vector_get(instructions: &mut Vec<IRInstruction>, context: &mut CompileC
     instructions.push(IRInstruction::PushLocalAddress(out_slot));
     instructions.push(IRInstruction::RuntimeCall("_vector_get".to_string(), 3));
 
-    let failure_jump_pos = instructions.len();
-    instructions.push(IRInstruction::JumpIfZero(0));
+    // Mark the start of conditional block - jumps will be patched after liveness
+    instructions.push(IRInstruction::JumpIfZero(usize::MAX)); // Sentinel for patching later
 
     instructions.push(IRInstruction::LoadLocal(out_slot));
     default.success_cleanup(instructions);
-    let success_jump_pos = instructions.len();
-    instructions.push(IRInstruction::Jump(0));
+    instructions.push(IRInstruction::Jump(usize::MAX)); // Sentinel for patching later
 
-    let failure_block_pos = instructions.len();
-    instructions[failure_jump_pos] = IRInstruction::JumpIfZero(failure_block_pos);
-
+    // The failure block starts here
     default.emit_fallback(instructions);
 
-    let end_pos = instructions.len();
-    instructions[success_jump_pos] = IRInstruction::Jump(end_pos);
-
+    // Store indices for patching after liveness
+    // We'll patch these in compile_get after liveness runs
     context.release_temp_slot(out_slot);
 }
 
@@ -599,22 +595,15 @@ fn emit_string_get(instructions: &mut Vec<IRInstruction>, context: &mut CompileC
     let result_slot = context.allocate_temp_slot();
     instructions.push(IRInstruction::StoreLocal(result_slot));
     instructions.push(IRInstruction::LoadLocal(result_slot));
-    let fallback_jump_pos = instructions.len();
-    instructions.push(IRInstruction::JumpIfZero(0));
+    instructions.push(IRInstruction::JumpIfZero(usize::MAX)); // Sentinel for patching later
 
     instructions.push(IRInstruction::LoadLocal(result_slot));
     default.success_cleanup(instructions);
-    let success_jump_pos = instructions.len();
-    instructions.push(IRInstruction::Jump(0));
-
-    let fallback_block_pos = instructions.len();
-    instructions[fallback_jump_pos] = IRInstruction::JumpIfZero(fallback_block_pos);
+    instructions.push(IRInstruction::Jump(usize::MAX)); // Sentinel for patching later
 
     default.emit_fallback(instructions);
 
-    let end_pos = instructions.len();
-    instructions[success_jump_pos] = IRInstruction::Jump(end_pos);
-
+    // Will be patched in compile_get after liveness
     context.release_temp_slot(result_slot);
 }
 
@@ -697,21 +686,15 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
 
             instructions.push(IRInstruction::RuntimeCall("_map_get".to_string(), 5));
 
-            let failure_jump_pos = instructions.len();
-            instructions.push(IRInstruction::JumpIfZero(0));
+            instructions.push(IRInstruction::JumpIfZero(usize::MAX)); // Sentinel for patching later
 
             instructions.push(IRInstruction::LoadLocal(value_slot));
             default_handling.success_cleanup(&mut instructions);
-            let success_jump_pos = instructions.len();
-            instructions.push(IRInstruction::Jump(0));
-
-            let failure_block_pos = instructions.len();
-            instructions[failure_jump_pos] = IRInstruction::JumpIfZero(failure_block_pos);
+            instructions.push(IRInstruction::Jump(usize::MAX)); // Sentinel for patching later
 
             default_handling.emit_fallback(&mut instructions);
 
-            let end_pos = instructions.len();
-            instructions[success_jump_pos] = IRInstruction::Jump(end_pos);
+            // Will be patched after liveness
         }
         _ => {
             emit_string_get(&mut instructions, context, &default_handling);
@@ -721,6 +704,27 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
     if !tracked_slots.is_empty() {
         let plan = compute_liveness_plan(&instructions, &tracked_slots);
         instructions = apply_liveness_plan(instructions, &plan);
+    }
+
+    // Patch jump instructions that were left with usize::MAX sentinel
+    // This must happen AFTER liveness analysis which may have inserted FreeLocal instructions
+    for i in 0..instructions.len() {
+        match &instructions[i] {
+            IRInstruction::JumpIfZero(usize::MAX) => {
+                // Find the next Jump(usize::MAX) and jump to the instruction after it
+                for j in (i + 1)..instructions.len() {
+                    if matches!(instructions[j], IRInstruction::Jump(usize::MAX)) {
+                        instructions[i] = IRInstruction::JumpIfZero(j + 1);
+                        break;
+                    }
+                }
+            }
+            IRInstruction::Jump(usize::MAX) => {
+                // Jump to the end of the instruction list
+                instructions[i] = IRInstruction::Jump(instructions.len());
+            }
+            _ => {}
+        }
     }
 
     for slot in temp_slots {
