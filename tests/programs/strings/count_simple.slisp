@@ -1,2 +1,2 @@
 (defn -main []
-  (count "hello"))
+  (if (= (count "hello") 5) 0 1))

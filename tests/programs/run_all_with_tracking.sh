@@ -18,7 +18,7 @@ total_tests=0
 pushd "$repo_root" > /dev/null || exit 1
 
 echo "========================================="
-echo "Running slisp test suite"
+echo "Running slisp test suite WITH ALLOCATION TRACKING"
 echo "========================================="
 echo
 
@@ -30,8 +30,8 @@ while IFS= read -r -d '' file; do
 
     ((total_tests++))
 
-    echo "[$total_tests] Compiling $rel_path"
-    if cargo run --quiet -- --compile -o "$rel_binary" "$rel_path" 2>&1; then
+    echo "[$total_tests] Compiling $rel_path (with allocation tracking)"
+    if cargo run --quiet -- --compile --trace-alloc -o "$rel_binary" "$rel_path" 2>&1; then
         echo "  ✓ Compiled successfully"
     else
         echo "  ✗ Compilation failed"
@@ -43,14 +43,25 @@ while IFS= read -r -d '' file; do
     echo "  Running $rel_binary"
 
     # Run with timeout (10 seconds per test)
-    if timeout 10s "$binary_path" > /dev/null 2>&1; then
+    # Capture output to show allocation stats
+    output_file="$output_dir/${program_name}_alloc.log"
+    if timeout 10s "$binary_path" > "$output_file" 2>&1; then
         status=$?
         if [ $status -eq 0 ]; then
             echo "  ✓ PASSED (exit code 0)"
             successful_tests+=("$program_name")
+
+            # Extract and display allocation stats
+            if grep -q "Allocation stats" "$output_file"; then
+                echo "  📊 Allocation stats:"
+                grep -A 10 "Allocation stats" "$output_file" | sed 's/^/    /'
+            fi
         else
             echo "  ✗ FAILED (exit code $status)"
             failed_tests+=("$program_name:$status")
+            # Show output for failed tests
+            echo "  Output:"
+            cat "$output_file" | sed 's/^/    /'
         fi
     else
         timeout_status=$?
@@ -60,6 +71,11 @@ while IFS= read -r -d '' file; do
         else
             echo "  ✗ FAILED (exit code $timeout_status)"
             failed_tests+=("$program_name:$timeout_status")
+            # Show output for failed tests
+            if [ -f "$output_file" ]; then
+                echo "  Output:"
+                cat "$output_file" | sed 's/^/    /'
+            fi
         fi
     fi
     echo
@@ -70,7 +86,7 @@ popd > /dev/null || exit 1
 # Generate summary report
 echo
 echo "========================================="
-echo "TEST SUMMARY"
+echo "TEST SUMMARY (WITH ALLOCATION TRACKING)"
 echo "========================================="
 echo "Total tests:      $total_tests"
 echo "Successful:       ${#successful_tests[@]}"
@@ -112,6 +128,9 @@ if [ ${#compilation_failed[@]} -gt 0 ]; then
     done
     echo
 fi
+
+echo "Note: Allocation logs saved to $output_dir/*_alloc.log"
+echo
 
 # Exit with non-zero if any tests failed
 if [ ${#failed_tests[@]} -gt 0 ] || [ ${#timed_out_tests[@]} -gt 0 ] || [ ${#compilation_failed[@]} -gt 0 ]; then
