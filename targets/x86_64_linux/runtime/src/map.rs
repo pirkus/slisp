@@ -774,6 +774,62 @@ unsafe fn map_assoc_impl(map: *const MapHeader, key_tag: u8, key_value: i64, val
                 return null_mut();
             }
             map_copy_entries(new_map, map);
+
+            // Free the cloned owned_key since we're not using it (key already exists)
+            match key_tag {
+                TAG_STRING | TAG_KEYWORD => {
+                    if owned_key != 0 && owned_key != key_value {
+                        _free(owned_key as *mut u8);
+                    }
+                }
+                TAG_VECTOR => {
+                    if owned_key != 0 && owned_key != key_value {
+                        crate::_vector_free(owned_key as *mut u8);
+                    }
+                }
+                TAG_MAP => {
+                    if owned_key != 0 && owned_key != key_value {
+                        _map_free(owned_key as *mut u8);
+                    }
+                }
+                TAG_SET => {
+                    if owned_key != 0 && owned_key != key_value {
+                        crate::_set_free(owned_key as *mut u8);
+                    }
+                }
+                _ => {}
+            }
+
+            // Free the old cloned value at this index before overwriting
+            let value_tags = map_value_tags_ptr(new_map);
+            let value_data = map_value_data_ptr(new_map);
+            let old_value_tag = *value_tags.add(index);
+            let old_value_ptr = *value_data.add(index);
+
+            match old_value_tag {
+                TAG_STRING | TAG_KEYWORD => {
+                    if old_value_ptr != 0 {
+                        _free(old_value_ptr as *mut u8);
+                    }
+                }
+                TAG_VECTOR => {
+                    if old_value_ptr != 0 {
+                        crate::_vector_free(old_value_ptr as *mut u8);
+                    }
+                }
+                TAG_MAP => {
+                    if old_value_ptr != 0 {
+                        _map_free(old_value_ptr as *mut u8);
+                    }
+                }
+                TAG_SET => {
+                    if old_value_ptr != 0 {
+                        crate::_set_free(old_value_ptr as *mut u8);
+                    }
+                }
+                _ => {}
+            }
+
             map_write_value(new_map, index, value_tag, owned_value);
             new_map
         }
