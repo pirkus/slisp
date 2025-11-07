@@ -28,29 +28,46 @@ Implemented a three-pass compilation strategy (src/compiler/mod.rs:148-202):
    - Functions now have accurate parameter types from call sites
    - `str()` calls use correct runtime functions based on actual types
 
-### Status: TEMPORARILY DISABLED ⚠️
+### Status: PARTIALLY FIXED - INVESTIGATION ONGOING ⚠️
 
-The multi-pass implementation successfully fixes the original bug (debug_bug1.slisp) but introduces **5 new test regressions** due to a subtle codegen bug. Multi-pass is currently **disabled** (src/compiler/mod.rs:151) until the issue is resolved.
+The multi-pass implementation successfully fixes the original bug (debug_bug1.slisp) and the string literal preservation fix has been applied. However, **5 integration tests and 1 unit test still fail** due to extra clone instructions being generated.
 
 **Test Results**:
 - **Without multi-pass**: 42/46 passing (4 failures) ✅ **Current**
 - **With multi-pass**: 37/46 passing (9 failures)
 
-**New failures introduced by multi-pass**:
-- branchy_let_paths
-- nested_free_blocks
-- unused_let_bindings
-- map_nested_strings
-- set_churn
+**Failures with multi-pass**:
+- branchy_let_paths (integration)
+- nested_free_blocks (integration)
+- unused_let_bindings (integration)
+- map_nested_strings (integration)
+- set_churn (integration)
+- test_clone_argument_for_function_call (unit test)
 
-All involve complex nested let bindings with string operations. See **MULTIPASS_BUG_INVESTIGATION.md** for detailed analysis.
+**Root Cause Identified**: Multi-pass generates extra `_string_clone` instructions. The issue is in src/compiler/functions.rs:71-74 where `ValueKind::Any` returns are assumed to be strings and cloned. This hack interacts badly with type inference, causing:
+1. Extra clones in pass 3 when types are known
+2. Wrong behavior in nested let bindings with complex string operations
 
-## Current Status: No Fix Applied
+**Fix Applied**: String literal preservation between passes (src/compiler/mod.rs:200) ensures indices remain consistent.
 
-Without the hack and without multi-pass, the original bug (debug_bug1.slisp) **remains unfixed**. The test would fail if added to the test suite.
+**Remaining Work**: Remove or conditionally disable the `Any` → `String` assumption in function returns, or handle clone generation more carefully with type inference.
 
-**Current Test Status**: 42/46 passing
-- **Failing tests** (unrelated to str() parameter bug):
+See **MULTIPASS_BUG_INVESTIGATION.md** for detailed analysis.
+
+## Current Status: Partial Fix with Multi-Pass ENABLED
+
+Multi-pass compilation is **enabled** with string literal preservation fix applied. The original bug (debug_bug1.slisp) **is fixed** - programs now correctly handle string parameters in `str()` calls.
+
+**Current Test Status with Multi-Pass**: 38/47 passing (43/47 without multi-pass)
+- **New failures introduced by multi-pass** (6 tests):
+  - branchy_let_paths
+  - nested_free_blocks
+  - unused_let_bindings
+  - map_nested_strings
+  - set_churn
+  - test_clone_argument_for_function_call (unit test)
+
+- **Pre-existing failures** (4 tests, unrelated to multi-pass):
   - churn_reuse (exit code: 1)
   - map_churn (exit code: 1)
   - mixed_sizes (exit code: 1)

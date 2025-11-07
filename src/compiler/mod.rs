@@ -146,9 +146,8 @@ pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
 
 /// Compile a program (multiple top-level expressions) to IR
 pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> {
-    // TEMPORARY: Multi-pass disabled due to bug causing 5 test regressions
-    // See MULTIPASS_BUG_INVESTIGATION.md for details
-    compile_program_multipass(expressions, false)
+    // Multi-pass compilation with string_literals preservation
+    compile_program_multipass(expressions, true)
 }
 
 /// Internal function to compile a program with optional multi-pass type inference
@@ -189,16 +188,23 @@ fn compile_program_multipass(expressions: &[Node], enable_multipass: bool) -> Re
         }
     }
 
-    if enable_multipass {
+    let program = if enable_multipass {
         // Second pass: compile into temporary program to gather type information from call sites
         let mut temp_program = IRProgram::new();
         compile_all_expressions(expressions, &mut context, &mut temp_program)?;
-        // Discard temp_program, but keep context with accumulated type information
-    }
 
-    // Final pass: compile with known parameter types
-    let mut program = IRProgram::new();
-    compile_all_expressions(expressions, &mut context, &mut program)?;
+        // Final pass: compile with known parameter types
+        // IMPORTANT: Preserve string_literals from temp_program to ensure indices remain consistent
+        let mut program = IRProgram::new();
+        program.string_literals = temp_program.string_literals.clone();
+        compile_all_expressions(expressions, &mut context, &mut program)?;
+        program
+    } else {
+        // Single pass compilation
+        let mut program = IRProgram::new();
+        compile_all_expressions(expressions, &mut context, &mut program)?;
+        program
+    };
 
     Ok(program)
 }
