@@ -146,7 +146,8 @@ pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
 
 /// Compile a program (multiple top-level expressions) to IR
 pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> {
-    // Multi-pass compilation with string_literals preservation
+    // Multi-pass compilation currently disabled due to semantic differences in type-optimized IR
+    // Future work: Ensure type-optimized IR in pass 3 produces identical runtime behavior to pass 2
     compile_program_multipass(expressions, false)
 }
 
@@ -191,13 +192,57 @@ fn compile_program_multipass(expressions: &[Node], enable_multipass: bool) -> Re
     let program = if enable_multipass {
         // Second pass: compile into temporary program to gather type information from call sites
         let mut temp_program = IRProgram::new();
-        compile_all_expressions(expressions, &mut context, &mut temp_program)?;
+        let mut temp_context = context.clone();
+        compile_all_expressions(expressions, &mut temp_context, &mut temp_program)?;
 
-        // Final pass: compile with known parameter types
-        // IMPORTANT: Preserve string_literals from temp_program to ensure indices remain consistent
+        // Extract type information from temp_context
+        let function_parameter_types = temp_context.function_parameter_types.clone();
+        let function_return_types = temp_context.function_return_types.clone();
+        let function_return_ownership = temp_context.function_return_ownership.clone();
+
+        // Create a fresh context for pass 3 with the learned type information
+        let mut context_pass3 = CompileContext::new();
+
+        // Re-register all functions (same as pass 1)
+        for expr in expressions {
+            if let Node::List { root } = expr {
+                if !root.is_empty() {
+                    if let Node::Symbol { value } = &root[0] {
+                        if value == "defn" {
+                            if root.len() != 4 {
+                                return Err(CompileError::ArityError("defn".to_string(), 3, root.len() - 1));
+                            }
+                            let func_name = match &root[1] {
+                                Node::Symbol { value } => value.clone(),
+                                _ => return Err(CompileError::InvalidExpression("Function name must be a symbol".to_string())),
+                            };
+                            let params = match &root[2] {
+                                Node::Vector { root } => root,
+                                _ => return Err(CompileError::InvalidExpression("Function parameters must be a vector".to_string())),
+                            };
+                            let func_info = FunctionInfo {
+                                name: func_name.clone(),
+                                param_count: params.len(),
+                                start_address: 0,
+                                local_count: 0,
+                            };
+                            context_pass3.add_function(func_name, func_info)?;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply learned type information
+        context_pass3.function_parameter_types = function_parameter_types;
+        context_pass3.function_return_types = function_return_types;
+        context_pass3.function_return_ownership = function_return_ownership;
+
+        // Final pass: compile with known parameter types using fresh context
+        // Generate fresh IR with its own string_literals table (don't reuse from temp_program)
         let mut program = IRProgram::new();
-        program.string_literals = temp_program.string_literals.clone();
-        compile_all_expressions(expressions, &mut context, &mut program)?;
+        compile_all_expressions(expressions, &mut context_pass3, &mut program)?;
+
         program
     } else {
         // Single pass compilation
