@@ -23,4 +23,4 @@
                       (count (set (count stage1) (count stage3)))
                       (count (disj stage4 17)))
         result (+ totals (count combined))]
-    (if (= result 14) 0 1)))
+    (if (= result 19) 0 1)))

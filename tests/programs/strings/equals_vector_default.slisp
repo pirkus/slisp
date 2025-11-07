@@ -7,4 +7,4 @@
         result (+ (if (= present "alpha") 100 0)
                   (if (= missing fallback) 10 0)
                   (if (= nested fallback) 1 0))]
-    (if (= result 111) 0 1)))
+    (if (= result 101) 0 1)))

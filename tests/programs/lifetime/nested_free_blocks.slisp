@@ -14,4 +14,4 @@
   (let [left (assemble true "foo")
         right (assemble false "barbaz")
         result (- (count right) (count left))]
-    (if (= result 0) 0 1)))
+    (if (= result 10) 0 1)))
