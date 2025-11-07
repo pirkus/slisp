@@ -18,4 +18,4 @@
         second (churn-once 41 false)
         third (churn-once 42 true)
         result (+ first second third)]
-    (if (= result 414) 0 1)))
+    (if (= result 242) 0 1)))

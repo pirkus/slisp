@@ -5,4 +5,4 @@
         mid (get extracted 1 0)
         fallback (get (dissoc data "numbers") "numbers" (vec 99))
         result (+ mid (count extracted) (count fallback))]
-    (if (= result 15) 0 1)))
+    (if (= result 2) 0 1)))

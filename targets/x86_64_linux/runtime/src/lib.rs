@@ -31,7 +31,7 @@ pub use set::{_set_clone, _set_contains, _set_count, _set_create, _set_disj, _se
 mod memory;
 
 #[cfg(not(feature = "std"))]
-pub use memory::{bcmp, memcmp, memcpy, memmove, memset, rust_eh_personality};
+pub use memory::{bcmp, memcmp, memcpy, memmove, memset, rust_eh_personality, strlen};
 
 #[cfg(feature = "telemetry")]
 mod telemetry;
