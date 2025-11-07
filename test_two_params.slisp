@@ -1,0 +1,6 @@
+;; Test with two string parameters
+(defn test-concat [s1 s2]
+  (count (str s1 s2)))
+
+(defn -main []
+  (test-concat "hello" "world"))
