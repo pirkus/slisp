@@ -38,12 +38,14 @@ When `str()` is called with function parameters (not local variables), it adds 2
 - Temp slots for str() are allocated contiguously
 - The runtime `_string_count` function appears correct
 
-### Root Cause
-Unknown. The bug is not in:
-- `_string_normalize` or `_string_clone`
-- The rodata string literal format
-- Parameter loading (LoadParam)
-- Temp slot allocation
+### Root Cause **[IDENTIFIED]**
+When passing a string parameter to `str()`, the compiler passes a POINTER VALUE as the string data instead of dereferencing the pointer.
+
+Debug output shows: `[string_bytes: 4231168]` instead of `[string_bytes: hello]`
+
+The digits "4231168" (7 bytes) match a pointer address like 0x04231168 converted to ASCII. This explains the +2 bytes:
+- "hello" = 5 bytes
+- "0x4231168" as hex = 7 bytes displayed as "4231168"
 
 ### Affected Tests
 - churn_reuse
