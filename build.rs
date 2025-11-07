@@ -24,6 +24,7 @@ fn main() {
     let mut command = Command::new(&cargo);
     let runtime_target_dir = manifest_dir.join("target").join("runtime-build");
     let telemetry_enabled = env::var("CARGO_FEATURE_ALLOCATOR_TELEMETRY").is_ok();
+    let debug_enabled = env::var("CARGO_FEATURE_DEBUG").is_ok();
 
     command
         .current_dir(&manifest_dir)
@@ -34,8 +35,16 @@ fn main() {
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .args(["build", "-p", "slisp-runtime", "--no-default-features"]);
 
+    let mut features = Vec::new();
     if telemetry_enabled {
-        command.args(["--features", "telemetry"]);
+        features.push("telemetry");
+    }
+    if debug_enabled {
+        features.push("debug");
+    }
+
+    if !features.is_empty() {
+        command.args(["--features", &features.join(",")]);
     }
 
     match profile.as_str() {
