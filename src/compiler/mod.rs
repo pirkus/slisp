@@ -146,9 +146,14 @@ pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
 
 /// Compile a program (multiple top-level expressions) to IR
 pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> {
-    let mut program = IRProgram::new();
+    // TEMPORARY: Multi-pass disabled due to bug causing 5 test regressions
+    // See MULTIPASS_BUG_INVESTIGATION.md for details
+    compile_program_multipass(expressions, false)
+}
+
+/// Internal function to compile a program with optional multi-pass type inference
+fn compile_program_multipass(expressions: &[Node], enable_multipass: bool) -> Result<IRProgram, CompileError> {
     let mut context = CompileContext::new();
-    let mut emitted_toplevel_code = false;
 
     // First pass: find all function definitions
     for expr in expressions {
@@ -184,13 +189,34 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
         }
     }
 
-    // Second pass: compile all expressions
+    if enable_multipass {
+        // Second pass: compile into temporary program to gather type information from call sites
+        let mut temp_program = IRProgram::new();
+        compile_all_expressions(expressions, &mut context, &mut temp_program)?;
+        // Discard temp_program, but keep context with accumulated type information
+    }
+
+    // Final pass: compile with known parameter types
+    let mut program = IRProgram::new();
+    compile_all_expressions(expressions, &mut context, &mut program)?;
+
+    Ok(program)
+}
+
+/// Helper to compile all expressions in order
+fn compile_all_expressions(
+    expressions: &[Node],
+    context: &mut CompileContext,
+    program: &mut IRProgram,
+) -> Result<(), CompileError> {
+    let mut emitted_toplevel_code = false;
+
     for expr in expressions {
         if let Node::List { root } = expr {
             if !root.is_empty() {
                 if let Node::Symbol { value } = &root[0] {
                     if value == "defn" {
-                        let (mut instructions, func_info) = functions::compile_defn(&root[1..], &mut context, &mut program)?;
+                        let (mut instructions, func_info) = functions::compile_defn(&root[1..], context, program)?;
                         let start_address = program.len();
 
                         if let IRInstruction::DefineFunction(ref name, ref params, _) = instructions[0] {
@@ -214,7 +240,7 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
             }
         }
 
-        let result = compile_node(expr, &mut context, &mut program)?;
+        let result = compile_node(expr, context, program)?;
         for instruction in result.instructions {
             program.add_instruction(instruction);
         }
@@ -229,7 +255,7 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
         program.set_entry_point("-main".to_string());
     }
 
-    Ok(program)
+    Ok(())
 }
 
 /// Compile a single AST node to IR
@@ -843,13 +869,6 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
                     if var_kind != ValueKind::Any {
                         arg_kind = var_kind;
                     }
-                }
-
-                // If still Any and it's a PARAMETER (not local variable), infer as String for str() context
-                // Don't mark it globally - just use String for this call
-                // Local variables with Any type could be numbers, so we don't infer for them
-                if arg_kind == ValueKind::Any && context.get_parameter(value).is_some() && context.get_variable(value).is_none() {
-                    arg_kind = ValueKind::String;
                 }
             }
         }
