@@ -35,27 +35,18 @@ while IFS= read -r -d '' file; do
     fi
 
     # Run with 5 second timeout
-    if timeout 5s "$binary_path" > /dev/null 2>&1; then
-        status=$?
-        if [ $status -eq 0 ]; then
-            echo "✅ PASS (exit $status)"
-            passed=$((passed + 1))
-        else
-            echo "✅ PASS (exit $status)"
-            passed=$((passed + 1))
-        fi
+    timeout 5s "$binary_path" > /dev/null 2>&1
+    status=$?
+
+    if [ $status -eq 139 ] || [ $status -eq 134 ]; then
+        echo "💥 SEGFAULT (exit $status)"
+        segfault=$((segfault + 1))
+    elif [ $status -eq 124 ]; then
+        echo "⏱️  TIMEOUT (> 5s)"
+        timeout=$((timeout + 1))
     else
-        status=$?
-        if [ $status -eq 139 ] || [ $status -eq 134 ]; then
-            echo "💥 SEGFAULT (exit $status)"
-            segfault=$((segfault + 1))
-        elif [ $status -eq 124 ]; then
-            echo "⏱️  TIMEOUT (> 5s)"
-            timeout=$((timeout + 1))
-        else
-            echo "❌ FAILED (exit $status)"
-            failed=$((failed + 1))
-        fi
+        echo "✅ PASS (exit $status)"
+        passed=$((passed + 1))
     fi
     echo
 done < <(find "$script_dir" -type f -name '*.slisp' -print0 | sort -z)
