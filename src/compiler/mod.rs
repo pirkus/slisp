@@ -894,7 +894,6 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
         instructions.extend(arg_instructions);
 
         let mut slot_needs_free = arg_result.heap_ownership == HeapOwnership::Owned;
-
         // Don't use inferred parameter/variable types for type-based optimizations
         // to ensure semantic equivalence between compilation passes
         let arg_kind = arg_result.kind;

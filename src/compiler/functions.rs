@@ -61,18 +61,33 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
     )];
 
     let mut body_result = crate::compiler::compile_node(&args[2], &mut func_context, program)?;
-    let mut body_kind = body_result.kind;
+    let body_kind = body_result.kind;
 
-    if body_result.heap_ownership == HeapOwnership::Borrowed {
+    // Check if the body is directly returning a PARAMETER (not a local variable)
+    // Parameters are in the caller's scope, so we can return them borrowed
+    // Local variables are in the function's scope, so they must be cloned
+    let is_returning_parameter = if let Node::Symbol { value } = &args[2] {
+        func_context.get_parameter(value).is_some()
+    } else {
+        false
+    };
+
+    // Clone borrowed heap values UNLESS they're parameters being returned directly
+    // Parameters can be returned borrowed because they're in the caller's scope
+    // Local variables must be cloned because they're in the function's scope
+    if body_result.heap_ownership == HeapOwnership::Borrowed && !is_returning_parameter {
+        // Try to infer the actual type if we have Any
+        if body_kind == ValueKind::Any {
+            // For non-symbol expressions, we can't easily infer the type
+            // So we leave it as Any and don't clone
+        }
+
         let clone_runtime = match body_kind {
             ValueKind::String => Some("_string_clone"),
             ValueKind::Vector => Some("_vector_clone"),
             ValueKind::Map => Some("_map_clone"),
             ValueKind::Set => Some("_set_clone"),
-            ValueKind::Any => {
-                body_kind = ValueKind::String;
-                Some("_string_clone")
-            }
+            ValueKind::Any => None, // Don't assume Any is String - leave borrowed
             _ => None,
         };
 
@@ -97,6 +112,15 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
     // Propagate inferred return metadata back to parent context
     context.set_function_return_type(&func_info.name, body_kind);
     context.set_function_return_ownership(&func_info.name, body_ownership);
+
+    // Propagate parameter type information learned during function compilation
+    // This is crucial for multi-pass compilation where inner functions record
+    // type information from their call sites
+    for (callee_name, param_types) in &func_context.function_parameter_types {
+        for (param_index, param_type) in param_types.iter().enumerate() {
+            context.record_function_parameter_type(callee_name, param_index, *param_type);
+        }
+    }
 
     Ok((instructions, func_info))
 }

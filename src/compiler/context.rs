@@ -64,15 +64,12 @@ impl CompileContext {
     }
 
     /// Add a variable to the context and return its slot index
+    /// Variables get fresh slots and never reuse temp slots from free_slots
+    /// to prevent use-after-free bugs where a temp's value is overwritten
+    /// while still being referenced.
     pub fn add_variable(&mut self, name: String) -> usize {
-        // Try to reuse a freed slot first
-        let slot = if let Some(free_slot) = self.free_slots.pop() {
-            free_slot
-        } else {
-            let slot = self.next_slot;
-            self.next_slot += 1;
-            slot
-        };
+        let slot = self.next_slot;
+        self.next_slot += 1;
         self.variables.insert(name, slot);
         slot
     }
@@ -199,6 +196,10 @@ impl CompileContext {
     /// no longer needed so it can be reused.
     pub fn allocate_temp_slot(&mut self) -> usize {
         if let Some(slot) = self.free_slots.pop() {
+            // Track the high water mark to prevent variable slots from overlapping
+            if slot >= self.next_slot {
+                self.next_slot = slot + 1;
+            }
             slot
         } else {
             let slot = self.next_slot;
@@ -258,8 +259,13 @@ impl CompileContext {
     }
 
     /// Return a temporary slot to the pool for reuse.
-    pub fn release_temp_slot(&mut self, slot: usize) {
-        self.free_slots.push(slot);
+    ///
+    /// DISABLED: Immediately releasing temp slots causes use-after-free bugs
+    /// where a slot is reused while its value is still needed by later code.
+    /// Instead, we let temp slots accumulate and they're reclaimed when the
+    /// function scope ends. This uses more stack space but prevents corruption.
+    pub fn release_temp_slot(&mut self, _slot: usize) {
+        // Intentionally do nothing - don't add to free_slots
     }
 
     /// Mark a variable as holding a heap-allocated pointer
@@ -319,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn contiguous_temp_slots_reuse_and_extend() {
+    fn contiguous_temp_slots_no_reuse() {
         let mut context = CompileContext::new();
 
         // Fresh allocation should yield consecutive slots starting at zero.
@@ -330,18 +336,18 @@ mod tests {
             context.release_temp_slot(*slot);
         }
 
-        // Reusing should pick the freed run instead of extending the frame.
+        // Temp slots are NOT reused (disabled to prevent corruption).
+        // Next allocation gets fresh slots continuing from next_slot.
         let second = context.allocate_contiguous_temp_slots(3);
-        assert_eq!(second, vec![0, 1, 2]);
+        assert_eq!(second, vec![3, 4, 5]);
 
         for slot in second.iter().rev() {
             context.release_temp_slot(*slot);
         }
 
-        // Simulate fragmented free slots; expect a fresh contiguous block.
+        // Even with free_slots populated, allocations continue incrementing.
         context.free_slots.clear();
         context.free_slots.extend([0, 2, 4]);
-        context.next_slot = 6;
 
         let third = context.allocate_contiguous_temp_slots(2);
         assert_eq!(third, vec![6, 7]);

@@ -121,6 +121,15 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
     let text_section = obj.section_id(StandardSection::Text);
     let rodata_section = obj.section_id(StandardSection::ReadOnlyData);
 
+    // Add .note.GNU-stack section to suppress linker warnings about executable stack
+    // This empty section with no executable flag tells the linker the stack should not be executable
+    let gnu_stack_section = obj.add_section(
+        vec![],  // Empty name (will be set below)
+        b".note.GNU-stack".to_vec(),
+        object::SectionKind::Note,
+    );
+    obj.section_mut(gnu_stack_section).flags = object::SectionFlags::None;
+
     obj.append_section_data(text_section, &text, 16);
     if !rodata.is_empty() {
         obj.append_section_data(rodata_section, &rodata, 1);
@@ -323,7 +332,10 @@ pub fn link_with_runtime(object_bytes: &[u8], output_path: &str, runtime_staticl
 
     let obj_path_str = obj_path.to_str().ok_or_else(|| io::Error::other("Invalid object path"))?.to_string();
 
-    let status = Command::new("ld").args(["-o", output_path, &obj_path_str, runtime_staticlib, "-static", "-nostdlib"]).status()?;
+    let status = Command::new("ld")
+        .args(["-o", output_path, &obj_path_str, runtime_staticlib])
+        .args(["-static", "-nostdlib"])
+        .status()?;
 
     if !keep_object {
         let _ = fs::remove_file(&obj_path);

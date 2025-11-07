@@ -5,10 +5,12 @@ extern crate std;
 
 use core::arch::asm;
 
-#[cfg(feature = "telemetry")]
+#[cfg(any(feature = "telemetry", feature = "debug"))]
 const SYS_WRITE: isize = 1;
-#[cfg(feature = "telemetry")]
+#[cfg(any(feature = "telemetry", feature = "debug"))]
 const STDOUT_FD: usize = 1;
+#[cfg(any(feature = "telemetry", feature = "debug"))]
+const STDERR_FD: usize = 2;
 
 mod allocator;
 pub use allocator::{_allocate, _free, _heap_init};
@@ -31,7 +33,7 @@ pub use set::{_set_clone, _set_contains, _set_count, _set_create, _set_disj, _se
 mod memory;
 
 #[cfg(not(feature = "std"))]
-pub use memory::{bcmp, memcmp, memcpy, memmove, memset, rust_eh_personality};
+pub use memory::{bcmp, memcmp, memcpy, memmove, memset, rust_eh_personality, strlen};
 
 #[cfg(feature = "telemetry")]
 mod telemetry;
@@ -68,7 +70,7 @@ pub(crate) unsafe fn syscall6(number: isize, arg1: usize, arg2: usize, arg3: usi
     ret
 }
 
-#[cfg(feature = "telemetry")]
+#[cfg(any(feature = "telemetry", feature = "debug"))]
 fn stdout_write(bytes: &[u8]) {
     if bytes.is_empty() {
         return;
@@ -77,6 +79,66 @@ fn stdout_write(bytes: &[u8]) {
     unsafe {
         let _ = syscall6(SYS_WRITE, STDOUT_FD, bytes.as_ptr() as usize, bytes.len(), 0, 0, 0);
     }
+}
+
+// Always available debug helpers - they just do nothing if debug feature is disabled
+pub(crate) fn debug_write(bytes: &[u8]) {
+    #[cfg(feature = "debug")]
+    {
+        if bytes.is_empty() {
+            return;
+        }
+
+        unsafe {
+            let _ = syscall6(SYS_WRITE, STDERR_FD, bytes.as_ptr() as usize, bytes.len(), 0, 0, 0);
+        }
+    }
+    #[cfg(not(feature = "debug"))]
+    let _ = bytes;  // Avoid unused variable warning
+}
+
+pub(crate) fn debug_write_u64(val: u64) {
+    #[cfg(feature = "debug")]
+    {
+        let mut buffer = [0u8; 20];
+        let mut pos = 19;
+        let mut num = val;
+
+        if num == 0 {
+            buffer[pos] = b'0';
+            pos -= 1;
+        } else {
+            while num > 0 {
+                buffer[pos] = b'0' + (num % 10) as u8;
+                num /= 10;
+                pos -= 1;
+            }
+        }
+
+        debug_write(&buffer[pos + 1..]);
+    }
+    #[cfg(not(feature = "debug"))]
+    let _ = val;
+}
+
+pub(crate) fn debug_write_hex(val: usize) {
+    #[cfg(feature = "debug")]
+    {
+        let hex_chars = b"0123456789abcdef";
+        let mut buffer = [0u8; 18]; // "0x" + 16 hex digits
+        buffer[0] = b'0';
+        buffer[1] = b'x';
+
+        for i in 0..16 {
+            let shift = 60 - (i * 4);
+            let nibble = ((val >> shift) & 0xf) as usize;
+            buffer[2 + i] = hex_chars[nibble];
+        }
+
+        debug_write(&buffer);
+    }
+    #[cfg(not(feature = "debug"))]
+    let _ = val;
 }
 
 #[cfg(feature = "telemetry")]

@@ -15,7 +15,10 @@ fn count_decimal_digits(mut value: u64) -> usize {
 
 #[no_mangle]
 pub unsafe extern "C" fn _string_count(ptr: *const u8) -> u64 {
+    crate::debug_write(b"[count_start]\n");
+
     if ptr.is_null() {
+        crate::debug_write(b"[count_null]\n");
         return 0;
     }
 
@@ -23,13 +26,22 @@ pub unsafe extern "C" fn _string_count(ptr: *const u8) -> u64 {
     loop {
         let byte = *ptr.add(offset);
         if byte == 0 {
+            crate::debug_write(b"[count_done]\n");
             return offset as u64;
         }
         offset += 1;
+
+        // Safety check to avoid infinite loops
+        if offset > 10000 {
+            crate::debug_write(b"[count_overflow]\n");
+            return 0;
+        }
     }
 }
 
 unsafe fn string_concat_impl(parts: *const *const u8, count: usize) -> *mut u8 {
+    crate::debug_write(b"[concat_start]\n");
+
     if count == 0 {
         let dst = crate::_allocate(1);
         if dst.is_null() {
@@ -40,18 +52,39 @@ unsafe fn string_concat_impl(parts: *const *const u8, count: usize) -> *mut u8 {
     }
 
     if parts.is_null() {
+        crate::debug_write(b"[parts_null]\n");
         return null_mut();
     }
 
     let mut total = 1usize;
     let mut i = 0;
     while i < count {
+        crate::debug_write(b"[part_loop]\n");
         let part = *parts.add(i);
+
         if part.is_null() {
+            crate::debug_write(b"[part_null]\n");
             return null_mut();
         }
 
+        // Show first few bytes of the string
+        crate::debug_write(b"[string_bytes: ");
+        for j in 0..10 {
+            let byte = *part.add(j);
+            if byte == 0 {
+                break;
+            }
+            if byte >= 32 && byte <= 126 {  // Printable ASCII
+                crate::debug_write(&[byte]);
+            } else {
+                crate::debug_write(b"?");
+            }
+        }
+        crate::debug_write(b"]\n");
+
         let len = _string_count(part) as usize;
+        crate::debug_write(b"[len_computed]\n");
+
         match total.checked_add(len) {
             Some(next) => total = next,
             None => return null_mut(),
@@ -59,6 +92,8 @@ unsafe fn string_concat_impl(parts: *const *const u8, count: usize) -> *mut u8 {
 
         i += 1;
     }
+
+    crate::debug_write(b"[total_computed]\n");
 
     let dst = crate::_allocate(total as u64);
     if dst.is_null() {

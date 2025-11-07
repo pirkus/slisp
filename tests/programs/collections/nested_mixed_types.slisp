@@ -2,9 +2,10 @@
 (defn -main []
   (let [v1 (vec "alice" :admin 42)
         v2 (vec "alice" :admin 42)
-        v3 (vec "alice" :user 42)]
-    (if (= v1 v2)
-        (if (= v1 v3) 99 42)
-        99)))
+        v3 (vec "alice" :user 42)
+        result (if (= v1 v2)
+                   (if (= v1 v3) 99 42)
+                   99)]
+    (if (= result 42) 0 1)))
 
 ;; Expected: 42 (v1 == v2, v1 != v3 due to :admin vs :user)

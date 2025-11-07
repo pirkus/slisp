@@ -10,5 +10,6 @@
         payload (get with-flag "gamma" nil)
         payload-size (if (contains? with-flag "gamma") (render-length payload) 0)
         main-size (render-length with-flag)
-        fallback (get cleaned "alpha" 99)]
-    (+ payload-size main-size fallback (count with-flag) (count cleaned))))
+        fallback (get cleaned "alpha" 99)
+        result (+ payload-size main-size fallback (count with-flag) (count cleaned))]
+    (if (= result 138) 0 1)))

@@ -1,0 +1,8 @@
+;; Minimal test case for Bug #1
+;; String concatenation with function parameters adds 2 extra bytes per parameter
+
+(defn test-concat [s]
+  (count (str s)))
+
+(defn -main []
+  (test-concat "hello"))

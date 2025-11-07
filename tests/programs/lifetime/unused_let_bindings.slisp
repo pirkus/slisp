@@ -8,5 +8,6 @@
 
 (defn -main []
   (let [short (annotate "abc")
-        long (annotate "lengthy")]
-    (count (str short long))))
+        long (annotate "lengthy")
+        result (count (str short long))]
+    (if (= result 18) 0 1)))

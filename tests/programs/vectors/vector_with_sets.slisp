@@ -2,9 +2,10 @@
 (defn -main []
   (let [v1 (vec #{1 2} #{3 4})
         v2 (vec #{2 1} #{4 3})
-        v3 (vec #{1 2} #{3 5})]
-    (if (= v1 v2)
-        (if (= v1 v3) 99 42)
-        99)))
+        v3 (vec #{1 2} #{3 5})
+        result (if (= v1 v2)
+                   (if (= v1 v3) 99 42)
+                   99)]
+    (if (= result 42) 0 1)))
 
 ;; Expected: 42 (v1 == v2 because sets are order-independent, v1 != v3)
