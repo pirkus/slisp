@@ -57,5 +57,18 @@ pub unsafe extern "C" fn bcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
     memcmp(a, b, n)
 }
 
+/// # Safety
+///
+/// The caller must ensure that `s` points to a valid NUL-terminated string.
+/// Passing a non-terminated or dangling pointer causes undefined behavior.
+#[no_mangle]
+pub unsafe extern "C" fn strlen(s: *const u8) -> usize {
+    let mut len = 0;
+    while *s.add(len) != 0 {
+        len += 1;
+    }
+    len
+}
+
 #[no_mangle]
 pub extern "C" fn rust_eh_personality() {}

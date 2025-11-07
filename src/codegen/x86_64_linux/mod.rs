@@ -323,7 +323,10 @@ pub fn link_with_runtime(object_bytes: &[u8], output_path: &str, runtime_staticl
 
     let obj_path_str = obj_path.to_str().ok_or_else(|| io::Error::other("Invalid object path"))?.to_string();
 
-    let status = Command::new("ld").args(["-o", output_path, &obj_path_str, runtime_staticlib, "-static", "-nostdlib"]).status()?;
+    let status = Command::new("ld")
+        .args(["-o", output_path, &obj_path_str, runtime_staticlib])
+        .args(["-static", "-nostdlib"])
+        .status()?;
 
     if !keep_object {
         let _ = fs::remove_file(&obj_path);

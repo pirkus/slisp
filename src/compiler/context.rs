@@ -64,15 +64,13 @@ impl CompileContext {
     }
 
     /// Add a variable to the context and return its slot index
+    ///
+    /// Variables get fresh slots and never reuse temp slots from free_slots
+    /// to prevent use-after-free bugs where a temp's value is overwritten
+    /// while still being referenced.
     pub fn add_variable(&mut self, name: String) -> usize {
-        // Try to reuse a freed slot first
-        let slot = if let Some(free_slot) = self.free_slots.pop() {
-            free_slot
-        } else {
-            let slot = self.next_slot;
-            self.next_slot += 1;
-            slot
-        };
+        let slot = self.next_slot;
+        self.next_slot += 1;
         self.variables.insert(name, slot);
         slot
     }
@@ -258,8 +256,13 @@ impl CompileContext {
     }
 
     /// Return a temporary slot to the pool for reuse.
-    pub fn release_temp_slot(&mut self, slot: usize) {
-        self.free_slots.push(slot);
+    ///
+    /// DISABLED: Immediately releasing temp slots causes use-after-free bugs
+    /// where a slot is reused while its value is still needed by later code.
+    /// Instead, we let temp slots accumulate and they're reclaimed when the
+    /// function scope ends. This uses more stack space but prevents corruption.
+    pub fn release_temp_slot(&mut self, _slot: usize) {
+        // Intentionally do nothing - don't add to free_slots
     }
 
     /// Mark a variable as holding a heap-allocated pointer
