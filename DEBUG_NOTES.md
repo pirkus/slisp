@@ -1,16 +1,28 @@
-# Segfault Investigation - Session Notes
+# Segfault Investigation - Final Summary
 
-## Summary
-**MAJOR FIX COMPLETED**: Fixed critical jump target corruption bug in let bindings.
+## 🎉 Mission Accomplished!
 
-**Results:**
-- Segfaults: 8 → 1 (87.5% reduction!)
-- Timeouts: 4 → 0 (100% eliminated!)
-- Tests completing: 15 → 46 (307% increase)
+**FINAL RESULTS: 46/47 tests passing (97.9%)**
 
-**Root Cause:** `compile_let` was combining instruction lists without adjusting jump targets, causing jumps to point to wrong locations (often backwards, creating infinite loops).
+### Before → After
+- ✅ Passing: **3 → 46** (1,433% increase!)
+- 💥 Segfaults: **8 → 1** (87.5% reduction)
+- ⏱️ Timeouts: **4 → 0** (100% eliminated)
+- ❌ Failed: **32 → 0** (100% fixed)
 
-**Fix:** Call `adjust_jump_targets()` when combining binding value instructions in `src/compiler/bindings.rs:60-63`.
+## Root Cause & Fix
+
+**Bug:** `compile_let` in `src/compiler/bindings.rs` was combining instruction lists from multiple let bindings without adjusting jump targets. Each binding's jump instructions used indices relative to its own instruction list. When combined into a single list, these indices became invalid, often pointing backwards and creating infinite loops.
+
+**Fix:** Added `adjust_jump_targets()` call when combining binding instructions:
+```rust
+// src/compiler/bindings.rs:60-63
+let offset = instructions.len();
+let adjusted_instructions = crate::compiler::adjust_jump_targets(value_result.instructions, offset);
+instructions.extend(adjusted_instructions);
+```
+
+**Evidence:** Disassembly showed `JumpIfZero` jumping to address 0x401074 (backwards into setup code) instead of forward to the fallback handler.
 
 ## Completed Fixes
 
@@ -21,92 +33,67 @@
 - Implemented `strlen` in `targets/x86_64_linux/runtime/src/memory.rs`
 - `memcpy` was already implemented
 - Exported both from lib.rs
-- Reverted linker changes (kept `-nostdlib`)
+- Kept `-nostdlib` (no libc dependency)
 
 **Result:** All programs compile and link successfully.
 
-### 2. Initial Stack Slot Allocation Improvements ✅
-**Changes made:**
-1. Variables no longer reuse temp slots from `free_slots` (line 71-75 of context.rs)
-2. Disabled immediate temp slot release (line 264 of context.rs - now a no-op)
+### 2. Jump Target Corruption Fix ✅
+**Problem:** Let bindings with nested expressions (get, assoc, etc.) created invalid backward jumps.
 
-**Result:** These changes didn't fix the segfaults (issue is elsewhere).
+**Solution:** Call `adjust_jump_targets()` when combining binding value instructions.
 
-## Root Cause Identification
+**Result:** 46/47 tests now pass!
 
-### Key Discovery: GET operation causes segfaults, not ASSOC
+### 3. Test Script Fix ✅
+**Problem:** Test runner used `if timeout...; then status=$?` which always captured 0 for completing programs.
 
-**Test Results:**
-```lisp
-;; ✅ WORKS
-(assoc (hash-map) "key" 42)
-(let [m1 (assoc (hash-map) "user" 41)
-      m2 (assoc m1 "user" 42)]
-  0)
+**Solution:** Run `timeout` unconditionally and capture its exit code directly.
 
-;; ❌ SEGFAULTS
-(let [m (assoc (hash-map) "user" 42)
-      v (get m "user" 0)]
-  v)
-```
+**Result:** Revealed tests were actually passing (not "logic errors").
 
-**GDB Evidence:**
-```
-Program received signal SIGSEGV, Segmentation fault.
-map_find_index (map=0x7ea38b08c000, key_tag=3, key_value=42)
-```
+## Investigation Process
 
-- `key_tag=3` is STRING (correct)
-- `key_value=42` should be a string pointer (WRONG!)
-- The number 42 from the map value has corrupted/replaced the string pointer for the key
+### Session 1: Linking & Basic Investigation
+1. Fixed all linking errors by implementing `strlen`
+2. Applied initial stack slot improvements (didn't fix crashes)
+3. Identified GET operation as crash trigger (not ASSOC)
+4. Created minimal test cases to isolate the issue
 
-## Next Steps for Investigation
+### Session 2: Deep Dive & Fix
+1. Examined machine code disassembly with `objdump`
+2. Found backward jump at 0x4010b3 → 0x401074 (should go forward)
+3. Traced to `compile_let` missing `adjust_jump_targets()`
+4. Applied fix and verified with full test suite
+5. Fixed test runner bug revealing true pass rate
 
-### Hypotheses to Test:
+## Remaining Work
 
-1. **Evaluation Stack Corruption**
-   - `compile_get` for maps pushes multiple values (lines 675-685)
-   - The key value on the stack might get overwritten by subsequent Push operations
+**One segfault remaining:** `mixed_literal_nesting` (needs separate investigation)
 
-2. **Stack Frame Size Issues**
-   - With temp slot release disabled, `next_slot` keeps growing
-   - May exceed allocated stack frame size causing memory corruption
+This test involves nested collections with mixed types. Likely a different issue than the let binding bug.
 
-3. **Local Slot Address Calculation**
-   - `StoreLocal` and `LoadLocal` might calculate wrong offsets
-   - Particularly when many temp slots are allocated
+## Files Modified
 
-### Suggested Debugging Approach:
-
-1. Add debug output to `compile_get` to log:
-   - Number of temp slots allocated
-   - Stack layout before `_map_get` call
-   - Whether key is stored in a slot vs. left on stack
-
-2. Check x86-64 codegen for:
-   - How stack frame size is calculated
-   - If there's a maximum local slot count
-   - How `StoreLocal`/`LoadLocal` calculate offsets
-
-3. Test with explicit slot tracking:
-   - Print which slots are used for what
-   - Verify no overlap between evaluation stack and local slots
-
-## Current Test Status
-- **3/47 passing** (6.4%)
-- **8 segfaults** (17%)
-- **4 timeouts** (8.5%)
-- **32 logic errors** (68%)
-
-## Files Modified This Session
-- `targets/x86_64_linux/runtime/src/memory.rs` - Added `strlen`
+- `targets/x86_64_linux/runtime/src/memory.rs` - Added `strlen` implementation
 - `targets/x86_64_linux/runtime/src/lib.rs` - Exported `strlen`
-- `src/codegen/x86_64_linux/mod.rs` - Removed libc linking attempt
-- `src/compiler/context.rs` - Stack slot allocation improvements
-- `tests/programs/run_with_timeout.sh` - New test runner with timeout protection
+- `src/compiler/context.rs` - Variables don't reuse temp slots, temp release disabled
+- `src/compiler/bindings.rs` - **THE FIX**: adjust_jump_targets for bindings
+- `tests/programs/run_with_timeout.sh` - Test runner with timeout + correct exit codes
 
-## Key Code Locations
-- `compile_get`: src/compiler/mod.rs:610-749
-- String literal compilation: src/compiler/expressions.rs:13-16
-- Map get operation: src/compiler/mod.rs:662-698
-- Stack slot allocation: src/compiler/context.rs:71-75, 200-208, 264-266
+## Key Learnings
+
+1. **Jump target adjustment is critical** when combining instruction lists
+2. **Disassembly** (`objdump -d`) was essential for finding the backward jump
+3. **Minimal test cases** helped isolate the exact operation causing crashes
+4. **The body already had the fix** (line 120) - we just needed it for bindings too
+5. **Test infrastructure bugs** can hide real results - always verify test logic!
+
+## Commits
+
+1. `94ddcf9` - Fix linker errors (strlen implementation)
+2. `eea77af` - Add investigation notes (GET identified as trigger)
+3. `e292f64` - **Fix jump target corruption in let bindings** (the main fix)
+4. `b2092c1` - Update notes with results
+5. `d0eb6b5` - Fix test runner exit code capture
+
+Branch: `claude/fix-seg-faults-011CUsXPcKmu3iFA6ZEppomG`
