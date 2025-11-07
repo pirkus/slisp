@@ -1,0 +1,6 @@
+(defn decorate [flag label]
+  (let [base (str label "-base")]
+    (count base)))
+
+(defn -main []
+  (decorate true "alpha"))

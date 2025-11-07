@@ -839,9 +839,16 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
         if arg_kind == ValueKind::Any {
             if let Node::Symbol { value } = arg {
                 if let Some(var_kind) = context.get_variable_type(value).or_else(|| context.get_parameter_type(value)) {
-                    arg_kind = var_kind;
-                } else if context.get_parameter(value).is_some() {
-                    context.mark_heap_allocated(value, ValueKind::String);
+                    // Only use the inferred kind if it's not Any (parameters default to Any)
+                    if var_kind != ValueKind::Any {
+                        arg_kind = var_kind;
+                    }
+                }
+
+                // If still Any and it's a PARAMETER (not local variable), infer as String for str() context
+                // Don't mark it globally - just use String for this call
+                // Local variables with Any type could be numbers, so we don't infer for them
+                if arg_kind == ValueKind::Any && context.get_parameter(value).is_some() && context.get_variable(value).is_none() {
                     arg_kind = ValueKind::String;
                 }
             }

@@ -1,0 +1,7 @@
+;; Test with local variable (should work)
+(defn test-local []
+  (let [s "hello"]
+    (count (str s))))
+
+(defn -main []
+  (test-local))
