@@ -23,6 +23,8 @@ const TAG_ANY: u8 = 0xff;
 extern "C" {
     fn _map_equals(left: *const u8, right: *const u8) -> i64;
     fn _set_equals(left: *const u8, right: *const u8) -> i64;
+    fn _map_clone(map: *const u8) -> *mut u8;
+    fn _set_clone(set: *const u8) -> *mut u8;
 }
 
 #[repr(C)]
@@ -289,6 +291,50 @@ pub unsafe extern "C" fn _vector_create(elements: *const i64, tags: *const i64, 
             while idx < len {
                 let tag_value = *tags.add(idx);
                 *dst_tags.add(idx) = (tag_value & 0xff) as u8;
+                idx += 1;
+            }
+        }
+
+        // Clone heap-allocated elements after copying
+        if !elements.is_null() {
+            let mut idx = 0;
+            while idx < len {
+                let element_ptr = *dst_values.add(idx);
+                let element_tag = *dst_tags.add(idx);
+
+                let owned_element = match element_tag {
+                    TAG_STRING | TAG_KEYWORD => {
+                        if element_ptr == 0 {
+                            element_ptr
+                        } else {
+                            _string_clone(element_ptr as *const u8) as i64
+                        }
+                    }
+                    TAG_VECTOR => {
+                        if element_ptr == 0 {
+                            element_ptr
+                        } else {
+                            _vector_clone(element_ptr as *const u8) as i64
+                        }
+                    }
+                    TAG_MAP => {
+                        if element_ptr == 0 {
+                            element_ptr
+                        } else {
+                            _map_clone(element_ptr as *const u8) as i64
+                        }
+                    }
+                    TAG_SET => {
+                        if element_ptr == 0 {
+                            element_ptr
+                        } else {
+                            _set_clone(element_ptr as *const u8) as i64
+                        }
+                    }
+                    _ => element_ptr, // Numbers, booleans, nil - copy as-is
+                };
+
+                *dst_values.add(idx) = owned_element;
                 idx += 1;
             }
         }

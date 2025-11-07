@@ -36,6 +36,8 @@ const TAG_ANY: u8 = 0xff;
 extern "C" {
     fn _vector_equals(left: *const u8, right: *const u8) -> i64;
     fn _set_equals(left: *const u8, right: *const u8) -> i64;
+    fn _vector_clone(vec: *const u8) -> *mut u8;
+    fn _set_clone(set: *const u8) -> *mut u8;
 }
 
 #[inline]
@@ -612,12 +614,78 @@ unsafe fn map_clone_impl(map: *const MapHeader) -> *mut MapHeader {
 }
 
 unsafe fn map_assoc_impl(map: *const MapHeader, key_tag: u8, key_value: i64, value_tag: u8, value_value: i64) -> *mut MapHeader {
+    // Clone key if it's a heap-allocated type
+    let owned_key = match key_tag {
+        TAG_STRING | TAG_KEYWORD => {
+            if key_value == 0 {
+                key_value
+            } else {
+                _string_clone(key_value as *const u8) as i64
+            }
+        }
+        TAG_VECTOR => {
+            if key_value == 0 {
+                key_value
+            } else {
+                _vector_clone(key_value as *const u8) as i64
+            }
+        }
+        TAG_MAP => {
+            if key_value == 0 {
+                key_value
+            } else {
+                map_clone_impl(key_value as *const MapHeader) as i64
+            }
+        }
+        TAG_SET => {
+            if key_value == 0 {
+                key_value
+            } else {
+                _set_clone(key_value as *const u8) as i64
+            }
+        }
+        _ => key_value, // Numbers, booleans, nil - copy as-is
+    };
+
+    // Clone value if it's a heap-allocated type
+    let owned_value = match value_tag {
+        TAG_STRING | TAG_KEYWORD => {
+            if value_value == 0 {
+                value_value
+            } else {
+                _string_clone(value_value as *const u8) as i64
+            }
+        }
+        TAG_VECTOR => {
+            if value_value == 0 {
+                value_value
+            } else {
+                _vector_clone(value_value as *const u8) as i64
+            }
+        }
+        TAG_MAP => {
+            if value_value == 0 {
+                value_value
+            } else {
+                map_clone_impl(value_value as *const MapHeader) as i64
+            }
+        }
+        TAG_SET => {
+            if value_value == 0 {
+                value_value
+            } else {
+                _set_clone(value_value as *const u8) as i64
+            }
+        }
+        _ => value_value, // Numbers, booleans, nil - copy as-is
+    };
+
     if map.is_null() {
         let new_map = map_allocate(1);
         if new_map.is_null() {
             return null_mut();
         }
-        map_write_entry(new_map, 0, key_tag, key_value, value_tag, value_value);
+        map_write_entry(new_map, 0, key_tag, owned_key, value_tag, owned_value);
         return new_map;
     }
 
@@ -629,7 +697,7 @@ unsafe fn map_assoc_impl(map: *const MapHeader, key_tag: u8, key_value: i64, val
                 return null_mut();
             }
             map_copy_entries(new_map, map);
-            map_write_value(new_map, index, value_tag, value_value);
+            map_write_value(new_map, index, value_tag, owned_value);
             new_map
         }
         None => {
@@ -638,7 +706,7 @@ unsafe fn map_assoc_impl(map: *const MapHeader, key_tag: u8, key_value: i64, val
                 return null_mut();
             }
             map_copy_entries(new_map, map);
-            map_write_entry(new_map, len, key_tag, key_value, value_tag, value_value);
+            map_write_entry(new_map, len, key_tag, owned_key, value_tag, owned_value);
             (*new_map).length = (len + 1) as u64;
             (*new_map).capacity = (len + 1) as u64;
             new_map
@@ -736,8 +804,77 @@ pub unsafe extern "C" fn _map_create(keys: *const i64, key_tags: *const i64, val
         let value_tag = (*value_tags_src.add(idx) & 0xff) as u8;
         *key_tags_dst.add(idx) = key_tag;
         *value_tags_dst.add(idx) = value_tag;
-        *key_data_dst.add(idx) = *keys.add(idx);
-        *value_data_dst.add(idx) = *values.add(idx);
+
+        // Clone key if it's a heap-allocated type
+        let key_ptr = *keys.add(idx);
+        let owned_key = match key_tag {
+            TAG_STRING | TAG_KEYWORD => {
+                if key_ptr == 0 {
+                    key_ptr
+                } else {
+                    _string_clone(key_ptr as *const u8) as i64
+                }
+            }
+            TAG_VECTOR => {
+                if key_ptr == 0 {
+                    key_ptr
+                } else {
+                    _vector_clone(key_ptr as *const u8) as i64
+                }
+            }
+            TAG_MAP => {
+                if key_ptr == 0 {
+                    key_ptr
+                } else {
+                    map_clone_impl(key_ptr as *const MapHeader) as i64
+                }
+            }
+            TAG_SET => {
+                if key_ptr == 0 {
+                    key_ptr
+                } else {
+                    _set_clone(key_ptr as *const u8) as i64
+                }
+            }
+            _ => key_ptr, // Numbers, booleans, nil - copy as-is
+        };
+
+        // Clone value if it's a heap-allocated type
+        let value_ptr = *values.add(idx);
+        let owned_value = match value_tag {
+            TAG_STRING | TAG_KEYWORD => {
+                if value_ptr == 0 {
+                    value_ptr
+                } else {
+                    _string_clone(value_ptr as *const u8) as i64
+                }
+            }
+            TAG_VECTOR => {
+                if value_ptr == 0 {
+                    value_ptr
+                } else {
+                    _vector_clone(value_ptr as *const u8) as i64
+                }
+            }
+            TAG_MAP => {
+                if value_ptr == 0 {
+                    value_ptr
+                } else {
+                    map_clone_impl(value_ptr as *const MapHeader) as i64
+                }
+            }
+            TAG_SET => {
+                if value_ptr == 0 {
+                    value_ptr
+                } else {
+                    _set_clone(value_ptr as *const u8) as i64
+                }
+            }
+            _ => value_ptr, // Numbers, booleans, nil - copy as-is
+        };
+
+        *key_data_dst.add(idx) = owned_key;
+        *value_data_dst.add(idx) = owned_value;
         idx += 1;
     }
 
