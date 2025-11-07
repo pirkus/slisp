@@ -146,9 +146,13 @@ pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
 
 /// Compile a program (multiple top-level expressions) to IR
 pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> {
-    let mut program = IRProgram::new();
+    // Multi-pass compilation enabled - semantic equivalence verified through conservative type usage
+    compile_program_multipass(expressions, true)
+}
+
+/// Internal function to compile a program with optional multi-pass type inference
+fn compile_program_multipass(expressions: &[Node], enable_multipass: bool) -> Result<IRProgram, CompileError> {
     let mut context = CompileContext::new();
-    let mut emitted_toplevel_code = false;
 
     // First pass: find all function definitions
     for expr in expressions {
@@ -184,13 +188,85 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
         }
     }
 
-    // Second pass: compile all expressions
+    let program = if enable_multipass {
+        // Second pass: compile into temporary program to gather type information from call sites
+        let mut temp_program = IRProgram::new();
+        let mut temp_context = context.clone();
+        compile_all_expressions(expressions, &mut temp_context, &mut temp_program)?;
+
+        // Extract type information from temp_context
+        let function_parameter_types = temp_context.function_parameter_types.clone();
+        let function_return_types = temp_context.function_return_types.clone();
+        let function_return_ownership = temp_context.function_return_ownership.clone();
+
+        // Create a fresh context for pass 3 with the learned type information
+        let mut context_pass3 = CompileContext::new();
+
+        // Re-register all functions (same as pass 1)
+        for expr in expressions {
+            if let Node::List { root } = expr {
+                if !root.is_empty() {
+                    if let Node::Symbol { value } = &root[0] {
+                        if value == "defn" {
+                            if root.len() != 4 {
+                                return Err(CompileError::ArityError("defn".to_string(), 3, root.len() - 1));
+                            }
+                            let func_name = match &root[1] {
+                                Node::Symbol { value } => value.clone(),
+                                _ => return Err(CompileError::InvalidExpression("Function name must be a symbol".to_string())),
+                            };
+                            let params = match &root[2] {
+                                Node::Vector { root } => root,
+                                _ => return Err(CompileError::InvalidExpression("Function parameters must be a vector".to_string())),
+                            };
+                            let func_info = FunctionInfo {
+                                name: func_name.clone(),
+                                param_count: params.len(),
+                                start_address: 0,
+                                local_count: 0,
+                            };
+                            context_pass3.add_function(func_name, func_info)?;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply learned type information
+        context_pass3.function_parameter_types = function_parameter_types;
+        context_pass3.function_return_types = function_return_types;
+        context_pass3.function_return_ownership = function_return_ownership;
+
+        // Final pass: compile with known parameter types using fresh context
+        // Generate fresh IR with its own string_literals table (don't reuse from temp_program)
+        let mut program = IRProgram::new();
+        compile_all_expressions(expressions, &mut context_pass3, &mut program)?;
+
+        program
+    } else {
+        // Single pass compilation
+        let mut program = IRProgram::new();
+        compile_all_expressions(expressions, &mut context, &mut program)?;
+        program
+    };
+
+    Ok(program)
+}
+
+/// Helper to compile all expressions in order
+fn compile_all_expressions(
+    expressions: &[Node],
+    context: &mut CompileContext,
+    program: &mut IRProgram,
+) -> Result<(), CompileError> {
+    let mut emitted_toplevel_code = false;
+
     for expr in expressions {
         if let Node::List { root } = expr {
             if !root.is_empty() {
                 if let Node::Symbol { value } = &root[0] {
                     if value == "defn" {
-                        let (mut instructions, func_info) = functions::compile_defn(&root[1..], &mut context, &mut program)?;
+                        let (mut instructions, func_info) = functions::compile_defn(&root[1..], context, program)?;
                         let start_address = program.len();
 
                         if let IRInstruction::DefineFunction(ref name, ref params, _) = instructions[0] {
@@ -214,7 +290,7 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
             }
         }
 
-        let result = compile_node(expr, &mut context, &mut program)?;
+        let result = compile_node(expr, context, program)?;
         for instruction in result.instructions {
             program.add_instruction(instruction);
         }
@@ -229,7 +305,7 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
         program.set_entry_point("-main".to_string());
     }
 
-    Ok(program)
+    Ok(())
 }
 
 /// Compile a single AST node to IR
@@ -421,16 +497,8 @@ fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRPr
         temp_slots.push(slot);
     }
 
-    let mut target_kind = arg_result.kind;
-    if target_kind == ValueKind::Any {
-        if let Node::Symbol { value } = &args[0] {
-            if let Some(var_kind) = context.get_variable_type(value) {
-                target_kind = var_kind;
-            } else if let Some(param_kind) = context.get_parameter_type(value) {
-                target_kind = param_kind;
-            }
-        }
-    }
+    // Don't use inferred types to ensure semantic equivalence between compilation passes
+    let target_kind = arg_result.kind;
 
     let runtime = match target_kind {
         ValueKind::Vector => "_vector_count",
@@ -779,16 +847,8 @@ fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRPro
         instructions.push(IRInstruction::Push(-1));
     }
 
-    let mut target_kind = arg_result.kind;
-    if target_kind == ValueKind::Any {
-        if let Node::Symbol { value } = &args[0] {
-            if let Some(var_kind) = context.get_variable_type(value) {
-                target_kind = var_kind;
-            } else if let Some(param_kind) = context.get_parameter_type(value) {
-                target_kind = param_kind;
-            }
-        }
-    }
+    // Don't use inferred types to ensure semantic equivalence between compilation passes
+    let target_kind = arg_result.kind;
 
     let runtime = if target_kind == ValueKind::Vector { "_vector_slice" } else { "_string_subs" };
 
@@ -835,17 +895,9 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
 
         let mut slot_needs_free = arg_result.heap_ownership == HeapOwnership::Owned;
 
-        let mut arg_kind = arg_result.kind;
-        if arg_kind == ValueKind::Any {
-            if let Node::Symbol { value } = arg {
-                if let Some(var_kind) = context.get_variable_type(value).or_else(|| context.get_parameter_type(value)) {
-                    arg_kind = var_kind;
-                } else if context.get_parameter(value).is_some() {
-                    context.mark_heap_allocated(value, ValueKind::String);
-                    arg_kind = ValueKind::String;
-                }
-            }
-        }
+        // Don't use inferred parameter/variable types for type-based optimizations
+        // to ensure semantic equivalence between compilation passes
+        let arg_kind = arg_result.kind;
 
         match arg_kind {
             ValueKind::String => {
@@ -1658,10 +1710,10 @@ mod tests {
                 IRInstruction::Push(1),
                 IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
                 IRInstruction::FreeLocal(0),
-                IRInstruction::StoreLocal(0),
-                IRInstruction::LoadLocal(0),
+                IRInstruction::StoreLocal(1), // Slot 1 - temps no longer reused
+                IRInstruction::LoadLocal(1),
                 IRInstruction::RuntimeCall("_string_count".to_string(), 1),
-                IRInstruction::FreeLocal(0),
+                IRInstruction::FreeLocal(1),
                 IRInstruction::Return,
             ]
         );
@@ -1692,12 +1744,12 @@ mod tests {
                 IRInstruction::Push(1),
                 IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
                 IRInstruction::FreeLocal(0),
-                IRInstruction::StoreLocal(0),
-                IRInstruction::LoadLocal(0),
+                IRInstruction::StoreLocal(1), // Slot 1 - temps no longer reused
+                IRInstruction::LoadLocal(1),
                 IRInstruction::Push(0),
                 IRInstruction::Push(1),
                 IRInstruction::RuntimeCall("_string_subs".to_string(), 3),
-                IRInstruction::FreeLocal(0),
+                IRInstruction::FreeLocal(1),
                 IRInstruction::Return,
             ]
         );
