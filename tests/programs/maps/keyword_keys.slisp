@@ -4,7 +4,8 @@
         extended (assoc profile :logins 5)
         sanitized (dissoc extended :role)
         maybe-role (get sanitized :role :none)
-        has-name (contains? sanitized :name)]
-    (if (and has-name (= login-role :admin) (= maybe-role :none))
-      (+ (count sanitized) 37)
-      0)))
+        has-name (contains? sanitized :name)
+        result (if (and has-name (= login-role :admin) (= maybe-role :none))
+                 (+ (count sanitized) 37)
+                 0)]
+    (if (= result 39) 0 1)))

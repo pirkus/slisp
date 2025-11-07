@@ -17,8 +17,9 @@ pub struct CompileContext {
     pub function_parameter_types: HashMap<String, Vec<ValueKind>>, // function name -> parameter kinds
     pub function_return_ownership: HashMap<String, HeapOwnership>, // function name -> heap ownership semantics
     pub next_slot: usize,
-    pub free_slots: Vec<usize>, // stack of freed slots for reuse
-    pub in_function: bool,      // true when compiling inside a function
+    pub free_slots: Vec<usize>,         // stack of freed slots for reuse
+    pub deferred_temp_slots: Vec<usize>, // temp slots to release at next scope boundary
+    pub in_function: bool,              // true when compiling inside a function
 }
 
 impl CompileContext {
@@ -35,6 +36,7 @@ impl CompileContext {
             function_return_ownership: HashMap::new(),
             next_slot: 0,
             free_slots: Vec::new(),
+            deferred_temp_slots: Vec::new(),
             in_function: false,
         }
     }
@@ -59,12 +61,12 @@ impl CompileContext {
             function_return_ownership: self.function_return_ownership.clone(),
             next_slot: 0,
             free_slots: Vec::new(),
+            deferred_temp_slots: Vec::new(),
             in_function: true,
         }
     }
 
     /// Add a variable to the context and return its slot index
-    ///
     /// Variables get fresh slots and never reuse temp slots from free_slots
     /// to prevent use-after-free bugs where a temp's value is overwritten
     /// while still being referenced.
@@ -197,6 +199,10 @@ impl CompileContext {
     /// no longer needed so it can be reused.
     pub fn allocate_temp_slot(&mut self) -> usize {
         if let Some(slot) = self.free_slots.pop() {
+            // Track the high water mark to prevent variable slots from overlapping
+            if slot >= self.next_slot {
+                self.next_slot = slot + 1;
+            }
             slot
         } else {
             let slot = self.next_slot;
@@ -263,6 +269,25 @@ impl CompileContext {
     /// function scope ends. This uses more stack space but prevents corruption.
     pub fn release_temp_slot(&mut self, _slot: usize) {
         // Intentionally do nothing - don't add to free_slots
+    }
+
+    /// Defer releasing a temp slot until the next scope boundary.
+    ///
+    /// This is the preferred method for releasing temp slots during expression
+    /// compilation. It prevents premature slot reuse that can cause data corruption
+    /// when intermediate values are still needed.
+    pub fn defer_temp_slot_release(&mut self, slot: usize) {
+        self.deferred_temp_slots.push(slot);
+    }
+
+    /// Release all deferred temp slots at a scope boundary.
+    ///
+    /// Call this after completing a let binding or other scope where all
+    /// intermediate expression values are no longer needed.
+    pub fn release_deferred_temp_slots(&mut self) {
+        for slot in self.deferred_temp_slots.drain(..) {
+            self.free_slots.push(slot);
+        }
     }
 
     /// Mark a variable as holding a heap-allocated pointer

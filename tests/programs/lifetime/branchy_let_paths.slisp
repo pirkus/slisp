@@ -14,5 +14,6 @@
 (defn -main []
   (let [first (decorate true "alpha")
         second (decorate false "xy")
-        third (decorate false "delta")]
-    (+ (count first) (count second) (count third))))
+        third (decorate false "delta")
+        result (+ (count first) (count second) (count third))]
+    (if (= result 18) 0 1)))
