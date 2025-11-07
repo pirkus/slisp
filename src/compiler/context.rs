@@ -325,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn contiguous_temp_slots_reuse_and_extend() {
+    fn contiguous_temp_slots_no_reuse() {
         let mut context = CompileContext::new();
 
         // Fresh allocation should yield consecutive slots starting at zero.
@@ -336,18 +336,18 @@ mod tests {
             context.release_temp_slot(*slot);
         }
 
-        // Reusing should pick the freed run instead of extending the frame.
+        // Temp slots are NOT reused (disabled to prevent corruption).
+        // Next allocation gets fresh slots continuing from next_slot.
         let second = context.allocate_contiguous_temp_slots(3);
-        assert_eq!(second, vec![0, 1, 2]);
+        assert_eq!(second, vec![3, 4, 5]);
 
         for slot in second.iter().rev() {
             context.release_temp_slot(*slot);
         }
 
-        // Simulate fragmented free slots; expect a fresh contiguous block.
+        // Even with free_slots populated, allocations continue incrementing.
         context.free_slots.clear();
         context.free_slots.extend([0, 2, 4]);
-        context.next_slot = 6;
 
         let third = context.allocate_contiguous_temp_slots(2);
         assert_eq!(third, vec![6, 7]);

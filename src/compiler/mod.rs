@@ -1658,10 +1658,10 @@ mod tests {
                 IRInstruction::Push(1),
                 IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
                 IRInstruction::FreeLocal(0),
-                IRInstruction::StoreLocal(0),
-                IRInstruction::LoadLocal(0),
+                IRInstruction::StoreLocal(1), // Slot 1 - temps no longer reused
+                IRInstruction::LoadLocal(1),
                 IRInstruction::RuntimeCall("_string_count".to_string(), 1),
-                IRInstruction::FreeLocal(0),
+                IRInstruction::FreeLocal(1),
                 IRInstruction::Return,
             ]
         );
@@ -1692,12 +1692,12 @@ mod tests {
                 IRInstruction::Push(1),
                 IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2),
                 IRInstruction::FreeLocal(0),
-                IRInstruction::StoreLocal(0),
-                IRInstruction::LoadLocal(0),
+                IRInstruction::StoreLocal(1), // Slot 1 - temps no longer reused
+                IRInstruction::LoadLocal(1),
                 IRInstruction::Push(0),
                 IRInstruction::Push(1),
                 IRInstruction::RuntimeCall("_string_subs".to_string(), 3),
-                IRInstruction::FreeLocal(0),
+                IRInstruction::FreeLocal(1),
                 IRInstruction::Return,
             ]
         );
