@@ -57,7 +57,10 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
             }
         }
 
-        instructions.extend(value_result.instructions);
+        // Adjust jump targets when combining instruction lists
+        let offset = instructions.len();
+        let adjusted_instructions = crate::compiler::adjust_jump_targets(value_result.instructions, offset);
+        instructions.extend(adjusted_instructions);
 
         let slot = context.add_variable(var_name.clone());
         instructions.push(IRInstruction::StoreLocal(slot));

@@ -4,8 +4,9 @@
         m3 {:a 1 :b 3}
         m4 {:a 1}
         empty1 {}
-        empty2 {}]
-    (+ (if (= m1 m2) 100 0)
-       (if (= m1 m3) 0 10)
-       (if (= m1 m4) 0 1)
-       (if (= empty1 empty2) 1 0))))
+        empty2 {}
+        result (+ (if (= m1 m2) 100 0)
+                  (if (= m1 m3) 0 10)
+                  (if (= m1 m4) 0 1)
+                  (if (= empty1 empty2) 1 0))]
+    (if (= result 112) 0 1)))

@@ -1,1 +1,2 @@
-(defn -main [] (count ""))
+(defn -main []
+  (if (= (count "") 0) 0 1))

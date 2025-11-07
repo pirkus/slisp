@@ -3,5 +3,6 @@
         data (hash-map "numbers" nums)
         extracted (get data "numbers" (vec))
         mid (get extracted 1 0)
-        fallback (get (dissoc data "numbers") "numbers" (vec 99))]
-    (+ mid (count extracted) (count fallback))))
+        fallback (get (dissoc data "numbers") "numbers" (vec 99))
+        result (+ mid (count extracted) (count fallback))]
+    (if (= result 2) 0 1)))

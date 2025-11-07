@@ -47,8 +47,6 @@ The digits "4231168" (7 bytes) match a pointer address like 0x04231168 converted
 - "hello" = 5 bytes
 - "0x4231168" as hex = 7 bytes displayed as "4231168"
 
-The issue is likely in how `PushLocalAddress` or parameter dereferencing works when the value comes from a function parameter vs a local variable.
-
 ### Affected Tests
 - churn_reuse
 - map_churn

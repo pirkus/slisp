@@ -37,35 +37,36 @@
         ;; Mixed nesting with keywords and strings
         m-complex1 {:users (vec "alice" "bob") :tags #{:admin :user}}
         m-complex2 {:tags #{:user :admin} :users (vec "alice" "bob")}
-        m-complex3 {:users (vec "alice" "bob") :tags #{:admin :guest}}]
+        m-complex3 {:users (vec "alice" "bob") :tags #{:admin :guest}}
 
-    ;; Sum up all the equality checks (should be 112)
-    (+ ;; Vector equality tests
-       (if (= v-nums1 v-nums2) 1 0)         ; 1
-       (if (= v-strs1 v-strs2) 1 0)         ; 1
-       (if (= v-strs1 v-strs3) 0 1000)      ; 0 - different
-       (if (= v-keys1 v-keys2) 1 0)         ; 1
-       (if (= v-keys1 v-keys3) 0 1000)      ; 0 - different
+        ;; Sum up all the equality checks (should be 7093)
+        result (+ ;; Vector equality tests
+              (if (= v-nums1 v-nums2) 1 0)         ; 1
+              (if (= v-strs1 v-strs2) 1 0)         ; 1
+              (if (= v-strs1 v-strs3) 0 1000)      ; 1000 - different
+              (if (= v-keys1 v-keys2) 1 0)         ; 1
+              (if (= v-keys1 v-keys3) 0 1000)      ; 1000 - different
 
-       ;; Set equality tests (order independent)
-       (if (= s-nums1 s-nums2) 10 0)        ; 10
-       (if (= s-strs1 s-strs2) 10 0)        ; 10
-       (if (= s-strs1 s-strs3) 0 1000)      ; 0 - different
-       (if (= s-keys1 s-keys2) 10 0)        ; 10
-       (if (= s-keys1 s-keys3) 0 1000)      ; 0 - different
+              ;; Set equality tests (order independent)
+              (if (= s-nums1 s-nums2) 10 0)        ; 10
+              (if (= s-strs1 s-strs2) 10 0)        ; 10
+              (if (= s-strs1 s-strs3) 0 1000)      ; 1000 - different
+              (if (= s-keys1 s-keys2) 10 0)        ; 10
+              (if (= s-keys1 s-keys3) 0 1000)      ; 1000 - different
 
-       ;; Map equality tests (order independent)
-       (if (= m-num-keys1 m-num-keys2) 10 0)    ; 10
-       (if (= m-str-keys1 m-str-keys2) 10 0)    ; 10
-       (if (= m-key-keys1 m-key-keys2) 10 0)    ; 10
-       (if (= m-key-keys1 m-key-keys3) 0 1000)  ; 0 - different
+              ;; Map equality tests (order independent)
+              (if (= m-num-keys1 m-num-keys2) 10 0)    ; 10
+              (if (= m-str-keys1 m-str-keys2) 10 0)    ; 10
+              (if (= m-key-keys1 m-key-keys2) 10 0)    ; 10
+              (if (= m-key-keys1 m-key-keys3) 0 1000)  ; 1000 - different
 
-       ;; Nested collection equality
-       (if (= v-nested1 v-nested2) 10 0)    ; 10
-       (if (= v-nested1 v-nested3) 0 1000)  ; 0 - different
+              ;; Nested collection equality
+              (if (= v-nested1 v-nested2) 10 0)    ; 10
+              (if (= v-nested1 v-nested3) 0 1000)  ; 1000 - different
 
-       ;; Complex nested equality with keywords and strings
-       (if (= m-complex1 m-complex2) 20 0)  ; 20
-       (if (= m-complex1 m-complex3) 0 1000))))  ; 0 - different
+              ;; Complex nested equality with keywords and strings
+              (if (= m-complex1 m-complex2) 20 0)  ; 20
+              (if (= m-complex1 m-complex3) 0 1000))]  ; 1000 - different
+    (if (= result 7093) 0 1)))
 
-;; Expected result: 1+1+1+10+10+10+10+10+10+10+10+10+20 = 112
+;; Expected result: equals(93) + different_checks(7*1000=7000) = 7093

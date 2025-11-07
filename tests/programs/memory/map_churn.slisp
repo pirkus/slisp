@@ -16,5 +16,6 @@
 (defn -main []
   (let [first (churn-once 40 true)
         second (churn-once 41 false)
-        third (churn-once 42 true)]
-    (+ first second third)))
+        third (churn-once 42 true)
+        result (+ first second third)]
+    (if (= result 242) 0 1)))

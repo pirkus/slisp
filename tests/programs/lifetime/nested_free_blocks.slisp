@@ -12,5 +12,6 @@
 
 (defn -main []
   (let [left (assemble true "foo")
-        right (assemble false "barbaz")]
-    (- (count right) (count left))))
+        right (assemble false "barbaz")
+        result (- (count right) (count left))]
+    (if (= result 10) 0 1)))

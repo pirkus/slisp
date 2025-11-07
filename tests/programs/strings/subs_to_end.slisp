@@ -1,2 +1,2 @@
 (defn -main []
-  (count (subs "hello world" 6)))
+  (if (= (count (subs "hello world" 6)) 5) 0 1))
