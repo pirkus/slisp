@@ -52,3 +52,17 @@ The `str` function is including string metadata (likely 2-byte length prefixes) 
 (defn -main []
   (count (concat2 "he" "llo")))  ; Returns 14 instead of 5
 ```
+
+## Investigation Summary
+- Runtime str implementation appears correct
+- Bug is specific to str() with function parameters
+- String literals and inline operations work correctly  
+- Parameters are being cloned via _string_normalize before concatenation
+- The extra bytes appear during or after the clone operation
+- Needs deeper investigation into parameter passing mechanism
+
+## Next Steps
+- Examine codegen for how parameters are stored/loaded
+- Check if _string_clone is receiving corrupted input
+- Verify stack layout for parameter slots
+- Consider using runtime telemetry to trace the issue
