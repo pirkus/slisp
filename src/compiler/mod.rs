@@ -146,7 +146,7 @@ pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
 
 /// Compile a program (multiple top-level expressions) to IR
 pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> {
-    compile_program_multipass(expressions, true)
+    compile_program_multipass(expressions, true)  // Re-enable multipass for debugging
 }
 
 /// Internal function to compile a program with optional multi-pass type inference
