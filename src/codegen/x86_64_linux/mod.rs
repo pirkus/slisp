@@ -121,6 +121,15 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
     let text_section = obj.section_id(StandardSection::Text);
     let rodata_section = obj.section_id(StandardSection::ReadOnlyData);
 
+    // Add .note.GNU-stack section to suppress linker warnings about executable stack
+    // This empty section with no executable flag tells the linker the stack should not be executable
+    let gnu_stack_section = obj.add_section(
+        vec![],  // Empty name (will be set below)
+        b".note.GNU-stack".to_vec(),
+        object::SectionKind::Note,
+    );
+    obj.section_mut(gnu_stack_section).flags = object::SectionFlags::None;
+
     obj.append_section_data(text_section, &text, 16);
     if !rodata.is_empty() {
         obj.append_section_data(rodata_section, &rodata, 1);
