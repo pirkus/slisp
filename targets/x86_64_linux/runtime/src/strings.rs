@@ -325,3 +325,59 @@ pub unsafe extern "C" fn _string_subs(src: *const u8, start: i64, end: i64) -> *
 
     dst
 }
+
+/// Generic string conversion that handles any tagged value.
+/// This ensures semantic equivalence between compilation passes by dispatching
+/// based on the runtime tag rather than compile-time type information.
+#[no_mangle]
+pub extern "C" fn _string_from_any(value: i64, tag: i64, clone_flag: i64) -> *mut u8 {
+    unsafe {
+        match tag {
+            0 => {
+                // TAG_NIL
+                NIL_LITERAL.as_ptr() as *mut u8
+            }
+            1 => {
+                // TAG_NUMBER
+                _string_from_number(value)
+            }
+            2 => {
+                // TAG_BOOLEAN
+                _string_from_boolean(value)
+            }
+            3 | 6 => {
+                // TAG_STRING or TAG_KEYWORD
+                let ptr = value as *const u8;
+                _string_normalize(ptr, clone_flag)
+            }
+            4 => {
+                // TAG_VECTOR
+                let ptr = value as *const u8;
+                extern "C" {
+                    fn _vector_to_string(ptr: *const u8) -> *mut u8;
+                }
+                _vector_to_string(ptr)
+            }
+            5 => {
+                // TAG_MAP
+                let ptr = value as *const u8;
+                extern "C" {
+                    fn _map_to_string(ptr: *const u8) -> *mut u8;
+                }
+                _map_to_string(ptr)
+            }
+            7 => {
+                // TAG_SET
+                let ptr = value as *const u8;
+                extern "C" {
+                    fn _set_to_string(ptr: *const u8) -> *mut u8;
+                }
+                _set_to_string(ptr)
+            }
+            _ => {
+                // TAG_ANY or unknown - assume number for backwards compat
+                _string_from_number(value)
+            }
+        }
+    }
+}

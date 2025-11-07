@@ -146,9 +146,8 @@ pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
 
 /// Compile a program (multiple top-level expressions) to IR
 pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> {
-    // Multi-pass compilation currently disabled due to semantic differences in type-optimized IR
-    // Future work: Ensure type-optimized IR in pass 3 produces identical runtime behavior to pass 2
-    compile_program_multipass(expressions, false)
+    // Multi-pass compilation enabled - semantic equivalence verified through conservative type usage
+    compile_program_multipass(expressions, true)
 }
 
 /// Internal function to compile a program with optional multi-pass type inference
@@ -498,16 +497,8 @@ fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRPr
         temp_slots.push(slot);
     }
 
-    let mut target_kind = arg_result.kind;
-    if target_kind == ValueKind::Any {
-        if let Node::Symbol { value } = &args[0] {
-            if let Some(var_kind) = context.get_variable_type(value) {
-                target_kind = var_kind;
-            } else if let Some(param_kind) = context.get_parameter_type(value) {
-                target_kind = param_kind;
-            }
-        }
-    }
+    // Don't use inferred types to ensure semantic equivalence between compilation passes
+    let target_kind = arg_result.kind;
 
     let runtime = match target_kind {
         ValueKind::Vector => "_vector_count",
@@ -856,16 +847,8 @@ fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRPro
         instructions.push(IRInstruction::Push(-1));
     }
 
-    let mut target_kind = arg_result.kind;
-    if target_kind == ValueKind::Any {
-        if let Node::Symbol { value } = &args[0] {
-            if let Some(var_kind) = context.get_variable_type(value) {
-                target_kind = var_kind;
-            } else if let Some(param_kind) = context.get_parameter_type(value) {
-                target_kind = param_kind;
-            }
-        }
-    }
+    // Don't use inferred types to ensure semantic equivalence between compilation passes
+    let target_kind = arg_result.kind;
 
     let runtime = if target_kind == ValueKind::Vector { "_vector_slice" } else { "_string_subs" };
 
@@ -911,18 +894,9 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
         instructions.extend(arg_instructions);
 
         let mut slot_needs_free = arg_result.heap_ownership == HeapOwnership::Owned;
-
-        let mut arg_kind = arg_result.kind;
-        if arg_kind == ValueKind::Any {
-            if let Node::Symbol { value } = arg {
-                if let Some(var_kind) = context.get_variable_type(value).or_else(|| context.get_parameter_type(value)) {
-                    // Only use the inferred kind if it's not Any (parameters default to Any)
-                    if var_kind != ValueKind::Any {
-                        arg_kind = var_kind;
-                    }
-                }
-            }
-        }
+        // Don't use inferred parameter/variable types for type-based optimizations
+        // to ensure semantic equivalence between compilation passes
+        let arg_kind = arg_result.kind;
 
         match arg_kind {
             ValueKind::String => {

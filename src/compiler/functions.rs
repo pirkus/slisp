@@ -45,12 +45,13 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
 
     for (i, param_name) in param_names.iter().enumerate() {
         func_context.add_parameter(param_name.clone(), i);
-        if let Some(kind) = context.get_function_parameter_type(&func_name, i) {
-            func_context.set_parameter_type(param_name, kind);
-            if kind.is_heap_kind() {
-                func_context.mark_heap_allocated(param_name, kind);
-            }
-        }
+        // Don't use learned parameter types to ensure semantic equivalence between passes
+        // if let Some(kind) = context.get_function_parameter_type(&func_name, i) {
+        //     func_context.set_parameter_type(param_name, kind);
+        //     if kind.is_heap_kind() {
+        //         func_context.mark_heap_allocated(param_name, kind);
+        //     }
+        // }
     }
 
     let mut instructions = vec![IRInstruction::DefineFunction(
