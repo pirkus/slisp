@@ -3,8 +3,9 @@
         second (subs "alphabet" 0 5)
         third (subs "alphabet" 2 7)
         vec-values (vec "alpha" "beta")
-        vec-second (get vec-values 0 "")]
-    (+ (if (= first second) 100 0)
-       (if (= second third) 1 0)
-       (if (= vec-second "alpha") 50 0)
-       (count third))))
+        vec-second (get vec-values 0 "")
+        result (+ (if (= first second) 100 0)
+                  (if (= second third) 1 0)
+                  (if (= vec-second "alpha") 50 0)
+                  (count third))]
+    (if (= result 155) 0 1)))

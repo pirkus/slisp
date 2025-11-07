@@ -3,7 +3,8 @@
         fallback (subs "alphabet" 5)
         present (get values 0 fallback)
         missing (get values 5 fallback)
-        nested (subs (str fallback fallback) 0 (count fallback))]
-    (+ (if (= present "alpha") 100 0)
-       (if (= missing fallback) 10 0)
-       (if (= nested fallback) 1 0))))
+        nested (subs (str fallback fallback) 0 (count fallback))
+        result (+ (if (= present "alpha") 100 0)
+                  (if (= missing fallback) 10 0)
+                  (if (= nested fallback) 1 0))]
+    (if (= result 111) 0 1)))

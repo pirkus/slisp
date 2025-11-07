@@ -11,5 +11,6 @@
         b (churn-batch "beta")
         c (churn-batch "gamma")
         d (churn-batch "delta")
-        e (churn-batch "epsilon")]
-    (+ (+ a b) (+ (+ c d) e))))
+        e (churn-batch "epsilon")
+        result (+ (+ a b) (+ (+ c d) e))]
+    (if (> result 0) 0 1)))

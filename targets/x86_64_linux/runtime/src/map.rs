@@ -264,10 +264,87 @@ unsafe fn map_copy_entries(dst: *mut MapHeader, src: *const MapHeader) {
     let dst_key_data = map_key_data_ptr_mut(dst);
     let dst_value_data = map_value_data_ptr_mut(dst);
 
+    // Copy tags first
     copy_nonoverlapping(src_key_tags, dst_key_tags, len);
     copy_nonoverlapping(src_value_tags, dst_value_tags, len);
-    copy_nonoverlapping(src_key_data, dst_key_data, len);
-    copy_nonoverlapping(src_value_data, dst_value_data, len);
+
+    // Clone heap-allocated keys and values when copying
+    let mut idx = 0usize;
+    while idx < len {
+        let key_tag = *src_key_tags.add(idx);
+        let key_ptr = *src_key_data.add(idx);
+
+        let owned_key = match key_tag {
+            TAG_STRING | TAG_KEYWORD => {
+                if key_ptr == 0 {
+                    key_ptr
+                } else {
+                    _string_clone(key_ptr as *const u8) as i64
+                }
+            }
+            TAG_VECTOR => {
+                if key_ptr == 0 {
+                    key_ptr
+                } else {
+                    _vector_clone(key_ptr as *const u8) as i64
+                }
+            }
+            TAG_MAP => {
+                if key_ptr == 0 {
+                    key_ptr
+                } else {
+                    map_clone_impl(key_ptr as *const MapHeader) as i64
+                }
+            }
+            TAG_SET => {
+                if key_ptr == 0 {
+                    key_ptr
+                } else {
+                    _set_clone(key_ptr as *const u8) as i64
+                }
+            }
+            _ => key_ptr,
+        };
+
+        let value_tag = *src_value_tags.add(idx);
+        let value_ptr = *src_value_data.add(idx);
+
+        let owned_value = match value_tag {
+            TAG_STRING | TAG_KEYWORD => {
+                if value_ptr == 0 {
+                    value_ptr
+                } else {
+                    _string_clone(value_ptr as *const u8) as i64
+                }
+            }
+            TAG_VECTOR => {
+                if value_ptr == 0 {
+                    value_ptr
+                } else {
+                    _vector_clone(value_ptr as *const u8) as i64
+                }
+            }
+            TAG_MAP => {
+                if value_ptr == 0 {
+                    value_ptr
+                } else {
+                    map_clone_impl(value_ptr as *const MapHeader) as i64
+                }
+            }
+            TAG_SET => {
+                if value_ptr == 0 {
+                    value_ptr
+                } else {
+                    _set_clone(value_ptr as *const u8) as i64
+                }
+            }
+            _ => value_ptr,
+        };
+
+        *dst_key_data.add(idx) = owned_key;
+        *dst_value_data.add(idx) = owned_value;
+        idx += 1;
+    }
 
     let padded = padded_tag_bytes((*dst).capacity as usize);
     let mut idx = len;
