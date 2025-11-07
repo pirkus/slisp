@@ -97,6 +97,15 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
     context.set_function_return_type(&func_info.name, body_kind);
     context.set_function_return_ownership(&func_info.name, body_ownership);
 
+    // Propagate parameter type information learned during function compilation
+    // This is crucial for multi-pass compilation where inner functions record
+    // type information from their call sites
+    for (callee_name, param_types) in &func_context.function_parameter_types {
+        for (param_index, param_type) in param_types.iter().enumerate() {
+            context.record_function_parameter_type(callee_name, param_index, *param_type);
+        }
+    }
+
     Ok((instructions, func_info))
 }
 
