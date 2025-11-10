@@ -37,10 +37,10 @@ The interpreter provides a complete Lisp experience with rich error reporting an
 
 ### Compiler Modes
 
-Both compiler modes (JIT REPL and AOT executable) support the same surface area as the interpreter:
+Both compiler modes (JIT REPL and AOT executable) support the same surface area as the interpreter **except** for anonymous `fn`/closure captures, which are currently interpreter-only:
 
 - Full arithmetic/comparison/logical feature set
-- `if`, `let`, `def`, `defn`, lambdas, and closures
+- `if`, `let`, `def`, `defn`, and higher-order calls to named functions
 - Strings, keywords, vectors, maps, and sets with their helpers
 - Keyword literal tagging (`:name`) for map keys and equality
 - Automatic heap management via ownership tracking and liveness-based frees
