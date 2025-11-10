@@ -21,5 +21,7 @@
                   (count stage4))
         combined (set totals
                       (count (set (count stage1) (count stage3)))
-                      (count (disj stage4 17)))]
-    (+ totals (count combined))))
+                      (count (disj stage4 17)))
+        result (+ totals (count combined))
+        diff (- result 17)]
+    (if diff 1 0)))

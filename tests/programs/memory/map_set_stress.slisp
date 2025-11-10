@@ -1,0 +1,17 @@
+(defn spin-map [n]
+  (let [base (hash-map "n" n)
+        bumped (assoc base "d" (str n))
+        staged (assoc bumped "count" (count (str n)))]
+    staged))
+
+(defn churn []
+  (let [a (spin-map 5)
+        b (spin-map 7)
+        merged (assoc a "b" b)
+        trimmed (dissoc merged "n")
+        totals (+ (count merged) (count trimmed) (count a) (count b))]
+    totals))
+
+(defn -main []
+  (let [result (churn)]
+    (if (= result 14) 0 1)))

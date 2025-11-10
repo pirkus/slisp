@@ -1,1 +1,3 @@
-(defn -main [] (count "hello world"))
+(defn -main []
+  (let [result (count "hello world")]
+    (if (= result 11) 0 1)))

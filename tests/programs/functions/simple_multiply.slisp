@@ -1,3 +1,5 @@
 (defn multiply [x y] (* x y))
 
-(defn -main [] (multiply 6 7))
+(defn -main []
+  (let [result (multiply 6 7)]
+    (if (= result 42) 0 1)))

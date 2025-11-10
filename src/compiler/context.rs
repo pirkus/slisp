@@ -1,5 +1,5 @@
 /// Compilation context for tracking variables, parameters, and functions
-use super::{HeapOwnership, ValueKind};
+use super::{HeapOwnership, MapValueTypes, ValueKind};
 use crate::ir::FunctionInfo;
 use std::collections::HashMap;
 
@@ -7,15 +7,17 @@ use std::collections::HashMap;
 /// Tracks variables, parameters, and function definitions
 #[derive(Debug, Clone)]
 pub struct CompileContext {
-    pub variables: HashMap<String, usize>,                         // variable name -> local slot index
-    pub heap_allocated_vars: HashMap<String, bool>,                // tracks if variable holds heap pointer
-    pub variable_types: HashMap<String, ValueKind>,                // tracks inferred variable types
-    pub parameters: HashMap<String, usize>,                        // parameter name -> param slot index
-    pub parameter_types: HashMap<String, ValueKind>,               // inferred parameter types
-    pub functions: HashMap<String, FunctionInfo>,                  // function name -> function info
-    pub function_return_types: HashMap<String, ValueKind>,         // function name -> return kind
-    pub function_parameter_types: HashMap<String, Vec<ValueKind>>, // function name -> parameter kinds
-    pub function_return_ownership: HashMap<String, HeapOwnership>, // function name -> heap ownership semantics
+    pub variables: HashMap<String, usize>,                               // variable name -> local slot index
+    pub heap_allocated_vars: HashMap<String, bool>,                      // tracks if variable holds heap pointer
+    pub variable_types: HashMap<String, ValueKind>,                      // tracks inferred variable types
+    pub variable_map_value_types: HashMap<String, MapValueTypes>,        // tracks map entry metadata for locals
+    pub parameters: HashMap<String, usize>,                              // parameter name -> param slot index
+    pub parameter_types: HashMap<String, ValueKind>,                     // inferred parameter types
+    pub functions: HashMap<String, FunctionInfo>,                        // function name -> function info
+    pub function_return_types: HashMap<String, ValueKind>,               // function name -> return kind
+    pub function_return_map_value_types: HashMap<String, MapValueTypes>, // function name -> map metadata
+    pub function_parameter_types: HashMap<String, Vec<ValueKind>>,       // function name -> parameter kinds
+    pub function_return_ownership: HashMap<String, HeapOwnership>,       // function name -> heap ownership semantics
     pub next_slot: usize,
     pub free_slots: Vec<usize>, // stack of freed slots for reuse
     pub in_function: bool,      // true when compiling inside a function
@@ -27,15 +29,27 @@ impl CompileContext {
             variables: HashMap::new(),
             heap_allocated_vars: HashMap::new(),
             variable_types: HashMap::new(),
+            variable_map_value_types: HashMap::new(),
             parameters: HashMap::new(),
             parameter_types: HashMap::new(),
             functions: HashMap::new(),
             function_return_types: HashMap::new(),
+            function_return_map_value_types: HashMap::new(),
             function_parameter_types: HashMap::new(),
             function_return_ownership: HashMap::new(),
             next_slot: 0,
             free_slots: Vec::new(),
             in_function: false,
+        }
+    }
+
+    pub fn absorb_parameter_inference(&mut self, other: &CompileContext) {
+        for (name, params) in &other.function_parameter_types {
+            for (idx, kind) in params.iter().enumerate() {
+                if *kind != ValueKind::Any {
+                    self.record_function_parameter_type(name, idx, *kind);
+                }
+            }
         }
     }
 
@@ -51,10 +65,12 @@ impl CompileContext {
             variables: HashMap::new(),
             heap_allocated_vars: HashMap::new(),
             variable_types: HashMap::new(),
+            variable_map_value_types: HashMap::new(),
             parameters: HashMap::new(),
             parameter_types: HashMap::new(),
             functions: self.functions.clone(),
             function_return_types: self.function_return_types.clone(),
+            function_return_map_value_types: self.function_return_map_value_types.clone(),
             function_parameter_types: self.function_parameter_types.clone(),
             function_return_ownership: self.function_return_ownership.clone(),
             next_slot: 0,
@@ -80,6 +96,21 @@ impl CompileContext {
     /// Set the inferred type for a variable
     pub fn set_variable_type(&mut self, name: &str, kind: ValueKind) {
         self.variable_types.insert(name.to_string(), kind);
+    }
+
+    pub fn set_variable_map_value_types(&mut self, name: &str, types: Option<MapValueTypes>) {
+        match types {
+            Some(map) if !map.is_empty() => {
+                self.variable_map_value_types.insert(name.to_string(), map);
+            }
+            _ => {
+                self.variable_map_value_types.remove(name);
+            }
+        }
+    }
+
+    pub fn get_variable_map_value_types(&self, name: &str) -> Option<&MapValueTypes> {
+        self.variable_map_value_types.get(name)
     }
 
     /// Get the inferred type for a variable
@@ -136,6 +167,21 @@ impl CompileContext {
         }
     }
 
+    pub fn set_function_return_map_value_types(&mut self, name: &str, types: Option<MapValueTypes>) {
+        match types {
+            Some(map) if !map.is_empty() => {
+                self.function_return_map_value_types.insert(name.to_string(), map);
+            }
+            _ => {
+                self.function_return_map_value_types.remove(name);
+            }
+        }
+    }
+
+    pub fn get_function_return_map_value_types(&self, name: &str) -> Option<&MapValueTypes> {
+        self.function_return_map_value_types.get(name)
+    }
+
     pub fn set_function_return_ownership(&mut self, name: &str, ownership: HeapOwnership) {
         self.function_return_ownership.insert(name.to_string(), ownership);
     }
@@ -179,6 +225,7 @@ impl CompileContext {
         if let Some(slot) = self.variables.remove(name) {
             self.free_slots.push(slot);
             self.variable_types.remove(name);
+            self.variable_map_value_types.remove(name);
             Some(slot)
         } else {
             None

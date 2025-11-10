@@ -70,6 +70,60 @@ pub fn generate_div() -> Vec<u8> {
     ]
 }
 
+fn cmp_and_set(condition_opcode: u8) -> Vec<u8> {
+    vec![
+        0x58, // pop rax (first operand)
+        0x5b, // pop rbx (second operand)
+        0x48,
+        0x39,
+        0xc3, // cmp rbx, rax
+        0x0f,
+        condition_opcode,
+        0xc0, // set* al
+        0x48,
+        0x0f,
+        0xb6,
+        0xc0, // movzx rax, al
+        0x50, // push rax
+    ]
+}
+
+/// Generate machine code for equality comparison
+pub fn generate_equal() -> Vec<u8> {
+    cmp_and_set(0x94) // sete
+}
+
+/// Generate machine code for less-than comparison
+pub fn generate_less() -> Vec<u8> {
+    cmp_and_set(0x9c) // setl
+}
+
+/// Generate machine code for greater-than comparison
+pub fn generate_greater() -> Vec<u8> {
+    cmp_and_set(0x9f) // setg
+}
+
+/// Generate machine code for less-than-or-equal comparison
+pub fn generate_less_equal() -> Vec<u8> {
+    cmp_and_set(0x9e) // setle
+}
+
+/// Generate machine code for greater-than-or-equal comparison
+pub fn generate_greater_equal() -> Vec<u8> {
+    cmp_and_set(0x9d) // setge
+}
+
+/// Generate machine code for logical NOT
+pub fn generate_not() -> Vec<u8> {
+    vec![
+        0x58, // pop rax
+        0x48, 0x83, 0xf8, 0x00, // cmp rax, 0
+        0x0f, 0x94, 0xc0, // sete al
+        0x48, 0x0f, 0xb6, 0xc0, // movzx rax, al
+        0x50, // push rax
+    ]
+}
+
 /// Generate machine code for loading a parameter from stack
 pub fn generate_load_param(slot: usize) -> Vec<u8> {
     let offset = 8 * (slot + 1);
@@ -243,6 +297,28 @@ pub fn generate_runtime_call(runtime_offset: Option<i32>, arg_count: usize) -> (
     (code, call_disp_offset)
 }
 
+/// Generate machine code for JumpIfZero
+/// Returns (code bytes, offset of 32-bit displacement)
+pub fn generate_jump_if_zero() -> (Vec<u8>, usize) {
+    let mut code = Vec::new();
+    code.push(0x58); // pop rax
+    code.extend_from_slice(&[0x48, 0x83, 0xf8, 0x00]); // cmp rax, 0
+    code.extend_from_slice(&[0x0f, 0x84]); // je rel32
+    let disp_offset = code.len();
+    code.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+    (code, disp_offset)
+}
+
+/// Generate machine code for an unconditional jump
+/// Returns (code bytes, offset of 32-bit displacement)
+pub fn generate_jump() -> (Vec<u8>, usize) {
+    let mut code = Vec::new();
+    code.push(0xe9); // jmp rel32
+    let disp_offset = code.len();
+    code.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+    (code, disp_offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +356,23 @@ mod tests {
         assert_eq!(&code_six[..8], &expected_prefix_six);
         assert_eq!(code_six[8], 0xe8);
         assert_eq!(code_six[13], 0x50);
+    }
+
+    #[test]
+    fn comparison_ops_emit_instructions() {
+        assert!(!generate_equal().is_empty());
+        assert!(!generate_less().is_empty());
+        assert!(!generate_greater().is_empty());
+        assert!(!generate_less_equal().is_empty());
+        assert!(!generate_greater_equal().is_empty());
+    }
+
+    #[test]
+    fn not_and_jumps_emit_instructions() {
+        assert!(!generate_not().is_empty());
+        let (je_code, _) = generate_jump_if_zero();
+        assert!(je_code.len() > 5);
+        let (jmp_code, _) = generate_jump();
+        assert_eq!(jmp_code.len(), 5);
     }
 }

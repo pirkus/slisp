@@ -16,6 +16,7 @@ fn count_decimal_digits(mut value: u64) -> usize {
 #[no_mangle]
 pub unsafe extern "C" fn _string_count(ptr: *const u8) -> u64 {
     if ptr.is_null() {
+        crate::log_count_with_sample("_string_count", ptr, 0);
         return 0;
     }
 
@@ -23,7 +24,9 @@ pub unsafe extern "C" fn _string_count(ptr: *const u8) -> u64 {
     loop {
         let byte = *ptr.add(offset);
         if byte == 0 {
-            return offset as u64;
+            let len = offset as u64;
+            crate::log_count_with_sample("_string_count", ptr, len);
+            return len;
         }
         offset += 1;
     }
@@ -128,27 +131,35 @@ pub unsafe extern "C" fn _string_clone(src: *const u8) -> *mut u8 {
 #[no_mangle]
 pub unsafe extern "C" fn _string_equals(left: *const u8, right: *const u8) -> i64 {
     if left == right {
+        crate::log_string_equals_result(1);
         return 1;
     }
 
     if left.is_null() || right.is_null() {
+        crate::log_string_equals_result(0);
         return 0;
     }
 
     let left_len = _string_count(left) as usize;
     let right_len = _string_count(right) as usize;
+    crate::log_count_with_sample("_string_equals:left", left, left_len as u64);
+    crate::log_count_with_sample("_string_equals:right", right, right_len as u64);
     if left_len != right_len {
+        crate::log_string_equals_result(0);
         return 0;
     }
 
     let mut idx = 0usize;
     while idx < left_len {
         if *left.add(idx) != *right.add(idx) {
+            crate::log_string_compare_mismatch(idx, *left.add(idx), *right.add(idx));
+            crate::log_string_equals_result(0);
             return 0;
         }
         idx += 1;
     }
 
+    crate::log_string_equals_result(1);
     1
 }
 

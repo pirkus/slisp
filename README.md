@@ -26,37 +26,48 @@ cargo run          # Start the default interpreter REPL
 
 ### Interpreter REPL
 
-The interpreter provides a complete Lisp experience with rich error reporting and lexical scoping.
+The interpreter provides a complete Lisp experience with rich error reporting and lexical scoping. Supported features:
 
-- Number and string literals (including escape sequences)
-- Arithmetic operations: `+`, `-`, `*`, `/` with any number of operands
-- Comparison operations: `=`, `<`, `>`, `<=`, `>=`
-- Logical operations with short-circuiting: `and`, `or`, `not`
-- Conditionals: `if`
-- Lists and nested expressions
-- Lexically-scoped bindings via `let`
-- Top-level definitions: `def` and `defn`
-- Anonymous functions via `fn` with closures
-- Function invocation with arity checking
-- String helpers: `str`, `count`, `get`, `subs`
-- Keyword literals like `:name` that self-evaluate and act as map keys
-- Vector literals `[...]` and helpers (`vec`, `get`, `subs`)
-- Hash map helpers (`hash-map`, `assoc`, `dissoc`, `contains?`, `get`) and `{}` literal syntax
-- Set helpers (`set`, `disj`, `contains?`) and `#{...}` literal syntax with deterministic rendering and duplicate elimination
-- Comprehensive runtime errors for arity, type, and undefined symbols
+- Number, keyword, and string literals (with escapes)
+- Arithmetic, comparison, and logical operations
+- `if`, `let`, `def`, `defn`, anonymous `fn`, higher-order calls
+- `str`, `count`, `get`, `subs`, `hash-map`, `assoc`, `dissoc`, `contains?`
+- Vector (`[...]`) and set (`#{...}`) literals plus helpers
+- Deterministic rendering for maps/sets and robust runtime errors
 
 ### Compiler Modes
 
-Slisp includes a stack-based compiler that lowers expressions to an intermediate representation before emitting x86-64 machine code.
+Both compiler modes (JIT REPL and AOT executable) support the same surface area as the interpreter:
 
-- JIT mode (`slisp --compile`) compiles and executes expressions immediately
-- Ahead-of-time compilation produces standalone ELF binaries linked with the runtime
-- Supports the same expression set as the interpreter, including arithmetic, comparisons, logical operations, `if`, and `let`
-- Emits keyword literals (`:name`) with dedicated tagging so compiled maps and equality checks mirror interpreter semantics
-- Handles nested and multi-operand expressions
-- Performs automatic memory management for heap-allocated strings within lexical scopes
-- Generates ownership-aware code for vectors, maps, and sets, including `[...]`, `{...}`, and `#{...}` literal syntax
+- Full arithmetic/comparison/logical feature set
+- `if`, `let`, `def`, `defn`, lambdas, and closures
+- Strings, keywords, vectors, maps, and sets with their helpers
+- Keyword literal tagging (`:name`) for map keys and equality
+- Automatic heap management via ownership tracking and liveness-based frees
+- Linear-stack IR lowered to x86-64 machine code; AOT emits ELF + runtime
 
+## Architecture
+
+```mermaid
+graph TD
+    A["Reader / Parser<br/>(`src/ast`)"]
+    B["Interpreter<br/>(`src/evaluator`)"]
+    C["Compiler IR Builder<br/>(`src/compiler`)"]
+    D["Liveness Planner<br/>(`src/compiler/liveness.rs`)"]
+    E["Codegen Backend<br/>(`src/codegen/x86_64_linux`)"]
+    F["Runtime Support<br/>(`targets/x86_64_linux/runtime`)"]
+    G["REPL / CLI<br/>(`src/repl.rs`, `src/main.rs`)"]
+
+    G --> A
+    A --> B
+    A --> C
+    C --> D
+    D --> C
+    C --> E
+    E --> F
+    G --> B
+    G --> E
+```
 ## Sample Session
 
 ```text

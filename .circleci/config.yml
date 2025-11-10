@@ -29,3 +29,6 @@ jobs:
       - run:
           name: Run Tests
           command: "cargo test"
+      - run:
+          name: Run integration programs
+          command: tests/programs/run_all.sh
