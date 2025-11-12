@@ -2,4 +2,6 @@
 
 (defn double [x] (add x x))
 
-(defn -main [] (double 5))
+(defn -main []
+  (let [result (double 5)]
+    (if (= result 10) 0 1)))

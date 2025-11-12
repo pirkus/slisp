@@ -8,5 +8,6 @@
 
 (defn -main []
   (let [prefix (str "wor" "ld")
-        suffix (str "-ok" "!")]
-    (count (greet-twice (str prefix suffix)))))
+        suffix (str "-ok" "!")
+        result (count (greet-twice (str prefix suffix)))]
+    (if (= result 49) 0 1)))

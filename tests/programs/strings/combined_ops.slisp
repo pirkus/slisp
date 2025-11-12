@@ -1,5 +1,6 @@
 (defn -main []
   (let [s "hello"
         prefix (subs s 0 3)
-        suffix (subs s 3)]
-    (count (str prefix suffix))))
+        suffix (subs s 3)
+        result (count (str prefix suffix))]
+    (if (= result 5) 0 1)))

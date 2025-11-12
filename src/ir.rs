@@ -36,10 +36,11 @@ pub enum IRInstruction {
     LoadParam(usize),                     // Load parameter from current frame
 
     // Memory allocation
-    InitHeap,         // Initialize heap (mmap syscall to get memory region)
-    Allocate(usize),  // Allocate N bytes, push address onto stack
-    Free,             // Pop address from stack and free it
-    FreeLocal(usize), // Free local variable at slot without affecting stack
+    InitHeap,                            // Initialize heap (mmap syscall to get memory region)
+    Allocate(usize),                     // Allocate N bytes, push address onto stack
+    Free,                                // Pop address from stack and free it
+    FreeLocal(usize),                    // Free local variable at slot without affecting stack
+    FreeLocalWithRuntime(usize, String), // Free local slot by calling a specific runtime helper
 
     // Runtime function calls
     RuntimeCall(String, usize), // (function_name, arg_count) - Call a runtime support function

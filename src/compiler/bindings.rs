@@ -1,14 +1,32 @@
-use super::{CompileContext, CompileError, CompileResult, HeapOwnership, ValueKind};
+use super::{emit_free_for_slot, extend_with_offset, CompileContext, CompileError, CompileResult, HeapOwnership, RetainedSlot, ValueKind};
 /// Variable binding compilation (let expressions)
 use crate::ast::Node;
 use crate::compiler::liveness::{apply_liveness_plan, compute_liveness_plan};
 use crate::ir::{IRInstruction, IRProgram};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 struct BindingInfo {
     slot: usize,
     owns_heap: bool,
+    kind: ValueKind,
+    retained_slots: Vec<RetainedSlot>,
+}
+
+struct BindingCollection {
+    instructions: Vec<IRInstruction>,
+    added_variables: Vec<String>,
+    binding_infos: Vec<BindingInfo>,
+}
+
+impl BindingCollection {
+    fn new() -> Self {
+        Self {
+            instructions: Vec::new(),
+            added_variables: Vec::new(),
+            binding_infos: Vec::new(),
+        }
+    }
 }
 
 /// Compile a let binding expression
@@ -26,9 +44,38 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
         return Err(CompileError::InvalidExpression("let bindings must have even number of elements".to_string()));
     }
 
-    let mut instructions = Vec::new();
-    let mut added_variables = Vec::new();
-    let mut binding_infos: Vec<BindingInfo> = Vec::new();
+    let mut collected = collect_bindings(bindings, context, program)?;
+    let mut instructions = std::mem::take(&mut collected.instructions);
+    let added_variables = std::mem::take(&mut collected.added_variables);
+    let mut binding_infos = std::mem::take(&mut collected.binding_infos);
+
+    let mut body_result = crate::compiler::compile_node(&args[1], context, program)?;
+    let mut body_kind = body_result.kind;
+    let mut body_heap_ownership = body_result.heap_ownership;
+    let mut body_instructions = std::mem::take(&mut body_result.instructions);
+    let body_retained_slots = body_result.take_retained_slots();
+
+    apply_body_symbol_clone(&args[1], &added_variables, context, &mut body_instructions, &mut body_kind, &mut body_heap_ownership);
+
+    let mut slot_kinds_for_plan: HashMap<usize, ValueKind> = HashMap::new();
+    let mut tracked_slots_for_plan: HashSet<usize> = HashSet::new();
+    collect_slot_tracking(&binding_infos, &mut tracked_slots_for_plan, &mut slot_kinds_for_plan);
+
+    let freed_on_all_paths = plan_liveness(&mut body_instructions, &tracked_slots_for_plan, &slot_kinds_for_plan);
+
+    extend_with_offset(&mut instructions, body_instructions);
+
+    emit_scope_cleanup(&mut instructions, &mut binding_infos, &freed_on_all_paths, context);
+
+    context.remove_variables(&added_variables);
+
+    Ok(CompileResult::with_instructions(instructions, body_kind)
+        .with_heap_ownership(body_heap_ownership)
+        .with_retained_slots(body_retained_slots))
+}
+
+fn collect_bindings(bindings: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<BindingCollection, CompileError> {
+    let mut collected = BindingCollection::new();
 
     for chunk in bindings.chunks(2) {
         let var_node = &chunk[0];
@@ -40,6 +87,7 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
         };
 
         let mut value_result = crate::compiler::compile_node(val_node, context, program)?;
+        let mut cloned_map_value_types = None;
 
         let mut cloned_from_existing: Option<ValueKind> = None;
         if let Node::Symbol { value } = val_node {
@@ -54,36 +102,56 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
                 value_result.instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
                 value_result.heap_ownership = HeapOwnership::Owned;
                 cloned_from_existing = Some(source_kind);
+                if source_kind == ValueKind::Map {
+                    cloned_map_value_types = context.get_variable_map_value_types(value).cloned();
+                }
             }
         }
 
-        instructions.extend(value_result.instructions);
+        let value_map_value_types = value_result.map_value_types.clone();
+        let retained_slots = value_result.take_retained_slots();
+        extend_with_offset(&mut collected.instructions, value_result.instructions);
 
         let slot = context.add_variable(var_name.clone());
-        instructions.push(IRInstruction::StoreLocal(slot));
+        collected.instructions.push(IRInstruction::StoreLocal(slot));
 
         let value_kind = match value_result.kind {
             ValueKind::Any => cloned_from_existing.unwrap_or(ValueKind::Any),
             other => other,
         };
         context.set_variable_type(var_name, value_kind);
+        if value_kind == ValueKind::Map {
+            context.set_variable_map_value_types(var_name, value_map_value_types.or(cloned_map_value_types));
+        } else {
+            context.set_variable_map_value_types(var_name, None);
+        }
 
         // Mark variable as heap-allocated if needed
         if value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing.is_some() {
             context.mark_heap_allocated(var_name, value_kind);
         }
 
-        added_variables.push(var_name.clone());
-        binding_infos.push(BindingInfo {
+        collected.added_variables.push(var_name.clone());
+        collected.binding_infos.push(BindingInfo {
             slot,
             owns_heap: value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing.is_some(),
+            kind: value_kind,
+            retained_slots,
         });
     }
 
-    let mut body_result = crate::compiler::compile_node(&args[1], context, program)?;
-    let mut body_kind = body_result.kind;
+    Ok(collected)
+}
 
-    if let Node::Symbol { value } = &args[1] {
+fn apply_body_symbol_clone(
+    body_node: &Node,
+    added_variables: &[String],
+    context: &mut CompileContext,
+    body_instructions: &mut Vec<IRInstruction>,
+    body_kind: &mut ValueKind,
+    body_heap_ownership: &mut HeapOwnership,
+) {
+    if let Node::Symbol { value } = body_node {
         if added_variables.iter().any(|name| name == value) && crate::compiler::is_heap_allocated_symbol(value, context) {
             let symbol_kind = context.get_variable_type(value).unwrap_or(ValueKind::String);
             let runtime = match symbol_kind {
@@ -92,37 +160,62 @@ pub fn compile_let(args: &[Node], context: &mut CompileContext, program: &mut IR
                 ValueKind::Set => "_set_clone",
                 _ => "_string_clone",
             };
-            body_result.instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
-            body_result.heap_ownership = HeapOwnership::Owned;
-            body_kind = symbol_kind;
+            body_instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
+            *body_heap_ownership = HeapOwnership::Owned;
+            *body_kind = symbol_kind;
         }
     }
-
-    let mut body_instructions = body_result.instructions;
-
-    let mut freed_on_all_paths: HashSet<usize> = HashSet::new();
-
-    let tracked_slots_for_plan: HashSet<usize> = binding_infos.iter().filter(|info| info.owns_heap).map(|info| info.slot).collect();
-
-    if !tracked_slots_for_plan.is_empty() {
-        let plan = compute_liveness_plan(&body_instructions, &tracked_slots_for_plan);
-        if !plan.insert_after.is_empty() {
-            body_instructions = apply_liveness_plan(body_instructions, &plan);
+}
+fn collect_slot_tracking(binding_infos: &[BindingInfo], tracked: &mut HashSet<usize>, slot_kinds: &mut HashMap<usize, ValueKind>) {
+    for info in binding_infos {
+        if info.owns_heap {
+            tracked.insert(info.slot);
+            slot_kinds.insert(info.slot, info.kind);
         }
-        freed_on_all_paths.extend(plan.freed_everywhere.iter().copied());
+        for retained in &info.retained_slots {
+            tracked.insert(retained.slot);
+            slot_kinds.insert(retained.slot, retained.kind);
+        }
+    }
+}
+
+fn plan_liveness(body_instructions: &mut Vec<IRInstruction>, tracked: &HashSet<usize>, slot_kinds: &HashMap<usize, ValueKind>) -> HashSet<usize> {
+    let mut freed_on_all_paths = HashSet::new();
+    if tracked.is_empty() {
+        return freed_on_all_paths;
     }
 
-    instructions.extend(body_instructions);
+    let plan = compute_liveness_plan(body_instructions, tracked);
+    if !plan.insert_after.is_empty() {
+        *body_instructions = apply_liveness_plan(std::mem::take(body_instructions), &plan, |insts, slot| {
+            let kind = slot_kinds.get(&slot).copied().unwrap_or(ValueKind::Any);
+            emit_free_for_slot(insts, slot, kind);
+        });
+    }
+    freed_on_all_paths.extend(plan.freed_everywhere.iter().copied());
+    #[cfg(debug_assertions)]
+    if std::env::var("SLISP_DEBUG_LET").is_ok() {
+        eprintln!("[slisp:debug_let] freed_on_all_paths={:?}", plan.freed_everywhere);
+    }
 
-    // Fallback to scope-exit frees for any owned locals not handled by liveness or immediate free.
+    freed_on_all_paths
+}
+
+fn emit_scope_cleanup(instructions: &mut Vec<IRInstruction>, binding_infos: &mut [BindingInfo], freed_on_all_paths: &HashSet<usize>, context: &mut CompileContext) {
     for info in binding_infos.iter().filter(|info| info.owns_heap) {
         if freed_on_all_paths.contains(&info.slot) {
             continue;
         }
-        instructions.push(IRInstruction::FreeLocal(info.slot));
+        emit_free_for_slot(instructions, info.slot, info.kind);
     }
 
-    context.remove_variables(&added_variables);
-
-    Ok(CompileResult::with_instructions(instructions, body_kind).with_heap_ownership(body_result.heap_ownership))
+    for info in binding_infos {
+        for slot in &mut info.retained_slots {
+            if freed_on_all_paths.contains(&slot.slot) {
+                super::free_retained_dependents(slot, instructions, context);
+            } else {
+                super::free_retained_slot(slot.clone(), instructions, context);
+            }
+        }
+    }
 }

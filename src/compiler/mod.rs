@@ -10,96 +10,39 @@ mod context;
 mod expressions;
 mod functions;
 mod liveness;
+mod types;
 
 pub use context::CompileContext;
+pub use types::{CompileResult, HeapOwnership, MapValueTypes, RetainedSlot, ValueKind};
 
 use self::liveness::{apply_liveness_plan, compute_liveness_plan};
-use crate::ast::Node;
+use crate::ast::{Node, Primitive};
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-const TAG_NIL: i64 = 0;
-const TAG_NUMBER: i64 = 1;
-const TAG_BOOLEAN: i64 = 2;
-const TAG_STRING: i64 = 3;
-const TAG_VECTOR: i64 = 4;
-const TAG_MAP: i64 = 5;
-const TAG_KEYWORD: i64 = 6;
-const TAG_SET: i64 = 7;
-const TAG_ANY: i64 = 0xff;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ValueKind {
-    Any,
-    Number,
-    Boolean,
-    String,
-    Keyword,
-    Vector,
-    Map,
-    Set,
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum MapKeyLiteral {
+    String(String),
+    Keyword(String),
+    Number(i64),
+    Boolean(bool),
     Nil,
 }
 
-impl ValueKind {
-    pub fn is_heap_kind(self) -> bool {
-        matches!(self, ValueKind::String | ValueKind::Vector | ValueKind::Map | ValueKind::Set)
-    }
-
-    pub fn runtime_tag(self) -> i64 {
-        match self {
-            ValueKind::Nil => TAG_NIL,
-            ValueKind::Number => TAG_NUMBER,
-            ValueKind::Boolean => TAG_BOOLEAN,
-            ValueKind::String => TAG_STRING,
-            ValueKind::Keyword => TAG_KEYWORD,
-            ValueKind::Vector => TAG_VECTOR,
-            ValueKind::Map => TAG_MAP,
-            ValueKind::Set => TAG_SET,
-            ValueKind::Any => TAG_ANY,
-        }
+pub(super) fn is_count_debug_requested() -> bool {
+    match std::env::var("SLISP_DEBUG_COUNTS") {
+        Ok(value) => matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"),
+        Err(_) => false,
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum HeapOwnership {
-    None,
-    Borrowed,
-    Owned,
-}
-
-impl HeapOwnership {
-    pub fn combine(self, other: Self) -> Self {
-        use HeapOwnership::*;
-        match (self, other) {
-            (Owned, Owned) => Owned,
-            (None, None) => None,
-            (None, Borrowed) | (Borrowed, None) | (Borrowed, Borrowed) => Borrowed,
-            _ => Borrowed,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CompileResult {
-    pub instructions: Vec<IRInstruction>,
-    pub kind: ValueKind,
-    pub heap_ownership: HeapOwnership,
-}
-
-impl CompileResult {
-    pub fn with_instructions(instructions: Vec<IRInstruction>, kind: ValueKind) -> Self {
-        Self {
-            instructions,
-            kind,
-            heap_ownership: HeapOwnership::None,
-        }
+fn maybe_insert_count_debug_preamble(program: &mut IRProgram) {
+    if !is_count_debug_requested() {
+        return;
     }
 
-    pub fn with_heap_ownership(mut self, ownership: HeapOwnership) -> Self {
-        self.heap_ownership = ownership;
-        self
-    }
+    program.add_instruction(IRInstruction::Push(1));
+    program.add_instruction(IRInstruction::RuntimeCall("_count_debug_enable".to_string(), 1));
 }
 
 /// Determine if a symbol refers to a heap-allocated local variable in the current context.
@@ -119,11 +62,12 @@ pub enum CompileError {
 /// Compile a single expression to IR
 pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
     let mut program = IRProgram::new();
+    maybe_insert_count_debug_preamble(&mut program);
     let mut context = CompileContext::new();
-    let result = compile_node(node, &mut context, &mut program)?;
-    for instruction in result.instructions {
-        program.add_instruction(instruction);
-    }
+    let mut result = compile_node(node, &mut context, &mut program)?;
+    let mut expr_instructions = std::mem::take(&mut result.instructions);
+    result.free_retained_slots(&mut expr_instructions, &mut context);
+    append_with_offset(&mut program, expr_instructions);
     program.add_instruction(IRInstruction::Return);
     Ok(program)
 }
@@ -131,6 +75,7 @@ pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
 /// Compile a program (multiple top-level expressions) to IR
 pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> {
     let mut program = IRProgram::new();
+    maybe_insert_count_debug_preamble(&mut program);
     let mut context = CompileContext::new();
     let mut emitted_toplevel_code = false;
 
@@ -168,40 +113,46 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
         }
     }
 
-    // Second pass: compile all expressions
+    // Prime function metadata (return types/ownership) by compiling each defn in a throwaway context
+    // before any non-defn expressions run. This ensures early call sites (e.g. in other defns)
+    // can infer accurate types even though full function compilation happens later.
+    let mut metadata_context = context.clone();
+    let mut metadata_program = IRProgram::new();
+    for expr in expressions {
+        if let Node::List { root } = expr {
+            if let Some(Node::Symbol { value }) = root.first() {
+                if value == "defn" {
+                    // Skip malformed defns here; they'll be reported in the main compilation loop.
+                    if root.len() == 4 {
+                        functions::compile_defn(&root[1..], &mut metadata_context, &mut metadata_program)?;
+                    }
+                }
+            }
+        }
+    }
+    context.function_return_types = metadata_context.function_return_types.clone();
+    context.function_return_map_value_types = metadata_context.function_return_map_value_types.clone();
+    context.function_return_ownership = metadata_context.function_return_ownership.clone();
+
+    let mut pending_defns: Vec<Vec<Node>> = Vec::new();
+
+    // Second pass: compile non-defn expressions, collect function bodies for later
     for expr in expressions {
         if let Node::List { root } = expr {
             if !root.is_empty() {
                 if let Node::Symbol { value } = &root[0] {
                     if value == "defn" {
-                        let (mut instructions, func_info) = functions::compile_defn(&root[1..], &mut context, &mut program)?;
-                        let start_address = program.len();
-
-                        if let IRInstruction::DefineFunction(ref name, ref params, _) = instructions[0] {
-                            instructions[0] = IRInstruction::DefineFunction(name.clone(), *params, start_address);
-                        }
-
-                        let updated_func_info = crate::ir::FunctionInfo {
-                            name: func_info.name,
-                            param_count: func_info.param_count,
-                            start_address,
-                            local_count: func_info.local_count,
-                        };
-
-                        for instruction in instructions {
-                            program.add_instruction(instruction);
-                        }
-                        program.add_function(updated_func_info);
+                        pending_defns.push(root.clone());
                         continue;
                     }
                 }
             }
         }
 
-        let result = compile_node(expr, &mut context, &mut program)?;
-        for instruction in result.instructions {
-            program.add_instruction(instruction);
-        }
+        let mut result = compile_node(expr, &mut context, &mut program)?;
+        let mut expr_instructions = std::mem::take(&mut result.instructions);
+        result.free_retained_slots(&mut expr_instructions, &mut context);
+        append_with_offset(&mut program, expr_instructions);
         emitted_toplevel_code = true;
     }
 
@@ -209,11 +160,67 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
         program.add_instruction(IRInstruction::Return);
     }
 
+    // Compile functions in reverse order so parameter inference from later call sites is available.
+    for defn in pending_defns.into_iter().rev() {
+        let (mut instructions, func_info) = functions::compile_defn(&defn[1..], &mut context, &mut program)?;
+        let start_address = program.len();
+
+        if let IRInstruction::DefineFunction(ref name, ref params, _) = instructions[0] {
+            instructions[0] = IRInstruction::DefineFunction(name.clone(), *params, start_address);
+        }
+
+        let updated_func_info = crate::ir::FunctionInfo {
+            name: func_info.name,
+            param_count: func_info.param_count,
+            start_address,
+            local_count: func_info.local_count,
+        };
+
+        append_with_offset(&mut program, instructions);
+        program.add_function(updated_func_info);
+    }
+
     if context.get_function("-main").is_some() {
         program.set_entry_point("-main".to_string());
     }
 
     Ok(program)
+}
+
+fn append_with_offset(program: &mut IRProgram, instructions: Vec<IRInstruction>) {
+    if instructions.is_empty() {
+        return;
+    }
+
+    let base = program.len();
+    for instruction in instructions {
+        let adjusted = match instruction {
+            IRInstruction::Jump(target) => IRInstruction::Jump(base + target),
+            IRInstruction::JumpIfZero(target) => IRInstruction::JumpIfZero(base + target),
+            other => other,
+        };
+        program.add_instruction(adjusted);
+    }
+}
+
+pub(super) fn extend_with_offset(target: &mut Vec<IRInstruction>, mut new_instructions: Vec<IRInstruction>) {
+    if new_instructions.is_empty() {
+        return;
+    }
+
+    let base = target.len();
+    if base != 0 {
+        for instruction in &mut new_instructions {
+            match instruction {
+                IRInstruction::Jump(target_idx) | IRInstruction::JumpIfZero(target_idx) => {
+                    *target_idx += base;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    target.extend(new_instructions);
 }
 
 /// Compile a single AST node to IR
@@ -238,7 +245,10 @@ pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &
                 } else {
                     HeapOwnership::None
                 };
-                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadLocal(slot)], kind).with_heap_ownership(ownership))
+                let map_value_types = context.get_variable_map_value_types(value).cloned();
+                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadLocal(slot)], kind)
+                    .with_heap_ownership(ownership)
+                    .with_map_value_types(map_value_types))
             } else {
                 Err(CompileError::UndefinedVariable(value.clone()))
             }
@@ -283,14 +293,16 @@ fn compile_vector_literal(elements: &[Node], context: &mut CompileContext, progr
     ordered_tag_slots.sort_unstable();
     ordered_tag_slots.reverse();
 
+    let mut retained_slots: Vec<RetainedSlot> = Vec::new();
+
     for idx in 0..count {
         let element = &elements[idx];
         let value_slot = ordered_value_slots[idx];
         let tag_slot = ordered_tag_slots[idx];
 
-        let element_result = compile_node(element, context, program)?;
-        instructions.extend(element_result.instructions);
-        instructions.push(IRInstruction::StoreLocal(value_slot));
+        let mut element_result = compile_node(element, context, program)?;
+        let element_instructions = std::mem::take(&mut element_result.instructions);
+        extend_with_offset(&mut instructions, element_instructions);
 
         let mut element_kind = element_result.kind;
         if element_kind == ValueKind::Any {
@@ -303,8 +315,14 @@ fn compile_vector_literal(elements: &[Node], context: &mut CompileContext, progr
             }
         }
 
+        ensure_owned_on_stack(&mut instructions, element_kind, &mut element_result.heap_ownership);
+        let element_dependents = element_result.take_retained_slots();
+        instructions.push(IRInstruction::StoreLocal(value_slot));
+        track_heap_slot(&mut retained_slots, value_slot, element_kind, None, element_dependents);
+
         instructions.push(IRInstruction::Push(element_kind.runtime_tag()));
         instructions.push(IRInstruction::StoreLocal(tag_slot));
+        element_result.free_retained_slots(&mut instructions, context);
     }
 
     let values_base = ordered_value_slots[0];
@@ -314,15 +332,20 @@ fn compile_vector_literal(elements: &[Node], context: &mut CompileContext, progr
     instructions.push(IRInstruction::Push(count as i64));
     instructions.push(IRInstruction::RuntimeCall("_vector_create".to_string(), 3));
 
-    for slot in value_slots {
-        context.release_temp_slot(slot);
-    }
+    dedup_retained_slots(&mut retained_slots);
 
+    for slot in value_slots {
+        if !retains_slot(&retained_slots, slot) {
+            context.release_temp_slot(slot);
+        }
+    }
     for slot in tag_slots {
         context.release_temp_slot(slot);
     }
 
-    Ok(CompileResult::with_instructions(instructions, ValueKind::Vector).with_heap_ownership(HeapOwnership::Owned))
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Vector)
+        .with_heap_ownership(HeapOwnership::Owned)
+        .with_retained_slots(retained_slots))
 }
 
 fn compile_set_literal(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
@@ -352,18 +375,26 @@ fn compile_set_literal(args: &[Node], context: &mut CompileContext, program: &mu
     ordered_tag_slots.sort_unstable();
     ordered_tag_slots.reverse();
 
+    let mut retained_slots: Vec<RetainedSlot> = Vec::new();
+
     for idx in 0..count {
         let value_node = &args[idx];
         let value_slot = ordered_value_slots[idx];
         let tag_slot = ordered_tag_slots[idx];
 
-        let value_result = compile_node(value_node, context, program)?;
-        instructions.extend(value_result.instructions);
-        instructions.push(IRInstruction::StoreLocal(value_slot));
-
+        let value_literal = literal_map_key(value_node);
+        let mut value_result = compile_node(value_node, context, program)?;
         let value_kind = resolve_map_key_kind(value_node, value_result.kind, context)?;
+        let value_instructions = std::mem::take(&mut value_result.instructions);
+        extend_with_offset(&mut instructions, value_instructions);
+        ensure_owned_on_stack(&mut instructions, value_kind, &mut value_result.heap_ownership);
+        let value_dependents = value_result.take_retained_slots();
+        instructions.push(IRInstruction::StoreLocal(value_slot));
+        track_heap_slot(&mut retained_slots, value_slot, value_kind, value_literal.clone(), value_dependents);
+
         instructions.push(IRInstruction::Push(runtime_tag_for_key(value_kind)));
         instructions.push(IRInstruction::StoreLocal(tag_slot));
+        value_result.free_retained_slots(&mut instructions, context);
     }
 
     instructions.push(IRInstruction::PushLocalAddress(ordered_value_slots[0]));
@@ -371,15 +402,21 @@ fn compile_set_literal(args: &[Node], context: &mut CompileContext, program: &mu
     instructions.push(IRInstruction::Push(count as i64));
     instructions.push(IRInstruction::RuntimeCall("_set_create".to_string(), 3));
 
+    dedup_retained_slots(&mut retained_slots);
+
     for slot in value_slots {
-        context.release_temp_slot(slot);
+        if !retains_slot(&retained_slots, slot) {
+            context.release_temp_slot(slot);
+        }
     }
 
     for slot in tag_slots {
         context.release_temp_slot(slot);
     }
 
-    Ok(CompileResult::with_instructions(instructions, ValueKind::Set).with_heap_ownership(HeapOwnership::Owned))
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Set)
+        .with_heap_ownership(HeapOwnership::Owned)
+        .with_retained_slots(retained_slots))
 }
 
 /// Compile count operation (string length)
@@ -388,9 +425,14 @@ fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRPr
         return Err(CompileError::ArityError("count".to_string(), 1, args.len()));
     }
 
-    let arg_result = compile_node(&args[0], context, program)?;
-    let mut instructions = arg_result.instructions;
+    let mut arg_result = compile_node(&args[0], context, program)?;
+    #[cfg(debug_assertions)]
+    if std::env::var("SLISP_DEBUG_COUNT").is_ok() {
+        eprintln!("[slisp:debug_count] arg ownership={:?} kind={:?}", arg_result.heap_ownership, arg_result.kind);
+    }
+    let mut instructions = std::mem::take(&mut arg_result.instructions);
     let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
     let mut temp_slots = Vec::new();
 
     if arg_result.heap_ownership == HeapOwnership::Owned {
@@ -398,6 +440,7 @@ fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRPr
         instructions.push(IRInstruction::StoreLocal(slot));
         instructions.push(IRInstruction::LoadLocal(slot));
         tracked_slots.insert(slot);
+        slot_kinds.insert(slot, ValueKind::Any);
         temp_slots.push(slot);
     }
 
@@ -420,14 +463,19 @@ fn compile_count(args: &[Node], context: &mut CompileContext, program: &mut IRPr
     };
     instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
 
+    for slot in &temp_slots {
+        slot_kinds.insert(*slot, target_kind);
+    }
+
     if !tracked_slots.is_empty() {
         let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_liveness_plan(instructions, &plan);
+        instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
     }
 
     for slot in temp_slots {
         context.release_temp_slot(slot);
     }
+    arg_result.free_retained_slots(&mut instructions, context);
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Number))
 }
@@ -454,31 +502,31 @@ fn resolve_map_key_kind(node: &Node, initial: ValueKind, context: &CompileContex
 }
 
 fn runtime_tag_for_key(kind: ValueKind) -> i64 {
-    match kind {
-        ValueKind::Nil => TAG_NIL,
-        ValueKind::Number => TAG_NUMBER,
-        ValueKind::Boolean => TAG_BOOLEAN,
-        ValueKind::String => TAG_STRING,
-        ValueKind::Keyword => TAG_KEYWORD,
-        _ => TAG_ANY,
+    kind.runtime_tag()
+}
+
+fn literal_map_key_from_primitive(value: &Primitive) -> Option<MapKeyLiteral> {
+    match value {
+        Primitive::String(inner) => Some(MapKeyLiteral::String(inner.clone())),
+        Primitive::Keyword(inner) => Some(MapKeyLiteral::Keyword(inner.clone())),
+        Primitive::Number(num) => Some(MapKeyLiteral::Number(*num as i64)),
+        Primitive::Boolean(flag) => Some(MapKeyLiteral::Boolean(*flag)),
+    }
+}
+
+fn literal_map_key(node: &Node) -> Option<MapKeyLiteral> {
+    match node {
+        Node::Primitive { value } => literal_map_key_from_primitive(value),
+        Node::Symbol { value } if value == "nil" => Some(MapKeyLiteral::Nil),
+        _ => None,
     }
 }
 
 fn runtime_tag_for_value(kind: ValueKind) -> i64 {
-    match kind {
-        ValueKind::Nil => TAG_NIL,
-        ValueKind::Number => TAG_NUMBER,
-        ValueKind::Boolean => TAG_BOOLEAN,
-        ValueKind::String => TAG_STRING,
-        ValueKind::Keyword => TAG_KEYWORD,
-        ValueKind::Vector => TAG_VECTOR,
-        ValueKind::Map => TAG_MAP,
-        ValueKind::Set => TAG_SET,
-        ValueKind::Any => TAG_ANY,
-    }
+    kind.runtime_tag()
 }
 
-fn clone_runtime_for_kind(kind: ValueKind) -> Option<&'static str> {
+pub(super) fn clone_runtime_for_kind(kind: ValueKind) -> Option<&'static str> {
     match kind {
         ValueKind::String => Some("_string_clone"),
         ValueKind::Vector => Some("_vector_clone"),
@@ -488,10 +536,97 @@ fn clone_runtime_for_kind(kind: ValueKind) -> Option<&'static str> {
     }
 }
 
+fn runtime_free_for_kind(kind: ValueKind) -> Option<&'static str> {
+    match kind {
+        ValueKind::Vector => Some("_vector_free"),
+        ValueKind::Map => Some("_map_free"),
+        ValueKind::Set => Some("_set_free"),
+        _ => None,
+    }
+}
+
+pub(super) fn emit_free_for_slot(instructions: &mut Vec<IRInstruction>, slot: usize, kind: ValueKind) {
+    if let Some(runtime) = runtime_free_for_kind(kind) {
+        instructions.push(IRInstruction::FreeLocalWithRuntime(slot, runtime.to_string()));
+    } else {
+        instructions.push(IRInstruction::FreeLocal(slot));
+    }
+}
+
+pub(super) fn free_retained_slot(slot: RetainedSlot, instructions: &mut Vec<IRInstruction>, context: &mut CompileContext) {
+    for dependent in slot.dependents {
+        free_retained_slot(dependent, instructions, context);
+    }
+    emit_free_for_slot(instructions, slot.slot, slot.kind);
+    context.release_temp_slot(slot.slot);
+}
+
+pub(super) fn free_retained_dependents(slot: &mut RetainedSlot, instructions: &mut Vec<IRInstruction>, context: &mut CompileContext) {
+    for dependent in slot.dependents.drain(..) {
+        free_retained_slot(dependent, instructions, context);
+    }
+}
+
+fn apply_plan_with_slot_kinds(instructions: Vec<IRInstruction>, plan: &liveness::LivenessPlan, slot_kinds: &HashMap<usize, ValueKind>) -> Vec<IRInstruction> {
+    apply_liveness_plan(instructions, plan, |insts, slot| {
+        let kind = slot_kinds.get(&slot).copied().unwrap_or(ValueKind::Any);
+        emit_free_for_slot(insts, slot, kind);
+    })
+}
+
+fn ensure_owned_on_stack(instructions: &mut Vec<IRInstruction>, kind: ValueKind, ownership: &mut HeapOwnership) {
+    if *ownership == HeapOwnership::Owned {
+        return;
+    }
+
+    if let Some(runtime) = clone_runtime_for_kind(kind) {
+        instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
+        *ownership = HeapOwnership::Owned;
+    }
+}
+
+fn track_heap_slot(retained_slots: &mut Vec<RetainedSlot>, slot: usize, kind: ValueKind, key: Option<MapKeyLiteral>, dependents: Vec<RetainedSlot>) {
+    if kind.is_heap_kind() {
+        retained_slots.push(RetainedSlot { slot, key, kind, dependents });
+    }
+}
+
+fn release_slots_for_literal(retained_slots: &mut Vec<RetainedSlot>, literal: &MapKeyLiteral, instructions: &mut Vec<IRInstruction>, context: &mut CompileContext) {
+    let mut idx = 0;
+    while idx < retained_slots.len() {
+        if retained_slots[idx].key.as_ref() == Some(literal) {
+            let slot_info = retained_slots.remove(idx);
+            free_retained_slot(slot_info, instructions, context);
+        } else {
+            idx += 1;
+        }
+    }
+}
+
+fn dedup_retained_slots(slots: &mut Vec<RetainedSlot>) {
+    if slots.is_empty() {
+        return;
+    }
+    slots.sort_by_key(|info| info.slot);
+    slots.dedup_by(|a, b| {
+        if a.slot == b.slot {
+            a.dependents.extend(b.dependents.drain(..));
+            true
+        } else {
+            false
+        }
+    });
+}
+
+fn retains_slot(slots: &[RetainedSlot], slot: usize) -> bool {
+    slots.iter().any(|info| info.slot == slot)
+}
+
 struct DefaultValue {
     slot: usize,
     owned: bool,
     kind: ValueKind,
+    retained_slots: Vec<RetainedSlot>,
 }
 
 enum DefaultHandling {
@@ -500,9 +635,10 @@ enum DefaultHandling {
 }
 
 impl DefaultHandling {
-    fn from_parts(slot: Option<usize>, owned: bool, kind: ValueKind) -> Self {
+    fn from_parts(slot: Option<usize>, owned: bool, kind: ValueKind, mut retained_slots: Vec<RetainedSlot>) -> Self {
+        dedup_retained_slots(&mut retained_slots);
         match slot {
-            Some(slot) => DefaultHandling::Some(DefaultValue { slot, owned, kind }),
+            Some(slot) => DefaultHandling::Some(DefaultValue { slot, owned, kind, retained_slots }),
             None => DefaultHandling::None,
         }
     }
@@ -511,10 +647,13 @@ impl DefaultHandling {
         matches!(self, DefaultHandling::Some(_))
     }
 
-    fn success_cleanup(&self, instructions: &mut Vec<IRInstruction>) {
+    fn success_cleanup(&mut self, instructions: &mut Vec<IRInstruction>, context: &mut CompileContext) {
         if let DefaultHandling::Some(default) = self {
             if default.owned {
-                instructions.push(IRInstruction::FreeLocal(default.slot));
+                emit_free_for_slot(instructions, default.slot, default.kind);
+            }
+            for slot in default.retained_slots.drain(..) {
+                free_retained_slot(slot, instructions, context);
             }
         }
     }
@@ -526,10 +665,10 @@ impl DefaultHandling {
                 if let Some(runtime) = clone_runtime_for_kind(default.kind) {
                     instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
                     if default.owned {
-                        instructions.push(IRInstruction::FreeLocal(default.slot));
+                        emit_free_for_slot(instructions, default.slot, default.kind);
                     }
                 } else if default.owned {
-                    instructions.push(IRInstruction::FreeLocal(default.slot));
+                    emit_free_for_slot(instructions, default.slot, default.kind);
                 }
             }
             DefaultHandling::None => instructions.push(IRInstruction::Push(0)),
@@ -541,11 +680,33 @@ impl DefaultHandling {
             context.release_temp_slot(default.slot);
         }
     }
+
+    fn inferred_kind(&self) -> Option<ValueKind> {
+        match self {
+            DefaultHandling::Some(default) => Some(default.kind),
+            DefaultHandling::None => None,
+        }
+    }
+
+    fn take_retained_slots(&mut self) -> Vec<RetainedSlot> {
+        match self {
+            DefaultHandling::Some(default) => std::mem::take(&mut default.retained_slots),
+            DefaultHandling::None => Vec::new(),
+        }
+    }
 }
 
-fn emit_vector_get(instructions: &mut Vec<IRInstruction>, context: &mut CompileContext, tracked_slots: &mut HashSet<usize>, owned_arg_slot: Option<usize>, default: &DefaultHandling) {
+fn emit_vector_get(
+    instructions: &mut Vec<IRInstruction>,
+    context: &mut CompileContext,
+    tracked_slots: &mut HashSet<usize>,
+    slot_kinds: &mut HashMap<usize, ValueKind>,
+    owned_arg_slot: Option<usize>,
+    default: &mut DefaultHandling,
+) {
     if let Some(slot) = owned_arg_slot {
         tracked_slots.remove(&slot);
+        slot_kinds.remove(&slot);
     }
 
     let out_slot = context.allocate_temp_slot();
@@ -558,7 +719,7 @@ fn emit_vector_get(instructions: &mut Vec<IRInstruction>, context: &mut CompileC
     instructions.push(IRInstruction::JumpIfZero(0));
 
     instructions.push(IRInstruction::LoadLocal(out_slot));
-    default.success_cleanup(instructions);
+    default.success_cleanup(instructions, context);
     let success_jump_pos = instructions.len();
     instructions.push(IRInstruction::Jump(0));
 
@@ -573,7 +734,7 @@ fn emit_vector_get(instructions: &mut Vec<IRInstruction>, context: &mut CompileC
     context.release_temp_slot(out_slot);
 }
 
-fn emit_string_get(instructions: &mut Vec<IRInstruction>, context: &mut CompileContext, default: &DefaultHandling) {
+fn emit_string_get(instructions: &mut Vec<IRInstruction>, context: &mut CompileContext, default: &mut DefaultHandling) {
     instructions.push(IRInstruction::RuntimeCall("_string_get".to_string(), 2));
 
     let result_slot = context.allocate_temp_slot();
@@ -583,7 +744,7 @@ fn emit_string_get(instructions: &mut Vec<IRInstruction>, context: &mut CompileC
     instructions.push(IRInstruction::JumpIfZero(0));
 
     instructions.push(IRInstruction::LoadLocal(result_slot));
-    default.success_cleanup(instructions);
+    default.success_cleanup(instructions, context);
     let success_jump_pos = instructions.len();
     instructions.push(IRInstruction::Jump(0));
 
@@ -603,48 +764,58 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
         return Err(CompileError::ArityError("get".to_string(), 2, args.len()));
     }
 
-    let target_result = compile_node(&args[0], context, program)?;
-    let mut instructions = target_result.instructions;
+    let mut target_result = compile_node(&args[0], context, program)?;
+    let target_map_value_types = target_result.map_value_types.clone();
+    let mut instructions = std::mem::take(&mut target_result.instructions);
     let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
     let mut temp_slots = Vec::new();
     let mut owned_arg_slot: Option<usize> = None;
+    let mut owned_key_slot: Option<usize> = None;
 
     if target_result.heap_ownership == HeapOwnership::Owned {
         let slot = context.allocate_temp_slot();
         instructions.push(IRInstruction::StoreLocal(slot));
         instructions.push(IRInstruction::LoadLocal(slot));
         tracked_slots.insert(slot);
+        slot_kinds.insert(slot, ValueKind::Any);
         temp_slots.push(slot);
         owned_arg_slot = Some(slot);
     }
 
-    let CompileResult {
-        instructions: key_instructions,
-        kind: mut key_kind,
-        heap_ownership: key_ownership,
-    } = compile_node(&args[1], context, program)?;
-    instructions.extend(key_instructions);
+    let mut key_result = compile_node(&args[1], context, program)?;
+    let key_ownership = key_result.heap_ownership;
+    let mut key_kind = key_result.kind;
+    let key_instructions = std::mem::take(&mut key_result.instructions);
+    extend_with_offset(&mut instructions, key_instructions);
+    key_result.free_retained_slots(&mut instructions, context);
 
     let mut default_slot = None;
     let mut default_owned = false;
     let mut default_kind = ValueKind::Any;
+    let mut default_retained_slots = Vec::new();
 
     if args.len() == 3 {
-        let default_result = compile_node(&args[2], context, program)?;
+        let mut default_result = compile_node(&args[2], context, program)?;
         default_kind = resolve_value_kind(&args[2], default_result.kind, context);
-        instructions.extend(default_result.instructions);
+        default_retained_slots = default_result.take_retained_slots();
+        extend_with_offset(&mut instructions, default_result.instructions);
         let slot = context.allocate_temp_slot();
         instructions.push(IRInstruction::StoreLocal(slot));
         default_owned = default_result.heap_ownership == HeapOwnership::Owned;
         default_slot = Some(slot);
     }
 
-    let default_handling = DefaultHandling::from_parts(default_slot, default_owned, default_kind);
+    let mut default_handling = DefaultHandling::from_parts(default_slot, default_owned, default_kind, default_retained_slots);
     let target_kind = resolve_value_kind(&args[0], target_result.kind, context);
+
+    if let Some(slot) = owned_arg_slot {
+        slot_kinds.insert(slot, target_kind);
+    }
 
     match target_kind {
         ValueKind::Vector => {
-            emit_vector_get(&mut instructions, context, &mut tracked_slots, owned_arg_slot, &default_handling);
+            emit_vector_get(&mut instructions, context, &mut tracked_slots, &mut slot_kinds, owned_arg_slot, &mut default_handling);
         }
         ValueKind::Map => {
             if key_ownership == HeapOwnership::Owned {
@@ -652,10 +823,15 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
                 instructions.push(IRInstruction::StoreLocal(slot));
                 instructions.push(IRInstruction::LoadLocal(slot));
                 tracked_slots.insert(slot);
+                slot_kinds.insert(slot, ValueKind::Any);
                 temp_slots.push(slot);
+                owned_key_slot = Some(slot);
             }
 
             key_kind = resolve_map_key_kind(&args[1], key_kind, context)?;
+            if let Some(slot) = owned_key_slot {
+                slot_kinds.insert(slot, key_kind);
+            }
             let key_tag = runtime_tag_for_key(key_kind);
             instructions.push(IRInstruction::Push(key_tag));
 
@@ -677,7 +853,12 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
             instructions.push(IRInstruction::JumpIfZero(0));
 
             instructions.push(IRInstruction::LoadLocal(value_slot));
-            default_handling.success_cleanup(&mut instructions);
+            instructions.push(IRInstruction::LoadLocal(tag_slot));
+            instructions.push(IRInstruction::RuntimeCall("_map_value_clone".to_string(), 2));
+            instructions.push(IRInstruction::StoreLocal(value_slot));
+
+            instructions.push(IRInstruction::LoadLocal(value_slot));
+            default_handling.success_cleanup(&mut instructions, context);
             let success_jump_pos = instructions.len();
             instructions.push(IRInstruction::Jump(0));
 
@@ -690,13 +871,13 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
             instructions[success_jump_pos] = IRInstruction::Jump(end_pos);
         }
         _ => {
-            emit_string_get(&mut instructions, context, &default_handling);
+            emit_string_get(&mut instructions, context, &mut default_handling);
         }
     }
 
     if !tracked_slots.is_empty() {
         let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_liveness_plan(instructions, &plan);
+        instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
     }
 
     for slot in temp_slots {
@@ -704,20 +885,34 @@ fn compile_get(args: &[Node], context: &mut CompileContext, program: &mut IRProg
     }
 
     default_handling.release_slot(context);
+    target_result.free_retained_slots(&mut instructions, context);
+
+    let inferred_map_value_kind = target_map_value_types.as_ref().and_then(|types| literal_map_key(&args[1]).and_then(|key| types.get(&key).copied()));
 
     let result_kind = match target_kind {
-        ValueKind::Vector | ValueKind::Map => ValueKind::Any,
-        _ if default_handling.has_value() => ValueKind::Any,
+        ValueKind::Vector => default_handling.inferred_kind().unwrap_or(ValueKind::Any),
+        ValueKind::Map => inferred_map_value_kind.or_else(|| default_handling.inferred_kind()).unwrap_or(ValueKind::Any),
+        _ if default_handling.has_value() => default_handling.inferred_kind().unwrap_or(ValueKind::String),
         _ => ValueKind::String,
     };
 
     let heap_ownership = match target_kind {
         ValueKind::Vector => HeapOwnership::None,
-        ValueKind::Map => HeapOwnership::None,
+        ValueKind::Map => {
+            if result_kind.is_heap_clone_kind() {
+                HeapOwnership::Owned
+            } else {
+                HeapOwnership::None
+            }
+        }
         _ => HeapOwnership::Owned,
     };
 
-    Ok(CompileResult::with_instructions(instructions, result_kind).with_heap_ownership(heap_ownership))
+    let retained_slots = default_handling.take_retained_slots();
+
+    Ok(CompileResult::with_instructions(instructions, result_kind)
+        .with_heap_ownership(heap_ownership)
+        .with_retained_slots(retained_slots))
 }
 
 /// Compile subs operation (substring extraction)
@@ -726,9 +921,10 @@ fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRPro
         return Err(CompileError::ArityError("subs".to_string(), 2, args.len()));
     }
 
-    let arg_result = compile_node(&args[0], context, program)?;
-    let mut instructions = arg_result.instructions;
+    let mut arg_result = compile_node(&args[0], context, program)?;
+    let mut instructions = std::mem::take(&mut arg_result.instructions);
     let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
     let mut temp_slots = Vec::new();
 
     if arg_result.heap_ownership == HeapOwnership::Owned {
@@ -736,13 +932,20 @@ fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRPro
         instructions.push(IRInstruction::StoreLocal(slot));
         instructions.push(IRInstruction::LoadLocal(slot));
         tracked_slots.insert(slot);
+        slot_kinds.insert(slot, ValueKind::Any);
         temp_slots.push(slot);
     }
 
-    instructions.extend(compile_node(&args[1], context, program)?.instructions);
+    let mut start_result = compile_node(&args[1], context, program)?;
+    let start_instructions = std::mem::take(&mut start_result.instructions);
+    extend_with_offset(&mut instructions, start_instructions);
+    start_result.free_retained_slots(&mut instructions, context);
 
     if args.len() == 3 {
-        instructions.extend(compile_node(&args[2], context, program)?.instructions);
+        let mut end_result = compile_node(&args[2], context, program)?;
+        let end_instructions = std::mem::take(&mut end_result.instructions);
+        extend_with_offset(&mut instructions, end_instructions);
+        end_result.free_retained_slots(&mut instructions, context);
     } else {
         instructions.push(IRInstruction::Push(-1));
     }
@@ -762,14 +965,19 @@ fn compile_subs(args: &[Node], context: &mut CompileContext, program: &mut IRPro
 
     instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 3));
 
+    for slot in &temp_slots {
+        slot_kinds.insert(*slot, target_kind);
+    }
+
     if !tracked_slots.is_empty() {
         let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_liveness_plan(instructions, &plan);
+        instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
     }
 
     for slot in temp_slots {
         context.release_temp_slot(slot);
     }
+    arg_result.free_retained_slots(&mut instructions, context);
 
     let result_kind = if target_kind == ValueKind::Vector { ValueKind::Vector } else { ValueKind::String };
 
@@ -796,8 +1004,9 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
     let mut needs_free = Vec::with_capacity(count);
 
     for (arg, slot) in args.iter().zip(ordered_slots.iter()) {
-        let arg_result = compile_node(arg, context, program)?;
-        instructions.extend(arg_result.instructions);
+        let mut arg_result = compile_node(arg, context, program)?;
+        let arg_instructions = std::mem::take(&mut arg_result.instructions);
+        extend_with_offset(&mut instructions, arg_instructions);
 
         let mut slot_needs_free = arg_result.heap_ownership == HeapOwnership::Owned;
 
@@ -805,7 +1014,12 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
         if arg_kind == ValueKind::Any {
             if let Node::Symbol { value } = arg {
                 if let Some(var_kind) = context.get_variable_type(value).or_else(|| context.get_parameter_type(value)) {
-                    arg_kind = var_kind;
+                    if var_kind != ValueKind::Any {
+                        arg_kind = var_kind;
+                    } else if context.get_parameter(value).is_some() {
+                        context.mark_heap_allocated(value, ValueKind::String);
+                        arg_kind = ValueKind::String;
+                    }
                 } else if context.get_parameter(value).is_some() {
                     context.mark_heap_allocated(value, ValueKind::String);
                     arg_kind = ValueKind::String;
@@ -864,6 +1078,7 @@ fn compile_str(args: &[Node], context: &mut CompileContext, program: &mut IRProg
 
         instructions.push(IRInstruction::StoreLocal(*slot));
         needs_free.push(slot_needs_free);
+        arg_result.free_retained_slots(&mut instructions, context);
     }
 
     let base_slot = ordered_slots[0];
@@ -906,6 +1121,8 @@ fn compile_hash_map(args: &[Node], context: &mut CompileContext, program: &mut I
     }
 
     let mut instructions = Vec::new();
+    let mut map_value_types: Option<MapValueTypes> = None;
+    let mut retained_slots: Vec<RetainedSlot> = Vec::new();
 
     let key_value_slots = context.allocate_contiguous_temp_slots(pair_count);
     let mut ordered_key_value_slots = key_value_slots.clone();
@@ -930,25 +1147,48 @@ fn compile_hash_map(args: &[Node], context: &mut CompileContext, program: &mut I
     for idx in 0..pair_count {
         let key_node = &args[idx * 2];
         let value_node = &args[idx * 2 + 1];
+        let key_literal = literal_map_key(key_node);
 
         let key_slot = ordered_key_value_slots[idx];
         let key_tag_slot = ordered_key_tag_slots[idx];
         let value_slot = ordered_value_slots[idx];
         let value_tag_slot = ordered_value_tag_slots[idx];
 
-        let key_result = compile_node(key_node, context, program)?;
-        instructions.extend(key_result.instructions);
-        instructions.push(IRInstruction::StoreLocal(key_slot));
+        let mut key_result = compile_node(key_node, context, program)?;
         let key_kind = resolve_map_key_kind(key_node, key_result.kind, context)?;
+        let key_instructions = std::mem::take(&mut key_result.instructions);
+        extend_with_offset(&mut instructions, key_instructions);
+        ensure_owned_on_stack(&mut instructions, key_kind, &mut key_result.heap_ownership);
+        let key_dependents = key_result.take_retained_slots();
+        instructions.push(IRInstruction::StoreLocal(key_slot));
+        track_heap_slot(&mut retained_slots, key_slot, key_kind, key_literal.clone(), key_dependents);
         instructions.push(IRInstruction::Push(runtime_tag_for_key(key_kind)));
         instructions.push(IRInstruction::StoreLocal(key_tag_slot));
+        key_result.free_retained_slots(&mut instructions, context);
 
-        let value_result = compile_node(value_node, context, program)?;
-        instructions.extend(value_result.instructions);
-        instructions.push(IRInstruction::StoreLocal(value_slot));
+        let mut value_result = compile_node(value_node, context, program)?;
         let value_kind = resolve_value_kind(value_node, value_result.kind, context);
+        let value_instructions = std::mem::take(&mut value_result.instructions);
+        extend_with_offset(&mut instructions, value_instructions);
+        ensure_owned_on_stack(&mut instructions, value_kind, &mut value_result.heap_ownership);
+        let value_dependents = value_result.take_retained_slots();
+        instructions.push(IRInstruction::StoreLocal(value_slot));
+        track_heap_slot(&mut retained_slots, value_slot, value_kind, key_literal.clone(), value_dependents);
         instructions.push(IRInstruction::Push(runtime_tag_for_value(value_kind)));
         instructions.push(IRInstruction::StoreLocal(value_tag_slot));
+        value_result.free_retained_slots(&mut instructions, context);
+
+        if let Some(key_literal) = literal_map_key(key_node) {
+            if value_kind == ValueKind::Any {
+                if let Some(types) = map_value_types.as_mut() {
+                    types.remove(&key_literal);
+                }
+            } else {
+                map_value_types.get_or_insert_with(HashMap::new).insert(key_literal, value_kind);
+            }
+        } else {
+            map_value_types = None;
+        }
     }
 
     instructions.push(IRInstruction::PushLocalAddress(ordered_key_value_slots[0]));
@@ -958,20 +1198,29 @@ fn compile_hash_map(args: &[Node], context: &mut CompileContext, program: &mut I
     instructions.push(IRInstruction::Push(pair_count as i64));
     instructions.push(IRInstruction::RuntimeCall("_map_create".to_string(), 5));
 
+    dedup_retained_slots(&mut retained_slots);
+
     for slot in key_value_slots {
-        context.release_temp_slot(slot);
+        if !retains_slot(&retained_slots, slot) {
+            context.release_temp_slot(slot);
+        }
     }
     for slot in key_tag_slots {
         context.release_temp_slot(slot);
     }
     for slot in value_slots {
-        context.release_temp_slot(slot);
+        if !retains_slot(&retained_slots, slot) {
+            context.release_temp_slot(slot);
+        }
     }
     for slot in value_tag_slots {
         context.release_temp_slot(slot);
     }
 
-    Ok(CompileResult::with_instructions(instructions, ValueKind::Map).with_heap_ownership(HeapOwnership::Owned))
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Map)
+        .with_heap_ownership(HeapOwnership::Owned)
+        .with_map_value_types(map_value_types)
+        .with_retained_slots(retained_slots))
 }
 
 fn compile_assoc(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
@@ -982,16 +1231,21 @@ fn compile_assoc(args: &[Node], context: &mut CompileContext, program: &mut IRPr
         return Err(CompileError::InvalidExpression("assoc expects key/value pairs".to_string()));
     }
 
-    let base_result = compile_node(&args[0], context, program)?;
-    let mut instructions = base_result.instructions;
+    let mut base_result = compile_node(&args[0], context, program)?;
+    let base_heap_ownership = base_result.heap_ownership;
+    let mut map_value_types = base_result.map_value_types.clone();
+    let mut instructions = std::mem::take(&mut base_result.instructions);
     let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
     let mut temp_slots = Vec::new();
+    let mut retained_slots = base_result.take_retained_slots();
 
-    if base_result.heap_ownership == HeapOwnership::Owned {
+    if base_heap_ownership == HeapOwnership::Owned {
         let slot = context.allocate_temp_slot();
         instructions.push(IRInstruction::StoreLocal(slot));
         instructions.push(IRInstruction::LoadLocal(slot));
         tracked_slots.insert(slot);
+        slot_kinds.insert(slot, ValueKind::Map);
         temp_slots.push(slot);
     }
 
@@ -999,43 +1253,70 @@ fn compile_assoc(args: &[Node], context: &mut CompileContext, program: &mut IRPr
         let key_index = 1 + pair_idx * 2;
         let value_index = key_index + 1;
 
+        let key_literal = literal_map_key(&args[key_index]);
+        if let Some(literal) = key_literal.as_ref() {
+            release_slots_for_literal(&mut retained_slots, literal, &mut instructions, context);
+        }
         let mut key_result = compile_node(&args[key_index], context, program)?;
-        instructions.extend(key_result.instructions);
-        if key_result.heap_ownership == HeapOwnership::Owned {
+        let key_instructions = std::mem::take(&mut key_result.instructions);
+        extend_with_offset(&mut instructions, key_instructions);
+        key_result.kind = resolve_map_key_kind(&args[key_index], key_result.kind, context)?;
+        ensure_owned_on_stack(&mut instructions, key_result.kind, &mut key_result.heap_ownership);
+        let key_dependents = key_result.take_retained_slots();
+        if key_result.kind.is_heap_kind() {
             let slot = context.allocate_temp_slot();
             instructions.push(IRInstruction::StoreLocal(slot));
             instructions.push(IRInstruction::LoadLocal(slot));
-            tracked_slots.insert(slot);
-            temp_slots.push(slot);
+            track_heap_slot(&mut retained_slots, slot, key_result.kind, key_literal.clone(), key_dependents);
         }
-        key_result.kind = resolve_map_key_kind(&args[key_index], key_result.kind, context)?;
         instructions.push(IRInstruction::Push(runtime_tag_for_key(key_result.kind)));
+        key_result.free_retained_slots(&mut instructions, context);
 
         let mut value_result = compile_node(&args[value_index], context, program)?;
-        instructions.extend(value_result.instructions);
-        if value_result.heap_ownership == HeapOwnership::Owned {
+        value_result.kind = resolve_value_kind(&args[value_index], value_result.kind, context);
+        let value_instructions = std::mem::take(&mut value_result.instructions);
+        extend_with_offset(&mut instructions, value_instructions);
+        ensure_owned_on_stack(&mut instructions, value_result.kind, &mut value_result.heap_ownership);
+        let value_dependents = value_result.take_retained_slots();
+        if value_result.kind.is_heap_kind() {
             let slot = context.allocate_temp_slot();
             instructions.push(IRInstruction::StoreLocal(slot));
             instructions.push(IRInstruction::LoadLocal(slot));
-            tracked_slots.insert(slot);
-            temp_slots.push(slot);
+            track_heap_slot(&mut retained_slots, slot, value_result.kind, key_literal.clone(), value_dependents);
         }
-        value_result.kind = resolve_value_kind(&args[value_index], value_result.kind, context);
         instructions.push(IRInstruction::Push(runtime_tag_for_value(value_result.kind)));
+        value_result.free_retained_slots(&mut instructions, context);
 
         instructions.push(IRInstruction::RuntimeCall("_map_assoc".to_string(), 5));
+
+        if let Some(key_literal) = literal_map_key(&args[key_index]) {
+            if value_result.kind == ValueKind::Any {
+                if let Some(types) = map_value_types.as_mut() {
+                    types.remove(&key_literal);
+                }
+            } else {
+                map_value_types.get_or_insert_with(HashMap::new).insert(key_literal, value_result.kind);
+            }
+        } else {
+            map_value_types = None;
+        }
     }
 
     if !tracked_slots.is_empty() {
         let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_liveness_plan(instructions, &plan);
+        instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
     }
 
     for slot in temp_slots {
         context.release_temp_slot(slot);
     }
 
-    Ok(CompileResult::with_instructions(instructions, ValueKind::Map).with_heap_ownership(HeapOwnership::Owned))
+    dedup_retained_slots(&mut retained_slots);
+
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Map)
+        .with_heap_ownership(HeapOwnership::Owned)
+        .with_map_value_types(map_value_types)
+        .with_retained_slots(retained_slots))
 }
 
 fn compile_dissoc(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
@@ -1043,48 +1324,73 @@ fn compile_dissoc(args: &[Node], context: &mut CompileContext, program: &mut IRP
         return Err(CompileError::ArityError("dissoc".to_string(), 1, 0));
     }
 
-    let base_result = compile_node(&args[0], context, program)?;
+    let mut base_result = compile_node(&args[0], context, program)?;
     if args.len() == 1 {
         return Ok(base_result);
     }
 
-    let mut instructions = base_result.instructions;
+    let base_heap_ownership = base_result.heap_ownership;
+    let mut map_value_types = base_result.map_value_types.clone();
+    let mut instructions = std::mem::take(&mut base_result.instructions);
     let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
     let mut temp_slots = Vec::new();
+    let mut retained_slots = base_result.take_retained_slots();
 
-    if base_result.heap_ownership == HeapOwnership::Owned {
+    if base_heap_ownership == HeapOwnership::Owned {
         let slot = context.allocate_temp_slot();
         instructions.push(IRInstruction::StoreLocal(slot));
         instructions.push(IRInstruction::LoadLocal(slot));
         tracked_slots.insert(slot);
+        slot_kinds.insert(slot, ValueKind::Map);
         temp_slots.push(slot);
     }
 
     for key_idx in 1..args.len() {
         let mut key_result = compile_node(&args[key_idx], context, program)?;
-        instructions.extend(key_result.instructions);
+        let key_instructions = std::mem::take(&mut key_result.instructions);
+        extend_with_offset(&mut instructions, key_instructions);
+        let mut owned_key_slot: Option<usize> = None;
         if key_result.heap_ownership == HeapOwnership::Owned {
             let slot = context.allocate_temp_slot();
             instructions.push(IRInstruction::StoreLocal(slot));
             instructions.push(IRInstruction::LoadLocal(slot));
             tracked_slots.insert(slot);
+            slot_kinds.insert(slot, ValueKind::Any);
             temp_slots.push(slot);
+            owned_key_slot = Some(slot);
         }
         key_result.kind = resolve_map_key_kind(&args[key_idx], key_result.kind, context)?;
+        if let Some(slot) = owned_key_slot {
+            slot_kinds.insert(slot, key_result.kind);
+        }
         instructions.push(IRInstruction::Push(runtime_tag_for_key(key_result.kind)));
         instructions.push(IRInstruction::RuntimeCall("_map_dissoc".to_string(), 3));
+        key_result.free_retained_slots(&mut instructions, context);
+
+        if let Some(key_literal) = literal_map_key(&args[key_idx]) {
+            release_slots_for_literal(&mut retained_slots, &key_literal, &mut instructions, context);
+            if let Some(types) = map_value_types.as_mut() {
+                types.remove(&key_literal);
+            }
+        } else {
+            map_value_types = None;
+        }
     }
 
     if !tracked_slots.is_empty() {
         let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_liveness_plan(instructions, &plan);
+        instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
     }
 
     for slot in temp_slots {
         context.release_temp_slot(slot);
     }
 
-    Ok(CompileResult::with_instructions(instructions, ValueKind::Map).with_heap_ownership(HeapOwnership::Owned))
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Map)
+        .with_heap_ownership(HeapOwnership::Owned)
+        .with_map_value_types(map_value_types)
+        .with_retained_slots(retained_slots))
 }
 
 fn compile_disj(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
@@ -1092,7 +1398,7 @@ fn compile_disj(args: &[Node], context: &mut CompileContext, program: &mut IRPro
         return Err(CompileError::ArityError("disj".to_string(), 1, 0));
     }
 
-    let base_result = compile_node(&args[0], context, program)?;
+    let mut base_result = compile_node(&args[0], context, program)?;
     if args.len() == 1 {
         let mut result = base_result;
         if result.kind != ValueKind::Set {
@@ -1101,43 +1407,60 @@ fn compile_disj(args: &[Node], context: &mut CompileContext, program: &mut IRPro
         return Ok(result);
     }
 
-    let mut instructions = base_result.instructions;
+    let mut instructions = std::mem::take(&mut base_result.instructions);
     let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
     let mut temp_slots = Vec::new();
-
+    let mut retained_slots = base_result.take_retained_slots();
     if base_result.heap_ownership == HeapOwnership::Owned {
         let slot = context.allocate_temp_slot();
         instructions.push(IRInstruction::StoreLocal(slot));
         instructions.push(IRInstruction::LoadLocal(slot));
         tracked_slots.insert(slot);
+        slot_kinds.insert(slot, ValueKind::Set);
         temp_slots.push(slot);
     }
 
     for value_idx in 1..args.len() {
+        let value_literal = literal_map_key(&args[value_idx]);
         let mut value_result = compile_node(&args[value_idx], context, program)?;
-        instructions.extend(value_result.instructions);
+        let value_instructions = std::mem::take(&mut value_result.instructions);
+        extend_with_offset(&mut instructions, value_instructions);
+        let mut owned_value_slot: Option<usize> = None;
         if value_result.heap_ownership == HeapOwnership::Owned {
             let slot = context.allocate_temp_slot();
             instructions.push(IRInstruction::StoreLocal(slot));
             instructions.push(IRInstruction::LoadLocal(slot));
             tracked_slots.insert(slot);
+            slot_kinds.insert(slot, ValueKind::Any);
             temp_slots.push(slot);
+            owned_value_slot = Some(slot);
         }
         value_result.kind = resolve_map_key_kind(&args[value_idx], value_result.kind, context)?;
+        if let Some(slot) = owned_value_slot {
+            slot_kinds.insert(slot, value_result.kind);
+        }
         instructions.push(IRInstruction::Push(runtime_tag_for_key(value_result.kind)));
         instructions.push(IRInstruction::RuntimeCall("_set_disj".to_string(), 3));
+        value_result.free_retained_slots(&mut instructions, context);
+
+        if let Some(literal) = value_literal {
+            release_slots_for_literal(&mut retained_slots, &literal, &mut instructions, context);
+        }
     }
 
     if !tracked_slots.is_empty() {
         let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_liveness_plan(instructions, &plan);
+        instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
     }
 
     for slot in temp_slots {
         context.release_temp_slot(slot);
     }
 
-    Ok(CompileResult::with_instructions(instructions, ValueKind::Set).with_heap_ownership(HeapOwnership::Owned))
+    Ok(CompileResult::with_instructions(instructions, ValueKind::Set)
+        .with_heap_ownership(HeapOwnership::Owned)
+        .with_retained_slots(retained_slots))
 }
 
 fn compile_contains(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
@@ -1145,9 +1468,10 @@ fn compile_contains(args: &[Node], context: &mut CompileContext, program: &mut I
         return Err(CompileError::ArityError("contains?".to_string(), 2, args.len()));
     }
 
-    let target_result = compile_node(&args[0], context, program)?;
-    let mut instructions = target_result.instructions;
+    let mut target_result = compile_node(&args[0], context, program)?;
+    let mut instructions = std::mem::take(&mut target_result.instructions);
     let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
     let mut temp_slots = Vec::new();
 
     if target_result.heap_ownership == HeapOwnership::Owned {
@@ -1155,33 +1479,46 @@ fn compile_contains(args: &[Node], context: &mut CompileContext, program: &mut I
         instructions.push(IRInstruction::StoreLocal(slot));
         instructions.push(IRInstruction::LoadLocal(slot));
         tracked_slots.insert(slot);
+        slot_kinds.insert(slot, ValueKind::Any);
         temp_slots.push(slot);
     }
 
     let target_kind = resolve_value_kind(&args[0], target_result.kind, context);
+    if let Some(slot) = temp_slots.first() {
+        slot_kinds.insert(*slot, target_kind);
+    }
 
     let mut key_result = compile_node(&args[1], context, program)?;
-    instructions.extend(key_result.instructions);
+    let key_instructions = std::mem::take(&mut key_result.instructions);
+    extend_with_offset(&mut instructions, key_instructions);
+    let mut owned_key_slot: Option<usize> = None;
     if key_result.heap_ownership == HeapOwnership::Owned {
         let slot = context.allocate_temp_slot();
         instructions.push(IRInstruction::StoreLocal(slot));
         instructions.push(IRInstruction::LoadLocal(slot));
         tracked_slots.insert(slot);
+        slot_kinds.insert(slot, ValueKind::Any);
         temp_slots.push(slot);
+        owned_key_slot = Some(slot);
     }
     key_result.kind = resolve_map_key_kind(&args[1], key_result.kind, context)?;
+    if let Some(slot) = owned_key_slot {
+        slot_kinds.insert(slot, key_result.kind);
+    }
     instructions.push(IRInstruction::Push(runtime_tag_for_key(key_result.kind)));
     let runtime = if target_kind == ValueKind::Set { "_set_contains" } else { "_map_contains" };
     instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 3));
+    key_result.free_retained_slots(&mut instructions, context);
 
     if !tracked_slots.is_empty() {
         let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_liveness_plan(instructions, &plan);
+        instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
     }
 
     for slot in temp_slots {
         context.release_temp_slot(slot);
     }
+    target_result.free_retained_slots(&mut instructions, context);
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Boolean))
 }
@@ -1419,6 +1756,24 @@ mod tests {
     }
 
     #[test]
+    fn test_get_on_map_literal_infers_vector_kind() {
+        let program = compile_expression("(count (get {:nums (vec 1 2)} :nums))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 1) if name == "_vector_count"
+        )));
+    }
+
+    #[test]
+    fn test_assoc_followed_by_get_emits_map_get() {
+        let program = compile_expression("(let [numbers #{1 2 3} combos {:nums numbers} trimmed (assoc combos :nums (disj numbers 2))] (get trimmed :nums))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_get"
+        )));
+    }
+
+    #[test]
     fn test_compile_set_literal_syntax_runtime_call() {
         let program = compile_expression("#{1 2}").unwrap();
         assert!(program.instructions.iter().any(|inst| matches!(
@@ -1442,7 +1797,8 @@ mod tests {
     fn test_compile_keyword_map_key_emits_keyword_tag() {
         let program = compile_expression("{:name 1}").unwrap();
         assert!(program.string_literals.contains(&":name".to_string()));
-        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::Push(value) if *value == super::TAG_KEYWORD)));
+        let expected = ValueKind::Keyword.runtime_tag();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::Push(value) if *value == expected)));
     }
 
     #[test]
@@ -1552,6 +1908,38 @@ mod tests {
             inst,
             IRInstruction::RuntimeCall(name, 1) if name == "_set_to_string"
         )));
+    }
+
+    #[test]
+    fn test_subs_string_equality_calls_runtime() {
+        let program = compile_expression("(= (subs \"alphabet\" 5) \"bet\")").unwrap();
+        assert!(
+            program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 2) if name == "_string_equals")),
+            "expected string equality: {:#?}",
+            program.instructions
+        );
+    }
+
+    #[test]
+    fn test_if_with_string_equality_generates_expected_flow() {
+        let program = compile_expression("(if (= (subs \"alphabet\" 5) \"bet\") 0 1)").unwrap();
+        assert!(
+            program
+                .instructions
+                .iter()
+                .filter(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 2) if name == "_string_equals"))
+                .count()
+                == 1,
+            "expected exactly one string equality call: {:#?}",
+            program.instructions
+        );
+        assert_eq!(program.instructions.last(), Some(&IRInstruction::Return));
+    }
+
+    #[test]
+    fn test_let_with_string_equality_condition() {
+        let program = compile_expression("(let [fallback (subs \"alphabet\" 5)] (if (= fallback \"bet\") 0 1))").unwrap();
+        assert_eq!(program.instructions.last(), Some(&IRInstruction::Return));
     }
 
     #[test]
@@ -1796,6 +2184,7 @@ mod tests {
         ];
 
         let program = compile_program(&expressions).unwrap();
+        std::fs::write("id_program.debug", format!("{:#?}", program.instructions)).unwrap();
         println!("FUNCTION CALL IR: {:?}", program.instructions);
 
         // Should have function definition
@@ -1849,8 +2238,11 @@ mod tests {
             .expect("expected call instruction for id");
 
         assert!(
-            !program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 1) if name == "_string_clone")),
-            "arguments should be passed by borrowing without cloning"
+            !program.instructions[..call_pos]
+                .iter()
+                .any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 1) if name == "_string_clone")),
+            "call site should pass argument by borrowing without cloning: {:?}",
+            program.instructions
         );
 
         assert!(call_pos >= 2, "call should have preceding store/load for borrowed arg");

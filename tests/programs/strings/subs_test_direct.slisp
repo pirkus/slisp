@@ -1,3 +1,6 @@
 (defn -main []
-  (let [result (subs "hello" 0 3)]
-    0))
+  (let [prefix (subs "hello" 0 3)
+        tail (subs "hello" 1 3)
+        diff-prefix (- (count prefix) 3)
+        diff-tail (- (count tail) 2)]
+    (if (or diff-prefix diff-tail) 1 0)))

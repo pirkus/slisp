@@ -1,2 +1,3 @@
 (defn -main []
-  (count (subs "hello world" 0 5)))
+  (let [result (count (subs "hello world" 0 5))]
+    (if (= result 5) 0 1)))

@@ -1,0 +1,13 @@
+(defn build-chain []
+  (let [outer (hash-map "first" (hash-map "key" 1) "second" 2)
+        borrowed (get outer "first")
+        merged (assoc outer "third" borrowed)
+        trimmed (dissoc merged "second")
+        nested (assoc trimmed "shadow" (assoc borrowed "extra" 5))
+        counts (+ (count outer) (count merged) (count trimmed) (count nested))
+        inner (+ (count borrowed) (count (get nested "shadow" borrowed)))]
+    (+ counts inner)))
+
+(defn -main []
+  (let [result (build-chain)]
+    (if (= result 13) 0 1)))

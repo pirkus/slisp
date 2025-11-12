@@ -1,4 +1,4 @@
-use super::{abi, instructions};
+use super::{abi, helpers::compute_local_count, instructions};
 use crate::codegen::backend::{CodeGenBackend, RuntimeAddresses};
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
 use slisp_runtime;
@@ -20,6 +20,11 @@ pub(super) struct SymbolRelocation {
 pub(super) struct StringRelocation {
     pub offset: usize,
     pub index: usize,
+}
+
+struct PendingJump {
+    target: usize,
+    patch_offset: usize,
 }
 
 pub(super) struct GeneratedCode {
@@ -58,6 +63,11 @@ impl X86CodeGen {
                 string_from_number: Some(slisp_runtime::_string_from_number as usize),
                 string_from_boolean: Some(slisp_runtime::_string_from_boolean as usize),
                 string_equals: Some(slisp_runtime::_string_equals as usize),
+                count_debug_enable: Some(slisp_runtime::_count_debug_enable as usize),
+                map_value_clone: Some(slisp_runtime::_map_value_clone as usize),
+                map_free: Some(slisp_runtime::_map_free as usize),
+                set_free: Some(slisp_runtime::_set_free as usize),
+                vector_free: Some(slisp_runtime::_vector_free as usize),
             },
             LinkMode::ObjFile => RuntimeAddresses {
                 heap_init: None,
@@ -72,6 +82,11 @@ impl X86CodeGen {
                 string_from_number: None,
                 string_from_boolean: None,
                 string_equals: None,
+                count_debug_enable: None,
+                map_value_clone: None,
+                map_free: None,
+                set_free: None,
+                vector_free: None,
             },
         };
 
@@ -156,6 +171,42 @@ impl X86CodeGen {
 
         // Zero out the local slot so stale pointers are not freed again if the slot
         // gets reused before another store.
+        if offset <= 128 {
+            code.extend_from_slice(&[0x48, 0xc7, 0x45, (256 - offset) as u8, 0x00, 0x00, 0x00, 0x00]);
+        } else {
+            code.extend_from_slice(&[0x48, 0xc7, 0x85]);
+            code.extend_from_slice(&(-(offset as i32)).to_le_bytes());
+            code.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        }
+
+        code
+    }
+
+    pub fn generate_free_local_with_runtime_code(&mut self, slot: usize, runtime: &str, func_info: &FunctionInfo, current_pos: usize) -> Vec<u8> {
+        let mut code = Vec::new();
+
+        // Preserve RAX as the runtime helper may clobber it.
+        code.push(0x50); // push rax
+
+        let offset = 8 * (func_info.param_count + slot + 1);
+
+        // Load the pointer stored in the target slot into RDI (first arg).
+        if offset <= 128 {
+            code.extend_from_slice(&[0x48, 0x8b, 0x7d, (256 - offset) as u8]);
+        } else {
+            code.extend_from_slice(&[0x48, 0x8b, 0xbd]);
+            code.extend_from_slice(&(-(offset as i32)).to_le_bytes());
+        }
+
+        // Call the runtime free helper.
+        let call_disp_offset = code.len() + 1;
+        code.extend_from_slice(&[0xe8, 0x00, 0x00, 0x00, 0x00]);
+        self.record_runtime_relocation(current_pos + call_disp_offset, runtime);
+
+        // Restore RAX so callers see the original value.
+        code.push(0x58); // pop rax
+
+        // Zero the slot to avoid double-free on reuse.
         if offset <= 128 {
             code.extend_from_slice(&[0x48, 0xc7, 0x45, (256 - offset) as u8, 0x00, 0x00, 0x00, 0x00]);
         } else {
@@ -261,31 +312,42 @@ impl X86CodeGen {
         self.code.extend(prologue);
 
         let mut in_function = false;
-        let mut function_instructions = Vec::new();
+        let mut function_instructions: Vec<(usize, IRInstruction)> = Vec::new();
+        let mut last_index = None;
 
-        for inst in &program.instructions {
+        for (idx, inst) in program.instructions.iter().enumerate() {
             match inst {
                 IRInstruction::DefineFunction(name, _, _) if name == &func_info.name => {
                     in_function = true;
                 }
                 IRInstruction::Return if in_function => {
-                    function_instructions.push(inst.clone());
+                    function_instructions.push((idx, inst.clone()));
+                    last_index = Some(idx);
                     break;
                 }
                 _ if in_function => {
-                    function_instructions.push(inst.clone());
+                    function_instructions.push((idx, inst.clone()));
+                    last_index = Some(idx);
                 }
                 _ => {}
             }
         }
 
-        for inst in &function_instructions {
-            self.generate_instruction(inst, func_info);
+        let function_end_index = last_index.map_or(0, |idx| idx + 1);
+        let mut instruction_offsets = std::collections::HashMap::new();
+        let mut pending_jumps = Vec::new();
+
+        for (idx, inst) in &function_instructions {
+            instruction_offsets.insert(*idx, self.code.len());
+            let code = self.generate_instruction(inst, func_info, &mut pending_jumps);
+            self.code.extend(code);
         }
+
+        self.patch_pending_jumps(&pending_jumps, &instruction_offsets, function_end_index, self.code.len());
     }
 
     /// Generate code for a single instruction
-    fn generate_instruction(&mut self, inst: &IRInstruction, func_info: &FunctionInfo) {
+    fn generate_instruction(&mut self, inst: &IRInstruction, func_info: &FunctionInfo, pending_jumps: &mut Vec<PendingJump>) -> Vec<u8> {
         let code = match inst {
             IRInstruction::Push(value) => instructions::generate_push(*value),
             IRInstruction::PushString(index) => {
@@ -302,6 +364,12 @@ impl X86CodeGen {
             IRInstruction::Sub => instructions::generate_sub(),
             IRInstruction::Mul => instructions::generate_mul(),
             IRInstruction::Div => instructions::generate_div(),
+            IRInstruction::Equal => instructions::generate_equal(),
+            IRInstruction::Less => instructions::generate_less(),
+            IRInstruction::Greater => instructions::generate_greater(),
+            IRInstruction::LessEqual => instructions::generate_less_equal(),
+            IRInstruction::GreaterEqual => instructions::generate_greater_equal(),
+            IRInstruction::Not => instructions::generate_not(),
             IRInstruction::LoadParam(slot) => instructions::generate_load_param(*slot),
             IRInstruction::StoreLocal(slot) => instructions::generate_store_local(*slot, func_info),
             IRInstruction::LoadLocal(slot) => instructions::generate_load_local(*slot, func_info),
@@ -334,6 +402,11 @@ impl X86CodeGen {
                 self.generate_free_local_code(*slot, func_info, current_pos)
             }
 
+            IRInstruction::FreeLocalWithRuntime(slot, runtime) => {
+                let current_pos = self.code.len();
+                self.generate_free_local_with_runtime_code(*slot, runtime, func_info, current_pos)
+            }
+
             IRInstruction::RuntimeCall(func_name, arg_count) => {
                 let current_pos = self.code.len();
                 self.generate_runtime_call_code(func_name, *arg_count, current_pos)
@@ -347,10 +420,38 @@ impl X86CodeGen {
 
             IRInstruction::DefineFunction(_, _, _) => Vec::new(),
 
-            _ => Vec::new(),
+            IRInstruction::JumpIfZero(target) => {
+                let (code, disp_offset) = instructions::generate_jump_if_zero();
+                let patch_offset = self.code.len() + disp_offset;
+                pending_jumps.push(PendingJump { target: *target, patch_offset });
+                code
+            }
+
+            IRInstruction::Jump(target) => {
+                let (code, disp_offset) = instructions::generate_jump();
+                let patch_offset = self.code.len() + disp_offset;
+                pending_jumps.push(PendingJump { target: *target, patch_offset });
+                code
+            }
         };
 
-        self.code.extend(code);
+        code
+    }
+
+    fn patch_pending_jumps(&mut self, pending_jumps: &[PendingJump], instruction_offsets: &std::collections::HashMap<usize, usize>, end_index: usize, end_offset: usize) {
+        for pending in pending_jumps {
+            let target_offset = instruction_offsets
+                .get(&pending.target)
+                .copied()
+                .or_else(|| if pending.target == end_index { Some(end_offset) } else { None })
+                .unwrap_or_else(|| panic!("Invalid jump target {}", pending.target));
+
+            let branch_end = pending.patch_offset + 4;
+            let rel = (target_offset as isize) - (branch_end as isize);
+            let rel_bytes = (rel as i32).to_le_bytes();
+            let patch_end = pending.patch_offset + 4;
+            self.code[pending.patch_offset..patch_end].copy_from_slice(&rel_bytes);
+        }
     }
 
     fn generate_single_function(&mut self, program: &IRProgram) -> Vec<u8> {
@@ -366,69 +467,19 @@ impl X86CodeGen {
 
         self.code.extend(abi::generate_prologue(&stub_info));
 
-        for inst in &program.instructions {
-            self.generate_instruction(inst, &stub_info);
+        let mut instruction_offsets = std::collections::HashMap::new();
+        let mut pending_jumps = Vec::new();
+
+        for (idx, inst) in program.instructions.iter().enumerate() {
+            instruction_offsets.insert(idx, self.code.len());
+            let code = self.generate_instruction(inst, &stub_info, &mut pending_jumps);
+            self.code.extend(code);
         }
+
+        self.patch_pending_jumps(&pending_jumps, &instruction_offsets, program.instructions.len(), self.code.len());
 
         self.code.clone()
     }
-}
-
-pub(super) fn compute_local_count(instructions: &[IRInstruction]) -> usize {
-    let mut max_slot: Option<usize> = None;
-    for inst in instructions {
-        let slot_opt = match inst {
-            IRInstruction::StoreLocal(slot) | IRInstruction::LoadLocal(slot) | IRInstruction::PushLocalAddress(slot) | IRInstruction::FreeLocal(slot) => Some(*slot),
-            _ => None,
-        };
-
-        if let Some(slot) = slot_opt {
-            max_slot = Some(max_slot.map_or(slot, |current| current.max(slot)));
-        }
-    }
-
-    max_slot.map_or(0, |slot| slot + 1)
-}
-
-fn append_runtime_call(code: &mut Vec<u8>, relocations: &mut Vec<SymbolRelocation>, symbol: &str) {
-    let call_site = code.len();
-    code.push(0xe8);
-    code.extend_from_slice(&0i32.to_le_bytes());
-    relocations.push(SymbolRelocation {
-        offset: call_site + 1,
-        symbol: symbol.to_string(),
-    });
-}
-
-pub(super) fn generate_entry_stub(entry_symbol: &str, telemetry_enabled: bool) -> (Vec<u8>, Vec<SymbolRelocation>) {
-    let mut code = Vec::new();
-    let mut relocations = Vec::new();
-
-    if telemetry_enabled {
-        append_runtime_call(&mut code, &mut relocations, "_allocator_telemetry_reset");
-        code.extend_from_slice(&[0xbf, 0x01, 0x00, 0x00, 0x00]); // mov edi, 1
-        append_runtime_call(&mut code, &mut relocations, "_allocator_telemetry_enable");
-    }
-
-    append_runtime_call(&mut code, &mut relocations, "_heap_init");
-    append_runtime_call(&mut code, &mut relocations, entry_symbol);
-
-    if telemetry_enabled {
-        // Preserve return value then dump telemetry before exiting.
-        code.extend_from_slice(&[0x48, 0x89, 0xc3]); // mov rbx, rax
-        append_runtime_call(&mut code, &mut relocations, "_allocator_telemetry_dump_stdout");
-        code.extend_from_slice(&[0x48, 0x89, 0xdf]); // mov rdi, rbx
-    } else {
-        code.extend_from_slice(&[0x48, 0x89, 0xc7]); // mov rdi, rax
-    }
-
-    // mov rax, 60
-    code.extend_from_slice(&[0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00]);
-
-    // syscall
-    code.extend_from_slice(&[0x0f, 0x05]);
-
-    (code, relocations)
 }
 
 impl CodeGenBackend for X86CodeGen {
@@ -529,6 +580,40 @@ mod tests {
         let artifact = compile_to_executable(&program);
         let result = JitRunner::exec_artifact(&artifact);
         assert_eq!(result, 7);
+    }
+
+    #[test]
+    fn jit_executes_if_true_branch() {
+        let mut program = IRProgram::new();
+        program.add_instruction(IRInstruction::Push(1));
+        program.add_instruction(IRInstruction::Push(1));
+        program.add_instruction(IRInstruction::Equal);
+        program.add_instruction(IRInstruction::JumpIfZero(6));
+        program.add_instruction(IRInstruction::Push(42));
+        program.add_instruction(IRInstruction::Jump(7));
+        program.add_instruction(IRInstruction::Push(0));
+        program.add_instruction(IRInstruction::Return);
+
+        let artifact = compile_to_executable(&program);
+        let result = JitRunner::exec_artifact(&artifact);
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn jit_executes_if_false_branch() {
+        let mut program = IRProgram::new();
+        program.add_instruction(IRInstruction::Push(1));
+        program.add_instruction(IRInstruction::Push(2));
+        program.add_instruction(IRInstruction::Equal);
+        program.add_instruction(IRInstruction::JumpIfZero(6));
+        program.add_instruction(IRInstruction::Push(42));
+        program.add_instruction(IRInstruction::Jump(7));
+        program.add_instruction(IRInstruction::Push(0));
+        program.add_instruction(IRInstruction::Return);
+
+        let artifact = compile_to_executable(&program);
+        let result = JitRunner::exec_artifact(&artifact);
+        assert_eq!(result, 0);
     }
 
     #[test]

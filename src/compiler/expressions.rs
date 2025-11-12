@@ -1,9 +1,10 @@
-use super::{CompileContext, CompileError, CompileResult, HeapOwnership, ValueKind};
+use super::{extend_with_offset, runtime_free_for_kind, CompileContext, CompileError, CompileResult, HeapOwnership, RetainedSlot, ValueKind};
 /// Expression compilation - arithmetic, comparisons, conditionals, logical operations
 use crate::ast::{Node, Primitive};
+use crate::compiler::is_heap_allocated_symbol;
 use crate::compiler::liveness::{apply_liveness_plan, compute_liveness_plan};
 use crate::ir::{IRInstruction, IRProgram};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Compile a primitive value (numbers, strings)
 pub fn compile_primitive(primitive: &Primitive, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
@@ -28,10 +29,15 @@ pub fn compile_arithmetic_op(args: &[Node], context: &mut CompileContext, progra
         return Err(CompileError::ArityError(op_name.to_string(), 2, args.len()));
     }
 
-    let mut instructions = crate::compiler::compile_node(&args[0], context, program)?.instructions;
+    let mut left_result = crate::compiler::compile_node(&args[0], context, program)?;
+    let mut instructions = std::mem::take(&mut left_result.instructions);
+    left_result.free_retained_slots(&mut instructions, context);
 
     for arg in &args[1..] {
-        instructions.extend(crate::compiler::compile_node(arg, context, program)?.instructions);
+        let mut compiled = crate::compiler::compile_node(arg, context, program)?;
+        let compiled_instructions = std::mem::take(&mut compiled.instructions);
+        extend_with_offset(&mut instructions, compiled_instructions);
+        compiled.free_retained_slots(&mut instructions, context);
         instructions.push(instruction.clone());
     }
 
@@ -45,38 +51,41 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
     }
 
     let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
+    let mut left_slot: Option<usize> = None;
+    let mut right_slot: Option<usize> = None;
     let mut temp_slots = Vec::new();
 
-    let left_result = crate::compiler::compile_node(&args[0], context, program)?;
-    let CompileResult {
-        mut instructions,
-        kind: mut left_kind,
-        heap_ownership: left_ownership,
-    } = left_result;
+    let mut left_result = crate::compiler::compile_node(&args[0], context, program)?;
+    let mut instructions = std::mem::take(&mut left_result.instructions);
+    let left_ownership = left_result.heap_ownership;
+    let mut left_kind = left_result.kind;
 
     if left_ownership == HeapOwnership::Owned {
         let slot = context.allocate_temp_slot();
         instructions.push(IRInstruction::StoreLocal(slot));
         instructions.push(IRInstruction::LoadLocal(slot));
         tracked_slots.insert(slot);
+        slot_kinds.insert(slot, ValueKind::Any);
         temp_slots.push(slot);
+        left_slot = Some(slot);
     }
 
-    let right_result = crate::compiler::compile_node(&args[1], context, program)?;
-    let CompileResult {
-        instructions: right_instructions,
-        kind: mut right_kind,
-        heap_ownership: right_ownership,
-    } = right_result;
+    let mut right_result = crate::compiler::compile_node(&args[1], context, program)?;
+    let right_ownership = right_result.heap_ownership;
+    let mut right_kind = right_result.kind;
 
-    instructions.extend(right_instructions);
+    let right_instructions = std::mem::take(&mut right_result.instructions);
+    extend_with_offset(&mut instructions, right_instructions);
 
     if right_ownership == HeapOwnership::Owned {
         let slot = context.allocate_temp_slot();
         instructions.push(IRInstruction::StoreLocal(slot));
         instructions.push(IRInstruction::LoadLocal(slot));
         tracked_slots.insert(slot);
+        slot_kinds.insert(slot, ValueKind::Any);
         temp_slots.push(slot);
+        right_slot = Some(slot);
     }
 
     if left_kind == ValueKind::Any {
@@ -84,6 +93,13 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
     }
     if right_kind == ValueKind::Any {
         right_kind = resolve_operand_kind(&args[1], right_kind, context);
+    }
+
+    if let Some(slot) = left_slot {
+        slot_kinds.insert(slot, left_kind);
+    }
+    if let Some(slot) = right_slot {
+        slot_kinds.insert(slot, right_kind);
     }
 
     let string_equality =
@@ -95,9 +111,15 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
         instructions.push(instruction);
     }
 
+    left_result.free_retained_slots(&mut instructions, context);
+    right_result.free_retained_slots(&mut instructions, context);
+
     if !tracked_slots.is_empty() {
         let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_liveness_plan(instructions, &plan);
+        instructions = apply_liveness_plan(instructions, &plan, |insts, slot| {
+            let kind = slot_kinds.get(&slot).copied().unwrap_or(ValueKind::Any);
+            emit_free_for_slot(insts, slot, kind);
+        });
     }
 
     for slot in temp_slots {
@@ -105,6 +127,14 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
     }
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Boolean))
+}
+
+fn emit_free_for_slot(instructions: &mut Vec<IRInstruction>, slot: usize, kind: ValueKind) {
+    if let Some(runtime) = runtime_free_for_kind(kind) {
+        instructions.push(IRInstruction::FreeLocalWithRuntime(slot, runtime.to_string()));
+    } else {
+        instructions.push(IRInstruction::FreeLocal(slot));
+    }
 }
 
 fn resolve_operand_kind(node: &Node, fallback: ValueKind, context: &CompileContext) -> ValueKind {
@@ -129,9 +159,11 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
     let else_jump_pos = instructions.len();
     instructions.push(IRInstruction::JumpIfZero(0));
 
-    let then_result = crate::compiler::compile_node(&args[1], context, program)?;
-    let then_instructions = then_result.instructions;
-    instructions.extend(then_instructions);
+    let mut then_result = crate::compiler::compile_node(&args[1], context, program)?;
+    let mut then_retained_slots = then_result.take_retained_slots();
+    let then_instructions = std::mem::take(&mut then_result.instructions);
+    extend_with_offset(&mut instructions, then_instructions);
+    ensure_branch_result_owned(&args[1], &mut then_result, &mut instructions, context);
 
     let end_jump_pos = instructions.len();
     instructions.push(IRInstruction::Jump(0));
@@ -139,9 +171,11 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
     let else_start = instructions.len();
     instructions[else_jump_pos] = IRInstruction::JumpIfZero(else_start);
 
-    let else_result = crate::compiler::compile_node(&args[2], context, program)?;
-    let else_instructions = else_result.instructions;
-    instructions.extend(else_instructions);
+    let mut else_result = crate::compiler::compile_node(&args[2], context, program)?;
+    let mut else_retained_slots = else_result.take_retained_slots();
+    let else_instructions = std::mem::take(&mut else_result.instructions);
+    extend_with_offset(&mut instructions, else_instructions);
+    ensure_branch_result_owned(&args[2], &mut else_result, &mut instructions, context);
 
     let end_pos = instructions.len();
     instructions[end_jump_pos] = IRInstruction::Jump(end_pos);
@@ -164,7 +198,43 @@ pub fn compile_if(args: &[Node], context: &mut CompileContext, program: &mut IRP
 
     let ownership = then_result.heap_ownership.combine(else_result.heap_ownership);
 
-    Ok(CompileResult::with_instructions(instructions, resulting_kind).with_heap_ownership(ownership))
+    then_retained_slots.extend(else_retained_slots.drain(..));
+    dedup_retained_slots(&mut then_retained_slots);
+
+    Ok(CompileResult::with_instructions(instructions, resulting_kind)
+        .with_heap_ownership(ownership)
+        .with_retained_slots(then_retained_slots))
+}
+
+fn ensure_branch_result_owned(branch_node: &Node, branch_result: &mut CompileResult, instructions: &mut Vec<IRInstruction>, context: &CompileContext) {
+    if branch_result.heap_ownership == HeapOwnership::Owned {
+        return;
+    }
+
+    if let Node::Symbol { value } = branch_node {
+        if !is_heap_allocated_symbol(value, context) {
+            return;
+        }
+
+        let inferred_kind = context.get_variable_type(value).or_else(|| context.get_parameter_type(value)).unwrap_or(ValueKind::String);
+        let kind = if inferred_kind == ValueKind::Any { ValueKind::String } else { inferred_kind };
+
+        if let Some(runtime) = clone_runtime_for_kind(kind) {
+            instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
+            branch_result.heap_ownership = HeapOwnership::Owned;
+            branch_result.kind = kind;
+        }
+    }
+}
+
+fn clone_runtime_for_kind(kind: ValueKind) -> Option<&'static str> {
+    match kind {
+        ValueKind::String => Some("_string_clone"),
+        ValueKind::Vector => Some("_vector_clone"),
+        ValueKind::Map => Some("_map_clone"),
+        ValueKind::Set => Some("_set_clone"),
+        _ => None,
+    }
 }
 
 fn compile_variadic_logical(
@@ -179,12 +249,15 @@ fn compile_variadic_logical(
         return Ok(CompileResult::with_instructions(vec![IRInstruction::Push(default_result)], ValueKind::Boolean));
     }
 
-    let mut instructions = crate::compiler::compile_node(&args[0], context, program)?.instructions;
+    let mut first_result = crate::compiler::compile_node(&args[0], context, program)?;
+    let mut instructions = std::mem::take(&mut first_result.instructions);
 
     if args.len() == 1 {
+        first_result.free_retained_slots(&mut instructions, context);
         instructions.extend([IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
         return Ok(CompileResult::with_instructions(instructions, ValueKind::Boolean));
     }
+    first_result.free_retained_slots(&mut instructions, context);
 
     let mut jump_sites = Vec::new();
 
@@ -199,7 +272,10 @@ fn compile_variadic_logical(
         instructions.push(IRInstruction::JumpIfZero(0));
         jump_sites.push(jump_site);
 
-        instructions.extend(crate::compiler::compile_node(arg, context, program)?.instructions);
+        let mut compiled = crate::compiler::compile_node(arg, context, program)?;
+        let compiled_instructions = std::mem::take(&mut compiled.instructions);
+        extend_with_offset(&mut instructions, compiled_instructions);
+        compiled.free_retained_slots(&mut instructions, context);
     }
 
     instructions.extend([IRInstruction::Push(0), IRInstruction::Equal, IRInstruction::Not]);
@@ -221,6 +297,21 @@ fn compile_variadic_logical(
     Ok(CompileResult::with_instructions(instructions, ValueKind::Boolean))
 }
 
+fn dedup_retained_slots(slots: &mut Vec<RetainedSlot>) {
+    if slots.is_empty() {
+        return;
+    }
+    slots.sort_by_key(|slot| slot.slot);
+    slots.dedup_by(|a, b| {
+        if a.slot == b.slot {
+            a.dependents.extend(b.dependents.drain(..));
+            true
+        } else {
+            false
+        }
+    });
+}
+
 /// Compile logical AND operation with short-circuit evaluation
 pub fn compile_logical_and(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
     compile_variadic_logical(args, context, program, 1, 0, false)
@@ -237,7 +328,9 @@ pub fn compile_logical_not(args: &[Node], context: &mut CompileContext, program:
         return Err(CompileError::ArityError("not".to_string(), 1, args.len()));
     }
 
-    let mut instructions = crate::compiler::compile_node(&args[0], context, program)?.instructions;
+    let mut operand = crate::compiler::compile_node(&args[0], context, program)?;
+    let mut instructions = std::mem::take(&mut operand.instructions);
+    operand.free_retained_slots(&mut instructions, context);
     instructions.push(IRInstruction::Not);
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Boolean))

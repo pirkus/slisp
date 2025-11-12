@@ -2,4 +2,5 @@
   (+ x y))
 
 (defn -main []
-  (count (str "Result: " (compute 40 2))))
+  (let [result (count (str "Result: " (compute 40 2)))]
+    (if (= result 10) 0 1)))

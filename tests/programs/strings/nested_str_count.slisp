@@ -1,0 +1,9 @@
+(defn wrap-label [prefix name suffix]
+  (str (str prefix name) (str "-" suffix)))
+
+(defn -main []
+  (let [first (count (wrap-label "[[" "core" "]]"))
+        second (count (wrap-label "##" "alpha" "end"))
+        third (count (wrap-label "--" "z" "!!"))
+        total (+ first second third)]
+    (if (= total 26) 0 1)))

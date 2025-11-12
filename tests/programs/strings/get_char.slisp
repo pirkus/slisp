@@ -1,2 +1,3 @@
 (defn -main []
-  (count (get "ABC" 0)))
+  (let [result (count (get "ABC" 0))]
+    (if (= result 1) 0 1)))

@@ -1,3 +1,19 @@
+/// Liveness planner for heap-owned locals.
+///
+/// The compiler tracks which stack slots hold heap pointers (strings/maps/vectors/sets). Rather
+/// than eagerly call `_free` after every instruction, we build a `LivenessPlan` that records the
+/// *last use* of each tracked slot and inserts `FreeLocal` instructions at those points. The
+/// planner works in two phases:
+///
+/// 1. `compute_liveness_plan` walks the IR (including branches) and determines where frees should
+///    be inserted, plus which slots are guaranteed to be freed along *all* paths exiting the
+///    region. For straight-line code we just track the last consumer; for branches we recurse into
+///    the then/else blocks, taking the intersection of their `freed_everywhere` sets.
+/// 2. `apply_liveness_plan` rewrites the IR, splicing in the frees and patching jump offsets.
+///
+/// Any slots still owned after liveness gets a plan are freed by the surrounding scope
+/// (e.g. `compile_let`), but most of the work happens here so we avoid double-frees and ensure
+/// borrowed values are not released prematurely.
 use crate::ir::IRInstruction;
 use std::collections::{HashMap, HashSet};
 
@@ -11,7 +27,10 @@ pub fn compute_liveness_plan(instructions: &[IRInstruction], tracked_slots: &Has
     plan_range(instructions, tracked_slots, 0, instructions.len())
 }
 
-pub fn apply_liveness_plan(original: Vec<IRInstruction>, plan: &LivenessPlan) -> Vec<IRInstruction> {
+pub fn apply_liveness_plan<F>(original: Vec<IRInstruction>, plan: &LivenessPlan, mut emit_free: F) -> Vec<IRInstruction>
+where
+    F: FnMut(&mut Vec<IRInstruction>, usize),
+{
     if plan.insert_after.is_empty() {
         return original;
     }
@@ -24,16 +43,21 @@ pub fn apply_liveness_plan(original: Vec<IRInstruction>, plan: &LivenessPlan) ->
         new_instructions.push(inst);
         if let Some(slots) = plan.insert_after.get(&idx) {
             for slot in slots {
-                new_instructions.push(IRInstruction::FreeLocal(*slot));
+                emit_free(&mut new_instructions, *slot);
             }
         }
     }
+
+    let original_len = index_map.len();
+    let final_len = new_instructions.len();
 
     // Adjust jump targets to account for inserted instructions
     for inst in &mut new_instructions {
         match inst {
             IRInstruction::Jump(target) | IRInstruction::JumpIfZero(target) => {
-                if let Some(&mapped) = index_map.get(*target) {
+                if *target == original_len {
+                    *target = final_len;
+                } else if let Some(&mapped) = index_map.get(*target) {
                     *target = mapped;
                 }
             }
@@ -208,7 +232,7 @@ fn collect_last_uses_straight_line(instructions: &[IRInstruction], tracked: &Has
             IRInstruction::Return => {
                 stack.pop();
             }
-            IRInstruction::FreeLocal(_) | IRInstruction::DefineFunction(_, _, _) | IRInstruction::InitHeap => {}
+            IRInstruction::FreeLocal(_) | IRInstruction::FreeLocalWithRuntime(_, _) | IRInstruction::DefineFunction(_, _, _) | IRInstruction::InitHeap => {}
         }
     }
 
@@ -225,5 +249,55 @@ fn consume_stack_entries(stack: &mut Vec<StackEntry>, count: usize, last_use: &m
             }
             Some(StackEntry::Other) | None => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn straight_line_plan_frees_last_use() {
+        let instructions = vec![
+            IRInstruction::LoadLocal(0),
+            IRInstruction::RuntimeCall("foo".to_string(), 1),
+            IRInstruction::LoadLocal(1),
+            IRInstruction::RuntimeCall("bar".to_string(), 1),
+            IRInstruction::Return,
+        ];
+        let tracked: HashSet<usize> = [0, 1].into_iter().collect();
+        let plan = compute_liveness_plan(&instructions, &tracked);
+        assert_eq!(plan.insert_after.get(&1).map(|slots| slots.as_slice()), Some(&[0][..]));
+        assert_eq!(plan.insert_after.get(&3).map(|slots| slots.as_slice()), Some(&[1][..]));
+        assert!(plan.freed_everywhere.contains(&0));
+        assert!(plan.freed_everywhere.contains(&1));
+    }
+
+    #[test]
+    fn branch_only_marks_slots_freed_on_both_paths() {
+        let instructions = vec![
+            IRInstruction::LoadLocal(0),
+            IRInstruction::JumpIfZero(4),
+            IRInstruction::RuntimeCall("foo".to_string(), 1),
+            IRInstruction::Jump(6),
+            IRInstruction::LoadLocal(1),
+            IRInstruction::RuntimeCall("bar".to_string(), 1),
+            IRInstruction::Return,
+        ];
+        let tracked: HashSet<usize> = [0, 1].into_iter().collect();
+        let plan = compute_liveness_plan(&instructions, &tracked);
+        assert!(plan.freed_everywhere.is_empty());
+        // Only one branch frees slot 0/1 respectively, so they should not appear in
+        // `freed_everywhere`.
+        assert!(plan.freed_everywhere.is_empty());
+    }
+
+    #[test]
+    fn unused_tracked_slots_yield_empty_plan() {
+        let instructions = vec![IRInstruction::Push(1), IRInstruction::Return];
+        let tracked: HashSet<usize> = [0].into_iter().collect();
+        let plan = compute_liveness_plan(&instructions, &tracked);
+        assert!(plan.insert_after.is_empty());
+        assert!(plan.freed_everywhere.is_empty());
     }
 }

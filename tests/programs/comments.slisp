@@ -2,6 +2,7 @@
 (defn -main []
   (let [a 1
         ; describe binding for b
-        b 2]
+        b 2
+        result (+ a b)]
     ; trailing comment after expression
-    (+ a b))) ; end-of-line comment
+    (if (= result 3) 0 1))) ; end-of-line comment

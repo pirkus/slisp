@@ -1,4 +1,5 @@
 (defn identity [x] x)
 
 (defn -main []
-  (identity 5))
+  (let [result (identity 5)]
+    (if (= result 5) 0 1)))

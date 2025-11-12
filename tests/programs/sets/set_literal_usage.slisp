@@ -3,7 +3,8 @@
         trimmed (disj numbers 2)
         has-three (contains? trimmed 3)
         has-two (contains? trimmed 2)
-        total (count trimmed)]
-    (+ (if has-three 10 0)
-       (if has-two 0 1)
-       total)))
+        total (count trimmed)
+        result (+ (if has-three 10 0)
+                  (if has-two 0 1)
+                  total)]
+    (if (= result 13) 0 1)))

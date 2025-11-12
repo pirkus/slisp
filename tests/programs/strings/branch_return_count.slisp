@@ -1,0 +1,11 @@
+(defn branch-count [use-left]
+  (let [labels (hash-map "left" "alpha" "right" "beta")
+        choice (if use-left (get labels "left") (get labels "right"))
+        tagged (str choice "-tag")]
+    (count tagged)))
+
+(defn -main []
+  (let [left (branch-count true)
+        right (branch-count false)
+        total (+ left right)]
+    (if (= total 17) 0 1)))

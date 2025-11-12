@@ -8,4 +8,5 @@
   (add (multiply a b) c))
 
 (defn -main []
-  (compute 3 4 5))
+  (let [result (compute 3 4 5)]
+    (if (= result 17) 0 1)))

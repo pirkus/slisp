@@ -13,9 +13,11 @@
 /// - `executable`: ELF executable generation for Linux
 mod abi;
 mod codegen;
+mod helpers;
 mod instructions;
 
-use self::codegen::{generate_entry_stub, LinkMode, X86CodeGen};
+use self::codegen::{LinkMode, X86CodeGen};
+use self::helpers::generate_entry_stub;
 use crate::codegen::backend::{JitArtifact, ObjectArtifact, RuntimeRelocation, RuntimeStub, TargetBackend};
 use crate::ir::IRProgram;
 use object::write::{Object, Relocation as ObjectRelocation, StandardSection, Symbol, SymbolSection};
@@ -186,12 +188,14 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
         "_string_from_number",
         "_string_from_boolean",
         "_string_equals",
+        "_count_debug_enable",
         "_vector_create",
         "_vector_clone",
         "_vector_count",
         "_vector_get",
         "_vector_slice",
         "_vector_to_string",
+        "_vector_free",
         "_map_create",
         "_map_clone",
         "_map_assoc",
@@ -199,6 +203,8 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
         "_map_contains",
         "_map_get",
         "_map_count",
+        "_map_free",
+        "_map_value_clone",
         "_map_to_string",
         "_set_create",
         "_set_clone",
