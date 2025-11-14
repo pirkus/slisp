@@ -1,4 +1,13 @@
-use super::{extend_with_offset, runtime_free_for_kind, CompileContext, CompileError, CompileResult, HeapOwnership, RetainedSlot, ValueKind};
+use super::{
+    builtins::runtime_free_for_kind,
+    extend_with_offset,
+    CompileContext,
+    CompileError,
+    CompileResult,
+    HeapOwnership,
+    RetainedSlot,
+    ValueKind,
+};
 /// Expression compilation - arithmetic, comparisons, conditionals, logical operations
 use crate::ast::{Node, Primitive};
 use crate::compiler::is_heap_allocated_symbol;

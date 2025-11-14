@@ -1,4 +1,13 @@
-use super::{emit_free_for_slot, extend_with_offset, CompileContext, CompileError, CompileResult, HeapOwnership, RetainedSlot, ValueKind};
+use super::{
+    builtins::{emit_free_for_slot, free_retained_dependents, free_retained_slot},
+    extend_with_offset,
+    CompileContext,
+    CompileError,
+    CompileResult,
+    HeapOwnership,
+    RetainedSlot,
+    ValueKind,
+};
 /// Variable binding compilation (let expressions)
 use crate::ast::Node;
 use crate::compiler::liveness::{apply_liveness_plan, compute_liveness_plan};
@@ -212,9 +221,9 @@ fn emit_scope_cleanup(instructions: &mut Vec<IRInstruction>, binding_infos: &mut
     for info in binding_infos {
         for slot in &mut info.retained_slots {
             if freed_on_all_paths.contains(&slot.slot) {
-                super::free_retained_dependents(slot, instructions, context);
+                free_retained_dependents(slot, instructions, context);
             } else {
-                super::free_retained_slot(slot.clone(), instructions, context);
+                free_retained_slot(slot.clone(), instructions, context);
             }
         }
     }

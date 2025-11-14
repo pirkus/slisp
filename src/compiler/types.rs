@@ -1,7 +1,16 @@
 use super::context::CompileContext;
-use super::{free_retained_slot, MapKeyLiteral};
+use super::builtins::free_retained_slot;
 use crate::ir::IRInstruction;
 use std::collections::HashMap;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum MapKeyLiteral {
+    String(String),
+    Keyword(String),
+    Number(i64),
+    Boolean(bool),
+    Nil,
+}
 
 const TAG_NIL: i64 = 0;
 const TAG_NUMBER: i64 = 1;

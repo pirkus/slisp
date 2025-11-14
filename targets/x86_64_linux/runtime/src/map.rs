@@ -757,7 +757,6 @@ pub unsafe extern "C" fn _map_get(map: *const u8, key: i64, key_tag: i64, out_va
     let key_tag_u8 = (key_tag & 0xff) as u8;
     let header = map as *const MapHeader;
     if header.is_null() {
-        crate::log_count("_map_get_miss(null)", 0);
         return 0;
     }
 
@@ -767,11 +766,9 @@ pub unsafe extern "C" fn _map_get(map: *const u8, key: i64, key_tag: i64, out_va
             let value_data = map_value_data_ptr(header);
             *out_tag = *value_tags.add(index);
             *out_value = *value_data.add(index);
-            crate::log_count("_map_get_hit", index as u64);
             1
         }
         None => {
-            crate::log_count("_map_get_miss", 0);
             0
         }
     }
@@ -780,12 +777,10 @@ pub unsafe extern "C" fn _map_get(map: *const u8, key: i64, key_tag: i64, out_va
 #[no_mangle]
 pub unsafe extern "C" fn _map_count(map: *const u8) -> u64 {
     if map.is_null() {
-        crate::log_count("_map_count(null)", 0);
         return 0;
     }
     let header = map as *const MapHeader;
     let len = (*header).length;
-    crate::log_count("_map_count", len);
     len
 }
 

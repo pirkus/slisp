@@ -99,7 +99,6 @@ fn resolve_runtime_symbol(addresses: &RuntimeAddresses, symbol: &str) -> Option<
         "_string_from_number" => addresses.string_from_number,
         "_string_from_boolean" => addresses.string_from_boolean,
         "_string_equals" => addresses.string_equals,
-        "_count_debug_enable" => addresses.count_debug_enable,
         "_map_value_clone" => addresses.map_value_clone,
         "_map_free" => addresses.map_free,
         "_set_free" => addresses.set_free,

@@ -4,16 +4,11 @@
 extern crate std;
 
 use core::arch::asm;
-use core::sync::atomic::{AtomicBool, Ordering};
 
-#[cfg(feature = "std")]
-use std::sync::Once;
-
+#[cfg(feature = "telemetry")]
 const SYS_WRITE: isize = 1;
 #[cfg(feature = "telemetry")]
 const STDOUT_FD: usize = 1;
-const STDERR_FD: usize = 2;
-const HEX: &[u8; 16] = b"0123456789abcdef";
 
 mod allocator;
 pub use allocator::{_allocate, _free, _heap_init};
@@ -43,147 +38,6 @@ mod telemetry;
 
 #[cfg(feature = "telemetry")]
 pub use telemetry::{AllocatorTelemetryCounters, AllocatorTelemetryEvent, ALLOCATOR_EVENT_ALLOC, ALLOCATOR_EVENT_FLAG_REUSED, ALLOCATOR_EVENT_FREE};
-
-static COUNT_DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
-
-#[cfg(feature = "std")]
-static COUNT_DEBUG_INIT: Once = Once::new();
-
-#[cfg(not(feature = "std"))]
-#[inline(always)]
-fn ensure_count_debug_env_checked() {}
-
-#[cfg(feature = "std")]
-fn ensure_count_debug_env_checked() {
-    COUNT_DEBUG_INIT.call_once(|| {
-        if let Ok(value) = std::env::var("SLISP_DEBUG_COUNTS") {
-            if matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes") {
-                COUNT_DEBUG_ENABLED.store(true, Ordering::Relaxed);
-            }
-        }
-    });
-}
-
-fn write_debug_bytes(bytes: &[u8]) {
-    if bytes.is_empty() {
-        return;
-    }
-    unsafe {
-        let _ = syscall6(SYS_WRITE, STDERR_FD, bytes.as_ptr() as usize, bytes.len(), 0, 0, 0);
-    }
-}
-
-fn log_count_prefix(label: &str, value: u64) -> bool {
-    ensure_count_debug_env_checked();
-
-    if !COUNT_DEBUG_ENABLED.load(Ordering::Relaxed) {
-        return false;
-    }
-
-    write_debug_bytes(b"[slisp:count] ");
-    write_debug_bytes(label.as_bytes());
-    write_debug_bytes(b" -> ");
-
-    let mut buffer = [0u8; 32];
-    let mut idx = buffer.len();
-    let mut remaining = value;
-
-    if remaining == 0 {
-        idx -= 1;
-        buffer[idx] = b'0';
-    } else {
-        while remaining > 0 {
-            let digit = (remaining % 10) as u8;
-            idx -= 1;
-            buffer[idx] = b'0' + digit;
-            remaining /= 10;
-        }
-    }
-
-    write_debug_bytes(&buffer[idx..]);
-    true
-}
-
-pub(crate) fn log_count(label: &str, value: u64) {
-    if !log_count_prefix(label, value) {
-        return;
-    }
-    write_debug_bytes(b"\n");
-}
-
-pub(crate) unsafe fn log_count_with_sample(label: &str, ptr: *const u8, value: u64) {
-    if !log_count_prefix(label, value) {
-        return;
-    }
-
-    write_debug_bytes(b" \"");
-
-    if ptr.is_null() {
-        write_debug_bytes(b"(null)");
-    } else {
-        let preview = core::cmp::min(value as usize, 48);
-        let mut idx = 0usize;
-        while idx < preview {
-            let byte = *ptr.add(idx);
-            let escaped = if (32..=126).contains(&byte) { byte } else { b'.' };
-            write_debug_bytes(core::slice::from_ref(&escaped));
-            idx += 1;
-        }
-
-        if value as usize > preview {
-            write_debug_bytes(b"...")
-        }
-    }
-
-    write_debug_bytes(b"\"\n");
-}
-
-pub(crate) fn log_string_compare_mismatch(index: usize, left: u8, right: u8) {
-    ensure_count_debug_env_checked();
-    if !COUNT_DEBUG_ENABLED.load(Ordering::Relaxed) {
-        return;
-    }
-
-    write_debug_bytes(b"[slisp:str-eq] mismatch idx=");
-    {
-        let mut buf = [0u8; 24];
-        let mut i = buf.len();
-        let mut val = index as u64;
-        if val == 0 {
-            i -= 1;
-            buf[i] = b'0';
-        } else {
-            while val > 0 {
-                i -= 1;
-                buf[i] = b'0' + (val % 10) as u8;
-                val /= 10;
-            }
-        }
-        write_debug_bytes(&buf[i..]);
-    }
-    write_debug_bytes(b" left=0x");
-    let left_hex = [HEX[(left >> 4) as usize], HEX[(left & 0xf) as usize]];
-    write_debug_bytes(&left_hex);
-    write_debug_bytes(b" right=0x");
-    let right_hex = [HEX[(right >> 4) as usize], HEX[(right & 0xf) as usize]];
-    write_debug_bytes(&right_hex);
-    write_debug_bytes(b"\n");
-}
-
-pub(crate) fn log_string_equals_result(result: i64) {
-    ensure_count_debug_env_checked();
-    if !COUNT_DEBUG_ENABLED.load(Ordering::Relaxed) {
-        return;
-    }
-    write_debug_bytes(b"[slisp:str-eq] result=");
-    let msg: &[u8] = if result == 0 { b"false\n" } else { b"true\n" };
-    write_debug_bytes(msg);
-}
-
-#[no_mangle]
-pub extern "C" fn _count_debug_enable(flag: i64) {
-    COUNT_DEBUG_ENABLED.store(flag != 0, Ordering::Relaxed);
-}
 
 #[cfg(not(feature = "std"))]
 #[panic_handler]

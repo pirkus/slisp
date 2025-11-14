@@ -1,4 +1,13 @@
-use super::{emit_free_for_slot, extend_with_offset, is_count_debug_requested, CompileContext, CompileError, CompileResult, HeapOwnership, RetainedSlot, ValueKind};
+use super::{
+    builtins::{emit_free_for_slot, free_retained_dependents},
+    extend_with_offset,
+    CompileContext,
+    CompileError,
+    CompileResult,
+    HeapOwnership,
+    RetainedSlot,
+    ValueKind,
+};
 /// Function definition and call compilation
 use crate::ast::Node;
 use crate::compiler::liveness::{apply_liveness_plan, compute_liveness_plan};
@@ -58,11 +67,6 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
         param_count,
         0, // Will be set by caller
     )];
-
-    if func_name == "-main" && is_count_debug_requested() {
-        instructions.push(IRInstruction::Push(1));
-        instructions.push(IRInstruction::RuntimeCall("_count_debug_enable".to_string(), 1));
-    }
 
     let mut body_result = crate::compiler::compile_node(&args[2], &mut func_context, program)?;
     let mut body_kind = body_result.kind;
@@ -156,7 +160,7 @@ pub fn compile_function_call(func_name: &str, args: &[Node], context: &mut Compi
         context.release_temp_slot(slot);
     }
     for mut slot in retained_argument_slots {
-        super::free_retained_dependents(&mut slot, &mut instructions, context);
+        free_retained_dependents(&mut slot, &mut instructions, context);
         context.release_temp_slot(slot.slot);
     }
 

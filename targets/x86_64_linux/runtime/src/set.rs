@@ -322,7 +322,6 @@ pub unsafe extern "C" fn _set_contains(set: *const u8, value: i64, value_tag: i6
 #[no_mangle]
 pub unsafe extern "C" fn _set_count(set: *const u8) -> u64 {
     let len = _map_count(set);
-    crate::log_count("_set_count", len);
     len
 }
 
