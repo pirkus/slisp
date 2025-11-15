@@ -45,7 +45,7 @@ fn apply_runtime_relocations(code: Vec<u8>, relocations: &[RuntimeRelocation], s
 
     let mut new_code = code;
 
-    for reloc in relocations {
+    relocations.iter().for_each(|reloc| {
         let stub_offset = stubs
             .iter()
             .find(|stub| stub.symbol == reloc.symbol)
@@ -58,7 +58,7 @@ fn apply_runtime_relocations(code: Vec<u8>, relocations: &[RuntimeRelocation], s
         let bytes = (relative as i32).to_le_bytes();
 
         new_code[reloc.offset..reloc.offset + 4].copy_from_slice(&bytes);
-    }
+    });
 
     new_code
 }
@@ -70,7 +70,7 @@ fn patch_runtime_stubs(code: Vec<u8>, stubs: &[RuntimeStub], addresses: &Runtime
 
     let mut new_code = code;
 
-    for stub in stubs {
+    stubs.iter().for_each(|stub| {
         let target = resolve_runtime_symbol(addresses, &stub.symbol).unwrap_or_else(|| panic!("Missing runtime address for symbol {}", stub.symbol));
         let immediate_offset = stub.offset + 2; // skip mov opcode (0x48, 0xb8)
         new_code[immediate_offset..immediate_offset + 8].copy_from_slice(&(target as u64).to_le_bytes());
@@ -80,7 +80,7 @@ fn patch_runtime_stubs(code: Vec<u8>, stubs: &[RuntimeStub], addresses: &Runtime
         if jump_slice != [0xff, 0xe0] {
             jump_slice.copy_from_slice(&[0xff, 0xe0]);
         }
-    }
+    });
 
     new_code
 }
