@@ -260,6 +260,9 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
             "get" => builtins::compile_get(args, context, program),
             "subs" => builtins::compile_subs(args, context, program),
             "str" => builtins::compile_str(args, context, program),
+            "print" => builtins::compile_print(args, context, program),
+            "println" => builtins::compile_println(args, context, program),
+            "printf" => builtins::compile_printf(args, context, program),
             "vec" => builtins::compile_vector_literal(args, context, program),
             "set" => builtins::compile_set_literal(args, context, program),
             "hash-map" => builtins::compile_hash_map(args, context, program),
@@ -384,6 +387,33 @@ mod tests {
             ]
         );
         assert_eq!(program.string_literals, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn test_compile_print_no_args() {
+        let program = compile_expression("(print)").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::RuntimeCall("_print_values".to_string(), 3),
+                IRInstruction::Return,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_compile_printf_runs_runtime() {
+        let program = compile_expression("(printf \"value=%s\" 10)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_printf_values")));
+    }
+
+    #[test]
+    fn test_compile_println_invokes_runtime() {
+        let program = compile_expression("(println \"hi\")").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_print_values")));
     }
 
     #[test]

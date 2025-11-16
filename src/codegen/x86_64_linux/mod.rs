@@ -188,6 +188,8 @@ pub fn compile_to_object(program: &IRProgram) -> ObjectArtifact {
         "_string_from_number",
         "_string_from_boolean",
         "_string_equals",
+        "_print_values",
+        "_printf_values",
         "_vector_create",
         "_vector_clone",
         "_vector_count",
