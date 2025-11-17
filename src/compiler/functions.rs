@@ -1,12 +1,6 @@
 use super::{
     builtins::{emit_free_for_slot, free_retained_dependents},
-    extend_with_offset,
-    CompileContext,
-    CompileError,
-    CompileResult,
-    HeapOwnership,
-    RetainedSlot,
-    ValueKind,
+    extend_with_offset, CompileContext, CompileError, CompileResult, HeapOwnership, RetainedSlot, ValueKind,
 };
 /// Function definition and call compilation
 use crate::ast::Node;

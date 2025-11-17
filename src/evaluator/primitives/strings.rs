@@ -1,6 +1,6 @@
+use super::printer::value_to_string;
 use super::{Environment, EvalError, Value};
 use crate::ast::Node;
-use super::printer::value_to_string;
 
 pub fn eval_str(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
     args.iter()

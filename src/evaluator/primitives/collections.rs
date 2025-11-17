@@ -120,10 +120,7 @@ pub(crate) fn eval_subs(args: &[Node], env: &mut Environment) -> Result<Value, E
 }
 
 pub(crate) fn eval_vec(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
-    args.iter()
-        .map(|arg| crate::evaluator::eval_with_env(arg, env))
-        .collect::<Result<Vec<_>, _>>()
-        .map(Value::Vector)
+    args.iter().map(|arg| crate::evaluator::eval_with_env(arg, env)).collect::<Result<Vec<_>, _>>().map(Value::Vector)
 }
 
 pub(crate) fn eval_set(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
@@ -279,11 +276,15 @@ mod tests {
     }
 
     fn string_node(value: &str) -> Node {
-        Node::Primitive { value: Primitive::String(value.to_string()) }
+        Node::Primitive {
+            value: Primitive::String(value.to_string()),
+        }
     }
 
     fn keyword_node(value: &str) -> Node {
-        Node::Primitive { value: Primitive::Keyword(value.to_string()) }
+        Node::Primitive {
+            value: Primitive::Keyword(value.to_string()),
+        }
     }
 
     #[test]

@@ -63,9 +63,15 @@ mod tests {
     fn logical_and_short_circuits_on_falsey() {
         let mut env = Environment::new();
         let args = vec![
-            Node::Primitive { value: crate::ast::Primitive::Number(1) },
-            Node::Primitive { value: crate::ast::Primitive::Number(0) },
-            Node::Primitive { value: crate::ast::Primitive::Number(1) },
+            Node::Primitive {
+                value: crate::ast::Primitive::Number(1),
+            },
+            Node::Primitive {
+                value: crate::ast::Primitive::Number(0),
+            },
+            Node::Primitive {
+                value: crate::ast::Primitive::Number(1),
+            },
         ];
         assert_eq!(eval_logical_and(&args, &mut env), Ok(Value::Boolean(false)));
     }

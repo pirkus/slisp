@@ -25,8 +25,7 @@ pub(crate) fn value_to_string(value: &Value) -> String {
             if entries.is_empty() {
                 "{}".to_string()
             } else {
-                let mut rendered: Vec<(String, String)> =
-                    entries.iter().map(|(key, value)| (map_key_to_string(key), value_to_string(value))).collect();
+                let mut rendered: Vec<(String, String)> = entries.iter().map(|(key, value)| (map_key_to_string(key), value_to_string(value))).collect();
                 rendered.sort_by(|(ka, _), (kb, _)| ka.cmp(kb));
                 let pairs = rendered.into_iter().map(|(key, value)| format!("{} {}", key, value));
                 stringify_sequence(pairs, "{", "}")
@@ -70,9 +69,7 @@ fn write_output(chunks: &[String], newline: bool) -> Result<(), EvalError> {
 }
 
 fn render_arguments(args: &[Node], env: &mut Environment) -> Result<Vec<String>, EvalError> {
-    args.iter()
-        .map(|arg| crate::evaluator::eval_with_env(arg, env).map(|value| value_to_string(&value)))
-        .collect()
+    args.iter().map(|arg| crate::evaluator::eval_with_env(arg, env).map(|value| value_to_string(&value))).collect()
 }
 
 fn format_printf_string(format: &str, values: &[Value]) -> String {

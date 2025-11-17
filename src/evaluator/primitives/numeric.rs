@@ -74,7 +74,9 @@ mod tests {
     #[test]
     fn arithmetic_requires_two_args() {
         let mut env = Environment::new();
-        let args = vec![Node::Primitive { value: crate::ast::Primitive::Number(1) }];
+        let args = vec![Node::Primitive {
+            value: crate::ast::Primitive::Number(1),
+        }];
         let err = eval_arithmetic_op(&args, &mut env, |a, b| a + b, "+").unwrap_err();
         assert!(matches!(err, EvalError::ArityError(_, _, _)));
     }
@@ -83,8 +85,12 @@ mod tests {
     fn comparison_rejects_non_numbers() {
         let mut env = Environment::new();
         let args = vec![
-            Node::Primitive { value: crate::ast::Primitive::String("a".into()) },
-            Node::Primitive { value: crate::ast::Primitive::Number(1) },
+            Node::Primitive {
+                value: crate::ast::Primitive::String("a".into()),
+            },
+            Node::Primitive {
+                value: crate::ast::Primitive::Number(1),
+            },
         ];
         let err = eval_comparison_op(&args, &mut env, |a, b| a < b, "<").unwrap_err();
         assert!(matches!(err, EvalError::TypeError(_)));
