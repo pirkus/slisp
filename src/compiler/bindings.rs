@@ -1,12 +1,6 @@
 use super::{
     builtins::{emit_free_for_slot, free_retained_dependents, free_retained_slot},
-    extend_with_offset,
-    CompileContext,
-    CompileError,
-    CompileResult,
-    HeapOwnership,
-    RetainedSlot,
-    ValueKind,
+    extend_with_offset, CompileContext, CompileError, CompileResult, HeapOwnership, RetainedSlot, ValueKind,
 };
 /// Variable binding compilation (let expressions)
 use crate::ast::Node;

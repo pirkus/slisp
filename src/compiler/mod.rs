@@ -53,35 +53,29 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
 
     // First pass: find all function definitions
     for expr in expressions {
-        if let Node::List { root } = expr {
-            if !root.is_empty() {
-                if let Node::Symbol { value } = &root[0] {
-                    if value == "defn" {
-                        // Register function in context but don't compile yet
-                        if root.len() != 4 {
-                            return Err(CompileError::ArityError("defn".to_string(), 3, root.len() - 1));
-                        }
-
-                        let func_name = match &root[1] {
-                            Node::Symbol { value } => value.clone(),
-                            _ => return Err(CompileError::InvalidExpression("Function name must be a symbol".to_string())),
-                        };
-
-                        let params = match &root[2] {
-                            Node::Vector { root } => root,
-                            _ => return Err(CompileError::InvalidExpression("Function parameters must be a vector".to_string())),
-                        };
-
-                        let func_info = FunctionInfo {
-                            name: func_name.clone(),
-                            param_count: params.len(),
-                            start_address: 0, // Will be set during compilation
-                            local_count: 0,
-                        };
-                        context.add_function(func_name, func_info)?;
-                    }
-                }
+        if let Some(root) = extract_defn(expr) {
+            // Register function in context but don't compile yet
+            if root.len() != 4 {
+                return Err(CompileError::ArityError("defn".to_string(), 3, root.len() - 1));
             }
+
+            let func_name = match &root[1] {
+                Node::Symbol { value } => value.clone(),
+                _ => return Err(CompileError::InvalidExpression("Function name must be a symbol".to_string())),
+            };
+
+            let params = match &root[2] {
+                Node::Vector { root } => root,
+                _ => return Err(CompileError::InvalidExpression("Function parameters must be a vector".to_string())),
+            };
+
+            let func_info = FunctionInfo {
+                name: func_name.clone(),
+                param_count: params.len(),
+                start_address: 0, // Will be set during compilation
+                local_count: 0,
+            };
+            context.add_function(func_name, func_info)?;
         }
     }
 
@@ -91,14 +85,10 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
     let mut metadata_context = context.clone();
     let mut metadata_program = IRProgram::new();
     for expr in expressions {
-        if let Node::List { root } = expr {
-            if let Some(Node::Symbol { value }) = root.first() {
-                if value == "defn" {
-                    // Skip malformed defns here; they'll be reported in the main compilation loop.
-                    if root.len() == 4 {
-                        functions::compile_defn(&root[1..], &mut metadata_context, &mut metadata_program)?;
-                    }
-                }
+        if let Some(root) = extract_defn(expr) {
+            // Skip malformed defns here; they'll be reported in the main compilation loop.
+            if root.len() == 4 {
+                functions::compile_defn(&root[1..], &mut metadata_context, &mut metadata_program)?;
             }
         }
     }
@@ -110,15 +100,9 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
 
     // Second pass: compile non-defn expressions, collect function bodies for later
     for expr in expressions {
-        if let Node::List { root } = expr {
-            if !root.is_empty() {
-                if let Node::Symbol { value } = &root[0] {
-                    if value == "defn" {
-                        pending_defns.push(root.clone());
-                        continue;
-                    }
-                }
-            }
+        if let Some(root) = extract_defn(expr) {
+            pending_defns.push(root.to_vec());
+            continue;
         }
 
         let mut result = compile_node(expr, &mut context, &mut program)?;
@@ -165,14 +149,14 @@ fn append_with_offset(program: &mut IRProgram, instructions: Vec<IRInstruction>)
     }
 
     let base = program.len();
-    for instruction in instructions {
-        let adjusted = match instruction {
+    instructions
+        .into_iter()
+        .map(|instruction| match instruction {
             IRInstruction::Jump(target) => IRInstruction::Jump(base + target),
             IRInstruction::JumpIfZero(target) => IRInstruction::JumpIfZero(base + target),
             other => other,
-        };
-        program.add_instruction(adjusted);
-    }
+        })
+        .for_each(|adjusted| program.add_instruction(adjusted));
 }
 
 pub(super) fn extend_with_offset(target: &mut Vec<IRInstruction>, mut new_instructions: Vec<IRInstruction>) {
@@ -182,17 +166,21 @@ pub(super) fn extend_with_offset(target: &mut Vec<IRInstruction>, mut new_instru
 
     let base = target.len();
     if base != 0 {
-        for instruction in &mut new_instructions {
-            match instruction {
-                IRInstruction::Jump(target_idx) | IRInstruction::JumpIfZero(target_idx) => {
-                    *target_idx += base;
-                }
-                _ => {}
+        new_instructions.iter_mut().for_each(|instruction| {
+            if let IRInstruction::Jump(target_idx) | IRInstruction::JumpIfZero(target_idx) = instruction {
+                *target_idx += base;
             }
-        }
+        });
     }
 
     target.extend(new_instructions);
+}
+
+fn extract_defn(expr: &Node) -> Option<&[Node]> {
+    match expr {
+        Node::List { root } if matches!(root.first(), Some(Node::Symbol { value }) if value == "defn") => Some(root.as_slice()),
+        _ => None,
+    }
 }
 
 /// Compile a single AST node to IR
@@ -272,6 +260,9 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
             "get" => builtins::compile_get(args, context, program),
             "subs" => builtins::compile_subs(args, context, program),
             "str" => builtins::compile_str(args, context, program),
+            "print" => builtins::compile_print(args, context, program),
+            "println" => builtins::compile_println(args, context, program),
+            "printf" => builtins::compile_printf(args, context, program),
             "vec" => builtins::compile_vector_literal(args, context, program),
             "set" => builtins::compile_set_literal(args, context, program),
             "hash-map" => builtins::compile_hash_map(args, context, program),
@@ -396,6 +387,33 @@ mod tests {
             ]
         );
         assert_eq!(program.string_literals, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn test_compile_print_no_args() {
+        let program = compile_expression("(print)").unwrap();
+        assert_eq!(
+            program.instructions,
+            vec![
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::Push(0),
+                IRInstruction::RuntimeCall("_print_values".to_string(), 3),
+                IRInstruction::Return,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_compile_printf_runs_runtime() {
+        let program = compile_expression("(printf \"value=%s\" 10)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_printf_values")));
+    }
+
+    #[test]
+    fn test_compile_println_invokes_runtime() {
+        let program = compile_expression("(println \"hi\")").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_print_values")));
     }
 
     #[test]

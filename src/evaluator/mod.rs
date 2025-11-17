@@ -3,6 +3,7 @@
 /// This module is organized into:
 /// - primitives: Arithmetic, comparison, and logical operations
 /// - special_forms: Special forms (if, let, fn, def, defn)
+mod helpers;
 mod primitives;
 mod special_forms;
 
@@ -137,6 +138,9 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
             "dissoc" => primitives::eval_dissoc(args, env),
             "disj" => primitives::eval_disj(args, env),
             "contains?" => primitives::eval_contains(args, env),
+            "print" => primitives::eval_print(args, env),
+            "println" => primitives::eval_println(args, env),
+            "printf" => primitives::eval_printf(args, env),
             op => {
                 if let Some(func_value) = env.get(op) {
                     special_forms::eval_function_call(func_value.clone(), args, env)

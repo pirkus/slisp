@@ -1,5 +1,5 @@
-use super::context::CompileContext;
 use super::builtins::free_retained_slot;
+use super::context::CompileContext;
 use crate::ir::IRInstruction;
 use std::collections::HashMap;
 

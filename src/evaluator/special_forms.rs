@@ -1,3 +1,4 @@
+use super::helpers::{fold_pairs, is_truthy};
 use super::{Environment, EvalError, Value};
 /// Special forms - if, let, fn, def, defn
 use crate::ast::Node;
@@ -9,19 +10,8 @@ pub fn eval_if(args: &[Node], env: &mut Environment) -> Result<Value, EvalError>
     }
 
     let condition = crate::evaluator::eval_with_env(&args[0], env)?;
-    let is_truthy = match condition {
-        Value::Boolean(b) => b,
-        Value::Number(n) => n != 0,
-        Value::Nil => false,
-        Value::Function { .. } => true, // Functions are always truthy
-        Value::Keyword(_) => true,
-        Value::String(s) => !s.is_empty(),
-        Value::Vector(items) => !items.is_empty(),
-        Value::Set(entries) => !entries.is_empty(),
-        Value::Map(entries) => !entries.is_empty(),
-    };
 
-    if is_truthy {
+    if is_truthy(&condition) {
         crate::evaluator::eval_with_env(&args[1], env)
     } else {
         crate::evaluator::eval_with_env(&args[2], env)
@@ -40,25 +30,23 @@ pub fn eval_let(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
         _ => return Err(EvalError::TypeError("let requires a vector of bindings".to_string())),
     };
 
-    if bindings.len() % 2 != 0 {
-        return Err(EvalError::TypeError("let bindings must have even number of elements".to_string()));
-    }
-
     let mut new_env = env.clone();
 
-    for chunk in bindings.chunks(2) {
-        let var_node = &chunk[0];
-        let val_node = &chunk[1];
+    fold_pairs(
+        bindings,
+        (),
+        || EvalError::TypeError("let bindings must have even number of elements".to_string()),
+        |_, var_node, val_node| {
+            let var_name = match var_node {
+                Node::Symbol { value } => value,
+                _ => return Err(EvalError::TypeError("let binding variables must be symbols".to_string())),
+            };
 
-        let var_name = match var_node {
-            Node::Symbol { value } => value,
-            _ => return Err(EvalError::TypeError("let binding variables must be symbols".to_string())),
-        };
-
-        // Sequential binding: later bindings can reference earlier ones
-        let val = crate::evaluator::eval_with_env(val_node, &mut new_env)?;
-        new_env.insert(var_name.clone(), val);
-    }
+            let val = crate::evaluator::eval_with_env(val_node, &mut new_env)?;
+            new_env.insert(var_name.clone(), val);
+            Ok(())
+        },
+    )?;
 
     crate::evaluator::eval_with_env(&args[1], &mut new_env)
 }
