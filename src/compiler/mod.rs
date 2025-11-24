@@ -10,6 +10,7 @@ mod builtins;
 mod context;
 mod expressions;
 mod functions;
+mod inference;
 mod liveness;
 mod types;
 
@@ -18,6 +19,7 @@ pub use types::{CompileResult, HeapOwnership, MapKeyLiteral, MapValueTypes, Reta
 
 use crate::ast::Node;
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
+use inference::run_type_inference;
 
 /// Determine if a symbol refers to a heap-allocated local variable in the current context.
 pub(crate) fn is_heap_allocated_symbol(name: &str, context: &CompileContext) -> bool {
@@ -37,6 +39,9 @@ pub enum CompileError {
 pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
     let mut program = IRProgram::new();
     let mut context = CompileContext::new();
+    let inference = run_type_inference(std::slice::from_ref(node))?;
+    context.set_type_inference(inference);
+    context.hydrate_from_inference();
     let mut result = compile_node(node, &mut context, &mut program)?;
     let mut expr_instructions = std::mem::take(&mut result.instructions);
     result.free_retained_slots(&mut expr_instructions, &mut context);
@@ -49,6 +54,9 @@ pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
 pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> {
     let mut program = IRProgram::new();
     let mut context = CompileContext::new();
+    let inference = run_type_inference(expressions)?;
+    context.set_type_inference(inference);
+    context.hydrate_from_inference();
     let mut emitted_toplevel_code = false;
 
     // First pass: find all function definitions
@@ -209,7 +217,10 @@ pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &
                 } else {
                     HeapOwnership::None
                 };
-                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadParam(slot)], kind).with_heap_ownership(ownership))
+                let map_value_types = context.get_parameter_map_value_types(value).cloned();
+                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadParam(slot)], kind)
+                    .with_heap_ownership(ownership)
+                    .with_map_value_types(map_value_types))
             } else if let Some(slot) = context.get_variable(value) {
                 let kind = context.get_variable_type(value).unwrap_or(ValueKind::Any);
                 let ownership = if kind.is_heap_kind() && context.is_heap_allocated(value) {
@@ -295,10 +306,53 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
 mod tests {
     use super::*;
     use crate::ast::{AstParser, AstParserTrt};
+    use crate::compiler::inference::run_type_inference;
 
     fn compile_expression(input: &str) -> Result<IRProgram, CompileError> {
         let ast = AstParser::parse_sexp_new_domain(input.as_bytes(), &mut 0);
         compile_to_ir(&ast)
+    }
+
+    #[test]
+    fn load_parameter_carries_map_metadata() {
+        let mut context = CompileContext::new();
+        context.add_parameter("m".to_string(), 0);
+        context.set_parameter_type("m", ValueKind::Map);
+        context.mark_heap_allocated("m", ValueKind::Map);
+        let mut metadata = MapValueTypes::new();
+        metadata.insert(MapKeyLiteral::String("a".to_string()), ValueKind::String);
+        context.set_parameter_map_value_types("m", Some(metadata.clone()));
+        let mut program = IRProgram::new();
+        let node = Node::Symbol { value: "m".to_string() };
+        let result = compile_node(&node, &mut context, &mut program).unwrap();
+        let map_types = result.map_value_types.expect("expected map metadata");
+        assert_eq!(map_types.get(&MapKeyLiteral::String("a".to_string())), Some(&ValueKind::String));
+    }
+
+    #[test]
+    fn function_call_uses_inferred_return_type() {
+        let mut offset = 0;
+        let forty_two = AstParser::parse_sexp_new_domain("(defn forty-two [] 42)".as_bytes(), &mut offset);
+        let summary = run_type_inference(std::slice::from_ref(&forty_two)).unwrap();
+
+        let mut context = CompileContext::new();
+        context
+            .add_function(
+                "forty-two".to_string(),
+                FunctionInfo {
+                    name: "forty-two".to_string(),
+                    param_count: 0,
+                    start_address: 0,
+                    local_count: 0,
+                },
+            )
+            .unwrap();
+        context.set_type_inference(summary);
+        context.hydrate_from_inference();
+
+        let mut program = IRProgram::new();
+        let result = functions::compile_function_call("forty-two", &[], &mut context, &mut program, 0).unwrap();
+        assert_eq!(result.kind, ValueKind::Number);
     }
 
     #[test]
@@ -481,6 +535,52 @@ mod tests {
     }
 
     #[test]
+    fn test_get_on_literal_map_skips_clone() {
+        let program = compile_expression("(get {:a \"x\"} :a)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_get"
+        )));
+        assert!(!program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 2) if name == "_map_value_clone"
+        )));
+    }
+
+    #[test]
+    fn test_get_after_assoc_skips_clone() {
+        let program = compile_expression("(let [base {:a \"x\"} updated (assoc base :b \"y\")] (get updated :b))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_get"
+        )));
+        assert!(!program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 2) if name == "_map_value_clone"
+        )));
+    }
+
+    #[test]
+    fn test_contains_known_key_avoids_runtime() {
+        let program = compile_expression("(contains? {:a 1} :a)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::Push(1))));
+        assert!(!program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_map_contains")));
+    }
+
+    #[test]
+    fn test_contains_missing_key_avoids_runtime() {
+        let program = compile_expression("(contains? {:a 1} :b)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_map_contains")));
+    }
+
+    #[test]
+    fn test_contains_after_assoc_skips_runtime() {
+        let program = compile_expression("(let [m (assoc {:a 1} :b 2)] (contains? m :b))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::Push(1))));
+        assert!(!program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_map_contains")));
+    }
+
+    #[test]
     fn test_assoc_followed_by_get_emits_map_get() {
         let program = compile_expression("(let [numbers #{1 2 3} combos {:nums numbers} trimmed (assoc combos :nums (disj numbers 2))] (get trimmed :nums))").unwrap();
         assert!(program.instructions.iter().any(|inst| matches!(
@@ -537,7 +637,7 @@ mod tests {
 
     #[test]
     fn test_compile_contains_runtime_call() {
-        let program = compile_expression("(contains? (hash-map \"a\" 1) \"a\")").unwrap();
+        let program = compile_expression("(let [m (hash-map \"a\" 1) k (if true \"a\" \"b\")] (contains? m k))").unwrap();
         assert!(program.instructions.iter().any(|inst| matches!(
             inst,
             IRInstruction::RuntimeCall(name, 3) if name == "_map_contains"

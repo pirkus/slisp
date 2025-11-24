@@ -124,26 +124,39 @@ fn collect_bindings(bindings: &[Node], context: &mut CompileContext, program: &m
         let slot = context.add_variable(var_name.clone());
         collected.instructions.push(IRInstruction::StoreLocal(slot));
 
-        let value_kind = match value_result.kind {
+        let mut value_kind = match value_result.kind {
             ValueKind::Any => cloned_from_existing.unwrap_or(ValueKind::Any),
             other => other,
         };
+        let mut inferred_heap_ownership = None;
+        let mut inferred_map_value_types = None;
+        if let Some((inferred_kind, inferred_owner, inferred_map_types)) = context.consume_local_binding_metadata(var_name) {
+            if inferred_kind != ValueKind::Any {
+                value_kind = inferred_kind;
+            }
+            inferred_heap_ownership = Some(inferred_owner);
+            inferred_map_value_types = inferred_map_types;
+        }
         context.set_variable_type(var_name, value_kind);
         if value_kind == ValueKind::Map {
-            context.set_variable_map_value_types(var_name, value_map_value_types.or(cloned_map_value_types));
+            let combined = inferred_map_value_types
+                .or_else(|| value_map_value_types.clone())
+                .or(cloned_map_value_types);
+            context.set_variable_map_value_types(var_name, combined);
         } else {
             context.set_variable_map_value_types(var_name, None);
         }
 
         // Mark variable as heap-allocated if needed
-        if value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing.is_some() {
+        let heap_owned = value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing.is_some() || matches!(inferred_heap_ownership, Some(HeapOwnership::Owned));
+        if heap_owned {
             context.mark_heap_allocated(var_name, value_kind);
         }
 
         collected.added_variables.push(var_name.clone());
         collected.binding_infos.push(BindingInfo {
             slot,
-            owns_heap: value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing.is_some(),
+            owns_heap: heap_owned,
             kind: value_kind,
             retained_slots,
         });

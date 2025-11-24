@@ -1,5 +1,10 @@
 /// Compilation context for tracking variables, parameters, and functions
-use super::{HeapOwnership, MapValueTypes, ValueKind};
+use super::{
+    inference::{BindingOwner, FunctionKey, TypeInferenceSummary},
+    HeapOwnership,
+    MapValueTypes,
+    ValueKind,
+};
 use crate::ir::FunctionInfo;
 use std::collections::HashMap;
 
@@ -13,11 +18,16 @@ pub struct CompileContext {
     pub variable_map_value_types: HashMap<String, MapValueTypes>,        // tracks map entry metadata for locals
     pub parameters: HashMap<String, usize>,                              // parameter name -> param slot index
     pub parameter_types: HashMap<String, ValueKind>,                     // inferred parameter types
+    pub parameter_map_value_types: HashMap<String, MapValueTypes>,       // map metadata for parameters
     pub functions: HashMap<String, FunctionInfo>,                        // function name -> function info
     pub function_return_types: HashMap<String, ValueKind>,               // function name -> return kind
     pub function_return_map_value_types: HashMap<String, MapValueTypes>, // function name -> map metadata
     pub function_parameter_types: HashMap<String, Vec<ValueKind>>,       // function name -> parameter kinds
+    pub function_parameter_map_value_types: HashMap<String, Vec<Option<MapValueTypes>>>, // function name -> parameter map metadata
     pub function_return_ownership: HashMap<String, HeapOwnership>,       // function name -> heap ownership semantics
+    pub type_inference: Option<TypeInferenceSummary>,                    // cached inference summary for current compilation unit
+    pub current_function: FunctionKey,
+    pub local_binding_offsets: HashMap<FunctionKey, usize>,
     pub next_slot: usize,
     pub free_slots: Vec<usize>, // stack of freed slots for reuse
     pub in_function: bool,      // true when compiling inside a function
@@ -32,11 +42,16 @@ impl CompileContext {
             variable_map_value_types: HashMap::new(),
             parameters: HashMap::new(),
             parameter_types: HashMap::new(),
+            parameter_map_value_types: HashMap::new(),
             functions: HashMap::new(),
             function_return_types: HashMap::new(),
             function_return_map_value_types: HashMap::new(),
             function_parameter_types: HashMap::new(),
+            function_parameter_map_value_types: HashMap::new(),
             function_return_ownership: HashMap::new(),
+            type_inference: None,
+            current_function: FunctionKey::Program,
+            local_binding_offsets: HashMap::new(),
             next_slot: 0,
             free_slots: Vec::new(),
             in_function: false,
@@ -60,7 +75,10 @@ impl CompileContext {
     /// heap-allocation markers, and slot tracking. This ensures that newly
     /// added fields to the compilation context receive the appropriate
     /// initialization for function scopes in one place.
-    pub fn new_function_scope(&self) -> Self {
+    pub fn new_function_scope(&self, function_name: &str) -> Self {
+        let key = FunctionKey::Named(function_name.to_string());
+        let mut local_binding_offsets = self.local_binding_offsets.clone();
+        local_binding_offsets.insert(key.clone(), 0);
         Self {
             variables: HashMap::new(),
             heap_allocated_vars: HashMap::new(),
@@ -68,11 +86,16 @@ impl CompileContext {
             variable_map_value_types: HashMap::new(),
             parameters: HashMap::new(),
             parameter_types: HashMap::new(),
+            parameter_map_value_types: HashMap::new(),
             functions: self.functions.clone(),
             function_return_types: self.function_return_types.clone(),
             function_return_map_value_types: self.function_return_map_value_types.clone(),
             function_parameter_types: self.function_parameter_types.clone(),
+            function_parameter_map_value_types: self.function_parameter_map_value_types.clone(),
             function_return_ownership: self.function_return_ownership.clone(),
+            type_inference: self.type_inference.clone(),
+            current_function: key,
+            local_binding_offsets,
             next_slot: 0,
             free_slots: Vec::new(),
             in_function: true,
@@ -145,6 +168,21 @@ impl CompileContext {
         self.parameter_types.insert(name.to_string(), kind);
     }
 
+    pub fn set_parameter_map_value_types(&mut self, name: &str, types: Option<MapValueTypes>) {
+        match types {
+            Some(map) if !map.is_empty() => {
+                self.parameter_map_value_types.insert(name.to_string(), map);
+            }
+            _ => {
+                self.parameter_map_value_types.remove(name);
+            }
+        }
+    }
+
+    pub fn get_parameter_map_value_types(&self, name: &str) -> Option<&MapValueTypes> {
+        self.parameter_map_value_types.get(name)
+    }
+
     /// Add a function to the context
     pub fn add_function(&mut self, name: String, info: FunctionInfo) -> Result<(), super::CompileError> {
         debug_assert!(!self.in_function, "function declarations must be registered on the root context");
@@ -196,6 +234,69 @@ impl CompileContext {
         self.function_return_ownership.get(name).copied()
     }
 
+    /// Attach a precomputed type inference summary to the context.
+    pub fn set_type_inference(&mut self, summary: TypeInferenceSummary) {
+        self.type_inference = Some(summary);
+        self.local_binding_offsets.clear();
+    }
+
+    /// Retrieve the shared type inference summary if one has been installed.
+    #[allow(dead_code)]
+    pub fn type_inference(&self) -> Option<&TypeInferenceSummary> {
+        self.type_inference.as_ref()
+    }
+
+    /// Hydrate function metadata from the attached type inference summary.
+    pub fn hydrate_from_inference(&mut self) {
+        let Some(summary) = self.type_inference.clone() else {
+            return;
+        };
+
+        for (name, analysis) in summary.iter_named_functions() {
+            if let Some(return_binding) = analysis.return_binding {
+                if let Some(kind) = summary.binding_kind(return_binding) {
+                    self.set_function_return_type(name, kind);
+                }
+                if let Some(ownership) = summary.binding_ownership(return_binding) {
+                    self.set_function_return_ownership(name, ownership);
+                }
+                if let Some(map_types) = summary.binding_map_value_types(return_binding).cloned() {
+                    self.set_function_return_map_value_types(name, Some(map_types));
+                }
+            }
+
+            for (idx, binding_id) in analysis.parameter_bindings.iter().enumerate() {
+                if let Some(kind) = summary.binding_kind(*binding_id) {
+                    self.record_function_parameter_type(name, idx, kind);
+                }
+                if let Some(map) = summary.binding_map_value_types(*binding_id).cloned() {
+                    self.set_function_parameter_map_value_types(name, idx, Some(map));
+                }
+            }
+        }
+    }
+
+    pub fn consume_local_binding_metadata(&mut self, var_name: &str) -> Option<(ValueKind, HeapOwnership, Option<MapValueTypes>)> {
+        let summary = self.type_inference.as_ref()?;
+        let analysis = summary.function(&self.current_function)?;
+        let offset = self.local_binding_offsets.entry(self.current_function.clone()).or_insert(0);
+        if *offset >= analysis.local_bindings.len() {
+            return None;
+        }
+        while *offset < analysis.local_bindings.len() {
+            let binding_id = analysis.local_bindings[*offset];
+            *offset += 1;
+            let binding = summary.binding(binding_id)?;
+            if let BindingOwner::Local { name, .. } = &binding.owner {
+                if name == var_name {
+                    let map_value_types = summary.binding_map_value_types(binding_id).cloned();
+                    return Some((binding.value_kind, binding.heap_ownership, map_value_types));
+                }
+            }
+        }
+        None
+    }
+
     /// Update the inferred parameter type for a function at a specific position
     pub fn record_function_parameter_type(&mut self, name: &str, index: usize, kind: ValueKind) {
         if kind == ValueKind::Any {
@@ -213,6 +314,27 @@ impl CompileContext {
         } else if *slot != kind {
             *slot = ValueKind::Any;
         }
+    }
+
+    pub fn set_function_parameter_map_value_types(&mut self, name: &str, index: usize, types: Option<MapValueTypes>) {
+        let entry = self
+            .function_parameter_map_value_types
+            .entry(name.to_string())
+            .or_insert_with(Vec::new);
+        if entry.len() <= index {
+            entry.resize(index + 1, None);
+        }
+        match types {
+            Some(map) if !map.is_empty() => entry[index] = Some(map),
+            _ => entry[index] = None,
+        }
+    }
+
+    pub fn get_function_parameter_map_value_types(&self, name: &str, index: usize) -> Option<&MapValueTypes> {
+        self.function_parameter_map_value_types
+            .get(name)
+            .and_then(|values| values.get(index))
+            .and_then(|slot| slot.as_ref())
     }
 
     /// Get the recorded parameter types for a function if available
@@ -330,6 +452,9 @@ impl CompileContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::{AstParser, AstParserTrt};
+    use crate::compiler::inference::run_type_inference;
+    use crate::compiler::MapKeyLiteral;
 
     #[test]
     fn function_scope_resets_local_state() {
@@ -352,7 +477,7 @@ mod tests {
         context.next_slot = 5;
         context.free_slots.push(3);
 
-        let function_context = context.new_function_scope();
+        let function_context = context.new_function_scope("foo");
 
         assert!(function_context.in_function);
         assert!(function_context.variables.is_empty());
@@ -363,6 +488,7 @@ mod tests {
         assert!(function_context.free_slots.is_empty());
         assert_eq!(function_context.next_slot, 0);
         assert_eq!(function_context.functions, context.functions);
+        assert!(matches!(function_context.current_function, FunctionKey::Named(ref name) if name == "foo"));
     }
 
     #[test]
@@ -392,5 +518,95 @@ mod tests {
 
         let third = context.allocate_contiguous_temp_slots(2);
         assert_eq!(third, vec![6, 7]);
+    }
+
+    #[test]
+    fn hydrate_from_inference_populates_function_metadata() {
+        let foo = {
+            let mut offset = 0;
+            AstParser::parse_sexp_new_domain("(defn foo [x] x)".as_bytes(), &mut offset)
+        };
+        let caller = {
+            let mut offset = 0;
+            AstParser::parse_sexp_new_domain("(defn caller [] (foo 1))".as_bytes(), &mut offset)
+        };
+        let program = vec![foo, caller];
+        let summary = run_type_inference(&program).unwrap();
+
+        let mut context = CompileContext::new();
+        context
+            .add_function(
+                "foo".to_string(),
+                FunctionInfo {
+                    name: "foo".to_string(),
+                    param_count: 1,
+                    start_address: 0,
+                    local_count: 0,
+                },
+            )
+            .unwrap();
+
+        context.set_type_inference(summary);
+        context.hydrate_from_inference();
+
+        assert_eq!(context.get_function_parameter_type("foo", 0), Some(ValueKind::Number));
+        assert_eq!(context.get_function_return_type("foo"), Some(ValueKind::Number));
+        assert_eq!(context.get_function_return_ownership("foo"), Some(HeapOwnership::None));
+    }
+
+    #[test]
+    fn consume_local_binding_metadata_tracks_program_locals() {
+        let mut offset = 0;
+        let expr = AstParser::parse_sexp_new_domain("(let [m {\"a\" 1} y 1] m)".as_bytes(), &mut offset);
+        let summary = run_type_inference(std::slice::from_ref(&expr)).unwrap();
+
+        let mut context = CompileContext::new();
+        context.set_type_inference(summary);
+        context.hydrate_from_inference();
+
+        let (map_kind, map_owner, map_metadata) = context.consume_local_binding_metadata("m").unwrap();
+        assert_eq!(map_kind, ValueKind::Map);
+        assert_eq!(map_owner, HeapOwnership::Owned);
+        let metadata = map_metadata.expect("expected map metadata");
+        assert_eq!(metadata.get(&MapKeyLiteral::String("a".to_string())), Some(&ValueKind::Number));
+
+        let (number_kind, number_owner, _) = context.consume_local_binding_metadata("y").unwrap();
+        assert_eq!(number_kind, ValueKind::Number);
+        assert_eq!(number_owner, HeapOwnership::None);
+    }
+
+    #[test]
+    fn hydrate_records_parameter_map_metadata() {
+        let foo = {
+            let mut offset = 0;
+            AstParser::parse_sexp_new_domain("(defn foo [m] (get m \"a\"))".as_bytes(), &mut offset)
+        };
+        let caller = {
+            let mut offset = 0;
+            AstParser::parse_sexp_new_domain("(defn caller [] (foo {\"a\" \"x\"}))".as_bytes(), &mut offset)
+        };
+        let program = vec![foo, caller];
+        let summary = run_type_inference(&program).unwrap();
+
+        let mut context = CompileContext::new();
+        context
+            .add_function(
+                "foo".to_string(),
+                FunctionInfo {
+                    name: "foo".to_string(),
+                    param_count: 1,
+                    start_address: 0,
+                    local_count: 0,
+                },
+            )
+            .unwrap();
+
+        context.set_type_inference(summary);
+        context.hydrate_from_inference();
+
+        let metadata = context
+            .get_function_parameter_map_value_types("foo", 0)
+            .expect("expected map metadata");
+        assert_eq!(metadata.get(&MapKeyLiteral::String("a".to_string())), Some(&ValueKind::String));
     }
 }

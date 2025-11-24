@@ -50,7 +50,7 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
         context.add_function(func_name.clone(), func_info)?;
     }
 
-    let mut func_context = context.new_function_scope();
+    let mut func_context = context.new_function_scope(&func_name);
 
     for (i, param_name) in param_names.iter().enumerate() {
         func_context.add_parameter(param_name.clone(), i);
@@ -59,6 +59,9 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
             if kind.is_heap_kind() {
                 func_context.mark_heap_allocated(param_name, kind);
             }
+        }
+        if let Some(map_types) = context.get_function_parameter_map_value_types(&func_name, i) {
+            func_context.set_parameter_map_value_types(param_name, Some(map_types.clone()));
         }
     }
 
