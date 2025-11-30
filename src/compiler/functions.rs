@@ -63,6 +63,12 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
         if let Some(map_types) = context.get_function_parameter_map_value_types(&func_name, i) {
             func_context.set_parameter_map_value_types(param_name, Some(map_types.clone()));
         }
+        if let Some(set_kind) = context.get_function_parameter_set_element_kind(&func_name, i) {
+            func_context.set_parameter_set_element_kind(param_name, Some(set_kind));
+        }
+        if let Some(vec_kind) = context.get_function_parameter_vector_element_kind(&func_name, i) {
+            func_context.set_parameter_vector_element_kind(param_name, Some(vec_kind));
+        }
     }
 
     let mut instructions = vec![IRInstruction::DefineFunction(
@@ -74,6 +80,8 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
     let mut body_result = crate::compiler::compile_node(&args[2], &mut func_context, program)?;
     let mut body_kind = body_result.kind;
     let body_map_value_types = body_result.map_value_types.clone();
+    let body_set_element_kind = body_result.set_element_kind;
+    let body_vector_element_kind = body_result.vector_element_kind;
 
     if body_result.heap_ownership == HeapOwnership::Borrowed {
         let clone_runtime = match body_kind {
@@ -114,6 +122,8 @@ pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut I
     context.set_function_return_type(&func_info.name, body_kind);
     context.set_function_return_ownership(&func_info.name, body_ownership);
     context.set_function_return_map_value_types(&func_info.name, body_map_value_types);
+    context.set_function_return_set_element_kind(&func_info.name, body_set_element_kind);
+    context.set_function_return_vector_element_kind(&func_info.name, body_vector_element_kind);
 
     Ok((instructions, func_info))
 }
@@ -171,8 +181,12 @@ pub fn compile_function_call(func_name: &str, args: &[Node], context: &mut Compi
     let return_kind = context.get_function_return_type(func_name).unwrap_or(ValueKind::Any);
     let return_ownership = context.get_function_return_ownership(func_name).unwrap_or(HeapOwnership::None);
     let map_value_types = context.get_function_return_map_value_types(func_name).cloned();
+    let set_element_kind = context.get_function_return_set_element_kind(func_name);
+    let vector_element_kind = context.get_function_return_vector_element_kind(func_name);
 
     Ok(CompileResult::with_instructions(instructions, return_kind)
         .with_heap_ownership(return_ownership)
-        .with_map_value_types(map_value_types))
+        .with_map_value_types(map_value_types)
+        .with_set_element_kind(set_element_kind)
+        .with_vector_element_kind(vector_element_kind))
 }

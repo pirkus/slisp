@@ -130,22 +130,41 @@ fn collect_bindings(bindings: &[Node], context: &mut CompileContext, program: &m
         };
         let mut inferred_heap_ownership = None;
         let mut inferred_map_value_types = None;
-        if let Some((inferred_kind, inferred_owner, inferred_map_types)) = context.consume_local_binding_metadata(var_name) {
+        let mut inferred_set_element_kind = None;
+        let mut inferred_vector_element_kind = None;
+        if let Some((inferred_kind, inferred_owner, inferred_map_types, set_element_kind, vector_element_kind)) =
+            context.consume_local_binding_metadata(var_name)
+        {
             if inferred_kind != ValueKind::Any {
                 value_kind = inferred_kind;
             }
             inferred_heap_ownership = Some(inferred_owner);
             inferred_map_value_types = inferred_map_types;
+            inferred_set_element_kind = set_element_kind;
+            inferred_vector_element_kind = vector_element_kind;
         }
         context.set_variable_type(var_name, value_kind);
         if value_kind == ValueKind::Map {
-            let combined = inferred_map_value_types
-                .or_else(|| value_map_value_types.clone())
-                .or(cloned_map_value_types);
+            let mut combined = value_map_value_types.or(cloned_map_value_types);
+            if let Some(mut inferred) = inferred_map_value_types.filter(|m| !m.is_empty()) {
+                if let Some(existing) = combined.as_mut() {
+                    for (k, v) in inferred.drain() {
+                        existing.insert(k, v);
+                    }
+                } else {
+                    combined = Some(inferred);
+                }
+            }
             context.set_variable_map_value_types(var_name, combined);
         } else {
             context.set_variable_map_value_types(var_name, None);
         }
+        let set_element_kind = value_result.set_element_kind.or(inferred_set_element_kind);
+        let vector_element_kind = value_result.vector_element_kind.or(inferred_vector_element_kind);
+        context.set_variable_set_element_kind(var_name, set_element_kind);
+        context.set_variable_vector_element_kind(var_name, vector_element_kind);
+        context.set_variable_set_element_kind(var_name, inferred_set_element_kind);
+        context.set_variable_vector_element_kind(var_name, inferred_vector_element_kind);
 
         // Mark variable as heap-allocated if needed
         let heap_owned = value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing.is_some() || matches!(inferred_heap_ownership, Some(HeapOwnership::Owned));

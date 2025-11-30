@@ -16,14 +16,22 @@ pub struct CompileContext {
     pub heap_allocated_vars: HashMap<String, bool>,                      // tracks if variable holds heap pointer
     pub variable_types: HashMap<String, ValueKind>,                      // tracks inferred variable types
     pub variable_map_value_types: HashMap<String, MapValueTypes>,        // tracks map entry metadata for locals
+    pub variable_set_element_kinds: HashMap<String, ValueKind>,          // set element kinds for locals
+    pub variable_vector_element_kinds: HashMap<String, ValueKind>,       // vector element kinds for locals
     pub parameters: HashMap<String, usize>,                              // parameter name -> param slot index
     pub parameter_types: HashMap<String, ValueKind>,                     // inferred parameter types
     pub parameter_map_value_types: HashMap<String, MapValueTypes>,       // map metadata for parameters
+    pub parameter_set_element_kinds: HashMap<String, ValueKind>,         // set element kinds for parameters
+    pub parameter_vector_element_kinds: HashMap<String, ValueKind>,      // vector element kinds for parameters
     pub functions: HashMap<String, FunctionInfo>,                        // function name -> function info
     pub function_return_types: HashMap<String, ValueKind>,               // function name -> return kind
     pub function_return_map_value_types: HashMap<String, MapValueTypes>, // function name -> map metadata
+    pub function_return_set_element_kinds: HashMap<String, ValueKind>,   // function name -> set element kind
+    pub function_return_vector_element_kinds: HashMap<String, ValueKind>, // function name -> vector element kind
     pub function_parameter_types: HashMap<String, Vec<ValueKind>>,       // function name -> parameter kinds
     pub function_parameter_map_value_types: HashMap<String, Vec<Option<MapValueTypes>>>, // function name -> parameter map metadata
+    pub function_parameter_set_element_kinds: HashMap<String, Vec<Option<ValueKind>>>, // function name -> parameter set element kind
+    pub function_parameter_vector_element_kinds: HashMap<String, Vec<Option<ValueKind>>>, // function name -> parameter vector element kind
     pub function_return_ownership: HashMap<String, HeapOwnership>,       // function name -> heap ownership semantics
     pub type_inference: Option<TypeInferenceSummary>,                    // cached inference summary for current compilation unit
     pub current_function: FunctionKey,
@@ -40,14 +48,22 @@ impl CompileContext {
             heap_allocated_vars: HashMap::new(),
             variable_types: HashMap::new(),
             variable_map_value_types: HashMap::new(),
+            variable_set_element_kinds: HashMap::new(),
+            variable_vector_element_kinds: HashMap::new(),
             parameters: HashMap::new(),
             parameter_types: HashMap::new(),
             parameter_map_value_types: HashMap::new(),
+            parameter_set_element_kinds: HashMap::new(),
+            parameter_vector_element_kinds: HashMap::new(),
             functions: HashMap::new(),
             function_return_types: HashMap::new(),
             function_return_map_value_types: HashMap::new(),
+            function_return_set_element_kinds: HashMap::new(),
+            function_return_vector_element_kinds: HashMap::new(),
             function_parameter_types: HashMap::new(),
             function_parameter_map_value_types: HashMap::new(),
+            function_parameter_set_element_kinds: HashMap::new(),
+            function_parameter_vector_element_kinds: HashMap::new(),
             function_return_ownership: HashMap::new(),
             type_inference: None,
             current_function: FunctionKey::Program,
@@ -84,14 +100,22 @@ impl CompileContext {
             heap_allocated_vars: HashMap::new(),
             variable_types: HashMap::new(),
             variable_map_value_types: HashMap::new(),
+            variable_set_element_kinds: HashMap::new(),
+            variable_vector_element_kinds: HashMap::new(),
             parameters: HashMap::new(),
             parameter_types: HashMap::new(),
             parameter_map_value_types: HashMap::new(),
+            parameter_set_element_kinds: HashMap::new(),
+            parameter_vector_element_kinds: HashMap::new(),
             functions: self.functions.clone(),
             function_return_types: self.function_return_types.clone(),
             function_return_map_value_types: self.function_return_map_value_types.clone(),
+            function_return_set_element_kinds: self.function_return_set_element_kinds.clone(),
+            function_return_vector_element_kinds: self.function_return_vector_element_kinds.clone(),
             function_parameter_types: self.function_parameter_types.clone(),
             function_parameter_map_value_types: self.function_parameter_map_value_types.clone(),
+            function_parameter_set_element_kinds: self.function_parameter_set_element_kinds.clone(),
+            function_parameter_vector_element_kinds: self.function_parameter_vector_element_kinds.clone(),
             function_return_ownership: self.function_return_ownership.clone(),
             type_inference: self.type_inference.clone(),
             current_function: key,
@@ -132,8 +156,38 @@ impl CompileContext {
         }
     }
 
+    pub fn set_variable_set_element_kind(&mut self, name: &str, kind: Option<ValueKind>) {
+        match kind {
+            Some(kind) => {
+                self.variable_set_element_kinds.insert(name.to_string(), kind);
+            }
+            None => {
+                self.variable_set_element_kinds.remove(name);
+            }
+        }
+    }
+
+    pub fn set_variable_vector_element_kind(&mut self, name: &str, kind: Option<ValueKind>) {
+        match kind {
+            Some(kind) => {
+                self.variable_vector_element_kinds.insert(name.to_string(), kind);
+            }
+            None => {
+                self.variable_vector_element_kinds.remove(name);
+            }
+        }
+    }
+
     pub fn get_variable_map_value_types(&self, name: &str) -> Option<&MapValueTypes> {
         self.variable_map_value_types.get(name)
+    }
+
+    pub fn get_variable_set_element_kind(&self, name: &str) -> Option<ValueKind> {
+        self.variable_set_element_kinds.get(name).copied()
+    }
+
+    pub fn get_variable_vector_element_kind(&self, name: &str) -> Option<ValueKind> {
+        self.variable_vector_element_kinds.get(name).copied()
     }
 
     /// Get the inferred type for a variable
@@ -150,7 +204,9 @@ impl CompileContext {
     pub fn add_parameter(&mut self, name: String, slot: usize) {
         self.parameters.insert(name.clone(), slot);
         self.parameter_types.insert(name.clone(), ValueKind::Any);
-        self.heap_allocated_vars.entry(name).or_insert(false);
+        self.heap_allocated_vars.entry(name.clone()).or_insert(false);
+        self.parameter_set_element_kinds.remove(&name);
+        self.parameter_vector_element_kinds.remove(&name);
     }
 
     /// Get the slot index for a parameter
@@ -181,6 +237,36 @@ impl CompileContext {
 
     pub fn get_parameter_map_value_types(&self, name: &str) -> Option<&MapValueTypes> {
         self.parameter_map_value_types.get(name)
+    }
+
+    pub fn set_parameter_set_element_kind(&mut self, name: &str, kind: Option<ValueKind>) {
+        match kind {
+            Some(kind) if kind != ValueKind::Any => {
+                self.parameter_set_element_kinds.insert(name.to_string(), kind);
+            }
+            _ => {
+                self.parameter_set_element_kinds.remove(name);
+            }
+        }
+    }
+
+    pub fn set_parameter_vector_element_kind(&mut self, name: &str, kind: Option<ValueKind>) {
+        match kind {
+            Some(kind) if kind != ValueKind::Any => {
+                self.parameter_vector_element_kinds.insert(name.to_string(), kind);
+            }
+            _ => {
+                self.parameter_vector_element_kinds.remove(name);
+            }
+        }
+    }
+
+    pub fn get_parameter_set_element_kind(&self, name: &str) -> Option<ValueKind> {
+        self.parameter_set_element_kinds.get(name).copied()
+    }
+
+    pub fn get_parameter_vector_element_kind(&self, name: &str) -> Option<ValueKind> {
+        self.parameter_vector_element_kinds.get(name).copied()
     }
 
     /// Add a function to the context
@@ -216,8 +302,38 @@ impl CompileContext {
         }
     }
 
+    pub fn set_function_return_set_element_kind(&mut self, name: &str, kind: Option<ValueKind>) {
+        match kind {
+            Some(kind) if kind != ValueKind::Any => {
+                self.function_return_set_element_kinds.insert(name.to_string(), kind);
+            }
+            _ => {
+                self.function_return_set_element_kinds.remove(name);
+            }
+        }
+    }
+
+    pub fn set_function_return_vector_element_kind(&mut self, name: &str, kind: Option<ValueKind>) {
+        match kind {
+            Some(kind) if kind != ValueKind::Any => {
+                self.function_return_vector_element_kinds.insert(name.to_string(), kind);
+            }
+            _ => {
+                self.function_return_vector_element_kinds.remove(name);
+            }
+        }
+    }
+
     pub fn get_function_return_map_value_types(&self, name: &str) -> Option<&MapValueTypes> {
         self.function_return_map_value_types.get(name)
+    }
+
+    pub fn get_function_return_set_element_kind(&self, name: &str) -> Option<ValueKind> {
+        self.function_return_set_element_kinds.get(name).copied()
+    }
+
+    pub fn get_function_return_vector_element_kind(&self, name: &str) -> Option<ValueKind> {
+        self.function_return_vector_element_kinds.get(name).copied()
     }
 
     pub fn set_function_return_ownership(&mut self, name: &str, ownership: HeapOwnership) {
@@ -263,6 +379,12 @@ impl CompileContext {
                 if let Some(map_types) = summary.binding_map_value_types(return_binding).cloned() {
                     self.set_function_return_map_value_types(name, Some(map_types));
                 }
+                if let Some(set_element_kind) = summary.binding_set_element_kind(return_binding) {
+                    self.set_function_return_set_element_kind(name, Some(set_element_kind));
+                }
+                if let Some(vector_element_kind) = summary.binding_vector_element_kind(return_binding) {
+                    self.set_function_return_vector_element_kind(name, Some(vector_element_kind));
+                }
             }
 
             for (idx, binding_id) in analysis.parameter_bindings.iter().enumerate() {
@@ -272,11 +394,20 @@ impl CompileContext {
                 if let Some(map) = summary.binding_map_value_types(*binding_id).cloned() {
                     self.set_function_parameter_map_value_types(name, idx, Some(map));
                 }
+                if let Some(set_element_kind) = summary.binding_set_element_kind(*binding_id) {
+                    self.set_function_parameter_set_element_kind(name, idx, Some(set_element_kind));
+                }
+                if let Some(vector_element_kind) = summary.binding_vector_element_kind(*binding_id) {
+                    self.set_function_parameter_vector_element_kind(name, idx, Some(vector_element_kind));
+                }
             }
         }
     }
 
-    pub fn consume_local_binding_metadata(&mut self, var_name: &str) -> Option<(ValueKind, HeapOwnership, Option<MapValueTypes>)> {
+    pub fn consume_local_binding_metadata(
+        &mut self,
+        var_name: &str,
+    ) -> Option<(ValueKind, HeapOwnership, Option<MapValueTypes>, Option<ValueKind>, Option<ValueKind>)> {
         let summary = self.type_inference.as_ref()?;
         let analysis = summary.function(&self.current_function)?;
         let offset = self.local_binding_offsets.entry(self.current_function.clone()).or_insert(0);
@@ -290,7 +421,9 @@ impl CompileContext {
             if let BindingOwner::Local { name, .. } = &binding.owner {
                 if name == var_name {
                     let map_value_types = summary.binding_map_value_types(binding_id).cloned();
-                    return Some((binding.value_kind, binding.heap_ownership, map_value_types));
+                    let set_element_kind = summary.binding_set_element_kind(binding_id);
+                    let vector_element_kind = summary.binding_vector_element_kind(binding_id);
+                    return Some((binding.value_kind, binding.heap_ownership, map_value_types, set_element_kind, vector_element_kind));
                 }
             }
         }
@@ -337,6 +470,50 @@ impl CompileContext {
             .and_then(|slot| slot.as_ref())
     }
 
+    pub fn set_function_parameter_set_element_kind(&mut self, name: &str, index: usize, kind: Option<ValueKind>) {
+        let entry = self
+            .function_parameter_set_element_kinds
+            .entry(name.to_string())
+            .or_insert_with(Vec::new);
+        if entry.len() <= index {
+            entry.resize(index + 1, None);
+        }
+        match kind {
+            Some(kind) if kind != ValueKind::Any => entry[index] = Some(kind),
+            _ => entry[index] = None,
+        }
+    }
+
+    pub fn get_function_parameter_set_element_kind(&self, name: &str, index: usize) -> Option<ValueKind> {
+        self.function_parameter_set_element_kinds
+            .get(name)
+            .and_then(|values| values.get(index))
+            .and_then(|slot| slot.as_ref())
+            .copied()
+    }
+
+    pub fn set_function_parameter_vector_element_kind(&mut self, name: &str, index: usize, kind: Option<ValueKind>) {
+        let entry = self
+            .function_parameter_vector_element_kinds
+            .entry(name.to_string())
+            .or_insert_with(Vec::new);
+        if entry.len() <= index {
+            entry.resize(index + 1, None);
+        }
+        match kind {
+            Some(kind) if kind != ValueKind::Any => entry[index] = Some(kind),
+            _ => entry[index] = None,
+        }
+    }
+
+    pub fn get_function_parameter_vector_element_kind(&self, name: &str, index: usize) -> Option<ValueKind> {
+        self.function_parameter_vector_element_kinds
+            .get(name)
+            .and_then(|values| values.get(index))
+            .and_then(|slot| slot.as_ref())
+            .copied()
+    }
+
     /// Get the recorded parameter types for a function if available
     pub fn get_function_parameter_type(&self, name: &str, index: usize) -> Option<ValueKind> {
         self.function_parameter_types.get(name).and_then(|params| params.get(index)).copied()
@@ -348,6 +525,8 @@ impl CompileContext {
             self.free_slots.push(slot);
             self.variable_types.remove(name);
             self.variable_map_value_types.remove(name);
+            self.variable_set_element_kinds.remove(name);
+            self.variable_vector_element_kinds.remove(name);
             Some(slot)
         } else {
             None
@@ -564,13 +743,15 @@ mod tests {
         context.set_type_inference(summary);
         context.hydrate_from_inference();
 
-        let (map_kind, map_owner, map_metadata) = context.consume_local_binding_metadata("m").unwrap();
+        let (map_kind, map_owner, map_metadata, set_kind, vector_kind) = context.consume_local_binding_metadata("m").unwrap();
         assert_eq!(map_kind, ValueKind::Map);
         assert_eq!(map_owner, HeapOwnership::Owned);
         let metadata = map_metadata.expect("expected map metadata");
         assert_eq!(metadata.get(&MapKeyLiteral::String("a".to_string())), Some(&ValueKind::Number));
+        assert_eq!(set_kind, None);
+        assert_eq!(vector_kind, None);
 
-        let (number_kind, number_owner, _) = context.consume_local_binding_metadata("y").unwrap();
+        let (number_kind, number_owner, _, _, _) = context.consume_local_binding_metadata("y").unwrap();
         assert_eq!(number_kind, ValueKind::Number);
         assert_eq!(number_owner, HeapOwnership::None);
     }
@@ -608,5 +789,83 @@ mod tests {
             .get_function_parameter_map_value_types("foo", 0)
             .expect("expected map metadata");
         assert_eq!(metadata.get(&MapKeyLiteral::String("a".to_string())), Some(&ValueKind::String));
+    }
+
+    #[test]
+    fn hydrate_records_set_and_vector_parameter_metadata() {
+        let foo = {
+            let mut offset = 0;
+            AstParser::parse_sexp_new_domain("(defn foo [s v] (get v 0))".as_bytes(), &mut offset)
+        };
+        let caller = {
+            let mut offset = 0;
+            AstParser::parse_sexp_new_domain("(defn caller [] (foo #{1 2} [\"a\" \"b\"]))".as_bytes(), &mut offset)
+        };
+        let program = vec![foo, caller];
+        let summary = run_type_inference(&program).unwrap();
+        let foo_analysis = summary.function(&FunctionKey::Named("foo".to_string())).unwrap();
+        let set_param = foo_analysis.parameter_bindings[0];
+        let vec_param = foo_analysis.parameter_bindings[1];
+        assert_eq!(summary.binding_set_element_kind(set_param), Some(ValueKind::Number));
+        assert_eq!(summary.binding_vector_element_kind(vec_param), Some(ValueKind::String));
+
+        let mut context = CompileContext::new();
+        context
+            .add_function(
+                "foo".to_string(),
+                FunctionInfo {
+                    name: "foo".to_string(),
+                    param_count: 2,
+                    start_address: 0,
+                    local_count: 0,
+                },
+            )
+            .unwrap();
+
+        context.set_type_inference(summary);
+        context.hydrate_from_inference();
+
+        assert_eq!(context.get_function_parameter_set_element_kind("foo", 0), Some(ValueKind::Number));
+        assert_eq!(context.get_function_parameter_vector_element_kind("foo", 1), Some(ValueKind::String));
+        assert_eq!(context.get_function_return_type("foo"), Some(ValueKind::String));
+        assert_eq!(context.get_function_return_vector_element_kind("foo"), None);
+    }
+
+    #[test]
+    fn hydrate_records_set_return_metadata() {
+        let make = {
+            let mut offset = 0;
+            AstParser::parse_sexp_new_domain("(defn make [] #{:a})".as_bytes(), &mut offset)
+        };
+        let program = vec![make];
+        let summary = run_type_inference(&program).unwrap();
+
+        let mut context = CompileContext::new();
+        context
+            .add_function(
+                "make".to_string(),
+                FunctionInfo {
+                    name: "make".to_string(),
+                    param_count: 0,
+                    start_address: 0,
+                    local_count: 0,
+                },
+            )
+            .unwrap();
+
+        context.set_type_inference(summary);
+        context.hydrate_from_inference();
+
+        assert_eq!(context.get_function_return_set_element_kind("make"), Some(ValueKind::Keyword));
+    }
+
+    #[test]
+    fn variable_element_kind_setters_round_trip() {
+        let mut context = CompileContext::new();
+        context.set_variable_set_element_kind("s", Some(ValueKind::Number));
+        context.set_variable_vector_element_kind("v", Some(ValueKind::String));
+
+        assert_eq!(context.get_variable_set_element_kind("s"), Some(ValueKind::Number));
+        assert_eq!(context.get_variable_vector_element_kind("v"), Some(ValueKind::String));
     }
 }

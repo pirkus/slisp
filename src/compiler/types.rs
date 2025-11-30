@@ -93,6 +93,8 @@ pub struct CompileResult {
     pub kind: ValueKind,
     pub heap_ownership: HeapOwnership,
     pub map_value_types: Option<MapValueTypes>,
+    pub set_element_kind: Option<ValueKind>,
+    pub vector_element_kind: Option<ValueKind>,
     pub retained_slots: Vec<RetainedSlot>,
 }
 
@@ -103,6 +105,8 @@ impl CompileResult {
             kind,
             heap_ownership: HeapOwnership::None,
             map_value_types: None,
+            set_element_kind: None,
+            vector_element_kind: None,
             retained_slots: Vec::new(),
         }
     }
@@ -114,6 +118,16 @@ impl CompileResult {
 
     pub fn with_map_value_types(mut self, types: Option<MapValueTypes>) -> Self {
         self.map_value_types = types;
+        self
+    }
+
+    pub fn with_set_element_kind(mut self, kind: Option<ValueKind>) -> Self {
+        self.set_element_kind = kind;
+        self
+    }
+
+    pub fn with_vector_element_kind(mut self, kind: Option<ValueKind>) -> Self {
+        self.vector_element_kind = kind;
         self
     }
 

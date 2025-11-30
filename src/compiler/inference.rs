@@ -72,7 +72,8 @@ impl BindingId {
 
 #[derive(Clone, Debug)]
 pub enum BindingOwner {
-    Parameter { function: FunctionKey, name: String, position: usize },
+    #[allow(dead_code)]
+    Parameter { function: FunctionKey, name: String, position: usize }, // TODO(6.5.3): surface parameter names/positions in diagnostics
     Local { function: FunctionKey, name: String, _depth: usize },
     Return { function: FunctionKey },
 }
@@ -87,6 +88,8 @@ pub struct BindingInfo {
     pub value_kind: ValueKind,
     pub heap_ownership: HeapOwnership,
     pub map_value_types: Option<MapValueTypes>,
+    pub set_element_kind: Option<ValueKind>,
+    pub vector_element_kind: Option<ValueKind>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -123,6 +126,16 @@ impl TypeInferenceSummary {
         self.binding(id).and_then(|info| info.map_value_types.as_ref())
     }
 
+    #[allow(dead_code)]
+    pub fn binding_set_element_kind(&self, id: BindingId) -> Option<ValueKind> {
+        self.binding(id).and_then(|info| info.set_element_kind)
+    }
+
+    #[allow(dead_code)]
+    pub fn binding_vector_element_kind(&self, id: BindingId) -> Option<ValueKind> {
+        self.binding(id).and_then(|info| info.vector_element_kind)
+    }
+
     pub fn iter_named_functions(&self) -> impl Iterator<Item = (&str, &FunctionAnalysis)> {
         self.functions.iter().filter_map(|(key, analysis)| match key {
             FunctionKey::Named(name) => Some((name.as_str(), analysis)),
@@ -137,7 +150,9 @@ struct BindingNode {
     ast_id: AstId,
     value_kind: ValueKind,
     heap_ownership: HeapOwnership,
-    map_value_types: Option<MapValueTypes>,
+    pub map_value_types: Option<MapValueTypes>,
+    pub set_element_kind: Option<ValueKind>,
+    pub vector_element_kind: Option<ValueKind>,
 }
 
 struct BindingGraph {
@@ -153,6 +168,8 @@ struct GraphBuilder {
     env: Vec<HashMap<String, BindingId>>,
     function_stack: Vec<FunctionKey>,
     binding_map_metadata: HashMap<BindingId, MapValueTypes>,
+    binding_set_metadata: HashMap<BindingId, ValueKind>,
+    binding_vector_metadata: HashMap<BindingId, ValueKind>,
 }
 
 impl GraphBuilder {
@@ -166,6 +183,8 @@ impl GraphBuilder {
             env: vec![HashMap::new()],
             function_stack: vec![FunctionKey::program()],
             binding_map_metadata: HashMap::new(),
+            binding_set_metadata: HashMap::new(),
+            binding_vector_metadata: HashMap::new(),
         }
     }
 
@@ -233,6 +252,20 @@ impl GraphBuilder {
         self.nodes.iter().find(|node| node.id == binding).and_then(|node| node.map_value_types.clone())
     }
 
+    fn binding_set_element_kind(&self, binding: BindingId) -> Option<ValueKind> {
+        if let Some(kind) = self.binding_set_metadata.get(&binding) {
+            return Some(*kind);
+        }
+        self.nodes.iter().find(|node| node.id == binding).and_then(|node| node.set_element_kind)
+    }
+
+    fn binding_vector_element_kind(&self, binding: BindingId) -> Option<ValueKind> {
+        if let Some(kind) = self.binding_vector_metadata.get(&binding) {
+            return Some(*kind);
+        }
+        self.nodes.iter().find(|node| node.id == binding).and_then(|node| node.vector_element_kind)
+    }
+
     fn extract_map_metadata(&self, node: &Node) -> Option<MapValueTypes> {
         match node {
             Node::Symbol { value } => self.lookup_symbol(value).and_then(|binding| self.binding_map_value_types_clone(binding)),
@@ -241,9 +274,29 @@ impl GraphBuilder {
         }
     }
 
+    fn extract_set_element_kind(&self, node: &Node) -> Option<ValueKind> {
+        extract_set_element_kind(self, node)
+    }
+
+    fn extract_vector_element_kind(&self, node: &Node) -> Option<ValueKind> {
+        extract_vector_element_kind(self, node)
+    }
+
     fn prime_binding_map_metadata(&mut self, binding: BindingId, metadata: &MapValueTypes) {
         if let Some(node) = self.nodes.iter_mut().find(|node| node.id == binding) {
             merge_map_value_types(&mut node.map_value_types, metadata);
+        }
+    }
+
+    fn prime_binding_set_metadata(&mut self, binding: BindingId, kind: ValueKind) {
+        if let Some(node) = self.nodes.iter_mut().find(|node| node.id == binding) {
+            merge_element_kind(&mut node.set_element_kind, kind);
+        }
+    }
+
+    fn prime_binding_vector_metadata(&mut self, binding: BindingId, kind: ValueKind) {
+        if let Some(node) = self.nodes.iter_mut().find(|node| node.id == binding) {
+            merge_element_kind(&mut node.vector_element_kind, kind);
         }
     }
 
@@ -454,6 +507,8 @@ impl GraphBuilder {
             value_kind: ValueKind::Any,
             heap_ownership: HeapOwnership::None,
             map_value_types: None,
+            set_element_kind: None,
+            vector_element_kind: None,
         });
 
         match &owner {
@@ -496,12 +551,18 @@ impl GraphBuilder {
                     self.constraints.push(Box::new(CopyConstraint::new(binding, source)));
                 }
             }
-            Node::Vector { .. } => self.add_literal_constraint(binding, ValueKind::Vector, HeapOwnership::Owned, None),
+            Node::Vector { root } => {
+                let element_kind = infer_vector_literal_kind(root);
+                self.add_literal_constraint_with_metadata(binding, ValueKind::Vector, HeapOwnership::Owned, None, None, element_kind);
+            }
             Node::Map { entries } => {
                 let metadata = infer_map_literal_metadata(entries);
-                self.add_literal_constraint(binding, ValueKind::Map, HeapOwnership::Owned, metadata);
+                self.add_literal_constraint_with_metadata(binding, ValueKind::Map, HeapOwnership::Owned, metadata, None, None);
             }
-            Node::Set { .. } => self.add_literal_constraint(binding, ValueKind::Set, HeapOwnership::Owned, None),
+            Node::Set { root } => {
+                let element_kind = infer_set_literal_kind(root);
+                self.add_literal_constraint_with_metadata(binding, ValueKind::Set, HeapOwnership::Owned, None, element_kind, None);
+            }
             Node::List { root } => self.plan_list_assignment(binding, root),
         }
     }
@@ -531,11 +592,12 @@ impl GraphBuilder {
             }
             "vec" => {
                 self.plan_builtin_arguments(nodes);
-                self.add_literal_constraint(binding, ValueKind::Vector, HeapOwnership::Owned, None);
+                let element_kind = infer_element_kind(nodes.iter().skip(1));
+                self.add_literal_constraint_with_metadata(binding, ValueKind::Vector, HeapOwnership::Owned, None, None, element_kind);
             }
             "set" => {
                 self.plan_builtin_arguments(nodes);
-                self.add_literal_constraint(binding, ValueKind::Set, HeapOwnership::Owned, None);
+                self.plan_set_metadata(binding, nodes);
             }
             "hash-map" => {
                 self.plan_builtin_arguments(nodes);
@@ -555,7 +617,7 @@ impl GraphBuilder {
             }
             "disj" => {
                 self.plan_builtin_arguments(nodes);
-                self.add_literal_constraint(binding, ValueKind::Set, HeapOwnership::Owned, None);
+                self.plan_disj_metadata(binding, nodes);
             }
             "contains?" => {
                 self.plan_builtin_arguments(nodes);
@@ -571,11 +633,38 @@ impl GraphBuilder {
     }
 
     fn add_literal_constraint(&mut self, binding: BindingId, kind: ValueKind, ownership: HeapOwnership, map_value_types: Option<MapValueTypes>) {
+        self.add_literal_constraint_with_metadata(binding, kind, ownership, map_value_types, None, None);
+    }
+
+    fn add_literal_constraint_with_metadata(
+        &mut self,
+        binding: BindingId,
+        kind: ValueKind,
+        ownership: HeapOwnership,
+        map_value_types: Option<MapValueTypes>,
+        set_element_kind: Option<ValueKind>,
+        vector_element_kind: Option<ValueKind>,
+    ) {
         if let Some(ref metadata) = map_value_types {
             self.binding_map_metadata.insert(binding, metadata.clone());
             self.prime_binding_map_metadata(binding, metadata);
         }
-        self.constraints.push(Box::new(LiteralConstraint::new(binding, kind, ownership, map_value_types)));
+        if let Some(kind) = set_element_kind {
+            self.binding_set_metadata.insert(binding, kind);
+            self.prime_binding_set_metadata(binding, kind);
+        }
+        if let Some(kind) = vector_element_kind {
+            self.binding_vector_metadata.insert(binding, kind);
+            self.prime_binding_vector_metadata(binding, kind);
+        }
+        self.constraints.push(Box::new(LiteralConstraint::new(
+            binding,
+            kind,
+            ownership,
+            map_value_types,
+            set_element_kind,
+            vector_element_kind,
+        )));
     }
 
     fn plan_function_call(&mut self, binding: BindingId, name: &str, nodes: &[Node]) {
@@ -665,6 +754,25 @@ impl GraphBuilder {
                 }
             }
         }
+
+        if let Some(element_kind) = self.extract_vector_element_kind(&nodes[1]) {
+            let ownership = if element_kind.is_heap_kind() { HeapOwnership::Borrowed } else { HeapOwnership::None };
+            self.add_literal_constraint_with_metadata(binding, element_kind, ownership, None, None, None);
+        } else if let Node::Symbol { value } = &nodes[1] {
+            if let Some(vector_binding) = self.lookup_symbol(value) {
+                self.constraints.push(Box::new(VectorElementConstraint::new(binding, vector_binding)));
+            }
+        }
+    }
+
+    fn plan_set_metadata(&mut self, binding: BindingId, nodes: &[Node]) {
+        let element_kind = infer_element_kind(nodes.iter().skip(1));
+        self.add_literal_constraint_with_metadata(binding, ValueKind::Set, HeapOwnership::Owned, None, element_kind, None);
+    }
+
+    fn plan_disj_metadata(&mut self, binding: BindingId, nodes: &[Node]) {
+        let element_kind = nodes.get(1).and_then(|expr| self.extract_set_element_kind(expr));
+        self.add_literal_constraint_with_metadata(binding, ValueKind::Set, HeapOwnership::Owned, None, element_kind, None);
     }
 
     fn plan_builtin_arguments(&mut self, nodes: &[Node]) {
@@ -788,6 +896,66 @@ impl GraphBuilder {
     }
 }
 
+fn infer_element_kind<'a, I>(nodes: I) -> Option<ValueKind>
+where
+    I: IntoIterator<Item = &'a Node>,
+{
+    let mut element_kind: Option<ValueKind> = None;
+    for node in nodes {
+        if let Some(kind) = node_literal_kind(node) {
+            merge_element_kind(&mut element_kind, kind);
+        }
+    }
+    element_kind
+}
+
+fn infer_set_literal_kind(root: &[Node]) -> Option<ValueKind> {
+    infer_element_kind(root.iter())
+}
+
+fn infer_vector_literal_kind(root: &[Node]) -> Option<ValueKind> {
+    infer_element_kind(root.iter())
+}
+
+fn extract_set_element_kind(builder: &GraphBuilder, node: &Node) -> Option<ValueKind> {
+    match node {
+        Node::Set { root } => infer_set_literal_kind(root),
+        Node::Symbol { value } => builder.lookup_symbol(value).and_then(|binding| builder.binding_set_element_kind(binding)),
+        Node::List { root } => {
+            if let Some(Node::Symbol { value }) = root.first() {
+                match value.as_str() {
+                    "set" => infer_element_kind(root.iter().skip(1)),
+                    "disj" => root.get(1).and_then(|expr| extract_set_element_kind(builder, expr)),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn extract_vector_element_kind(builder: &GraphBuilder, node: &Node) -> Option<ValueKind> {
+    match node {
+        Node::Vector { root } => infer_vector_literal_kind(root),
+        Node::Symbol { value } => builder
+            .lookup_symbol(value)
+            .and_then(|binding| builder.binding_vector_element_kind(binding)),
+        Node::List { root } => {
+            if let Some(Node::Symbol { value }) = root.first() {
+                match value.as_str() {
+                    "vec" => infer_element_kind(root.iter().skip(1)),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn infer_map_literal_metadata(entries: &[(Node, Node)]) -> Option<MapValueTypes> {
     let mut metadata = MapValueTypes::new();
     for (key_node, value_node) in entries {
@@ -879,6 +1047,8 @@ impl TypeInferenceEngine {
                 value_kind: node.value_kind,
                 heap_ownership: node.heap_ownership,
                 map_value_types: node.map_value_types,
+                set_element_kind: node.set_element_kind,
+                vector_element_kind: node.vector_element_kind,
             })
             .collect();
 
@@ -940,6 +1110,26 @@ impl<'a> ConstraintContext<'a> {
         let node = self.nodes.get_mut(id.to_index()).expect("invalid binding id");
         merge_map_value_types(&mut node.map_value_types, incoming)
     }
+
+    fn binding_set_element_kind(&self, id: BindingId) -> Option<ValueKind> {
+        self.nodes[id.to_index()].set_element_kind
+    }
+
+    fn update_set_element_kind(&mut self, id: BindingId, kind: Option<ValueKind>) -> bool {
+        let Some(kind) = kind else { return false; };
+        let node = self.nodes.get_mut(id.to_index()).expect("invalid binding id");
+        merge_element_kind(&mut node.set_element_kind, kind)
+    }
+
+    fn binding_vector_element_kind(&self, id: BindingId) -> Option<ValueKind> {
+        self.nodes[id.to_index()].vector_element_kind
+    }
+
+    fn update_vector_element_kind(&mut self, id: BindingId, kind: Option<ValueKind>) -> bool {
+        let Some(kind) = kind else { return false; };
+        let node = self.nodes.get_mut(id.to_index()).expect("invalid binding id");
+        merge_element_kind(&mut node.vector_element_kind, kind)
+    }
 }
 
 fn merge_kinds(current: ValueKind, next: ValueKind) -> ValueKind {
@@ -999,6 +1189,24 @@ fn merge_map_value_types(target: &mut Option<MapValueTypes>, incoming: &MapValue
     }
 }
 
+fn merge_element_kind(target: &mut Option<ValueKind>, incoming: ValueKind) -> bool {
+    match target {
+        Some(existing) => {
+            let merged = merge_kinds(*existing, incoming);
+            if merged != *existing {
+                *existing = merged;
+                true
+            } else {
+                false
+            }
+        }
+        None => {
+            *target = Some(incoming);
+            true
+        }
+    }
+}
+
 #[derive(PartialEq, Eq)]
 enum ConstraintState {
     Stable,
@@ -1013,16 +1221,27 @@ struct LiteralConstraint {
     target: BindingId,
     kind: ValueKind,
     ownership: HeapOwnership,
-    map_value_types: Option<MapValueTypes>,
+    pub map_value_types: Option<MapValueTypes>,
+    pub set_element_kind: Option<ValueKind>,
+    pub vector_element_kind: Option<ValueKind>,
 }
 
 impl LiteralConstraint {
-    fn new(target: BindingId, kind: ValueKind, ownership: HeapOwnership, map_value_types: Option<MapValueTypes>) -> Self {
+    fn new(
+        target: BindingId,
+        kind: ValueKind,
+        ownership: HeapOwnership,
+        map_value_types: Option<MapValueTypes>,
+        set_element_kind: Option<ValueKind>,
+        vector_element_kind: Option<ValueKind>,
+    ) -> Self {
         LiteralConstraint {
             target,
             kind,
             ownership,
             map_value_types,
+            set_element_kind,
+            vector_element_kind,
         }
     }
 }
@@ -1037,6 +1256,12 @@ impl Constraint for LiteralConstraint {
             progress = true;
         }
         if context.update_map_value_types(self.target, self.map_value_types.as_ref()) {
+            progress = true;
+        }
+        if context.update_set_element_kind(self.target, self.set_element_kind) {
+            progress = true;
+        }
+        if context.update_vector_element_kind(self.target, self.vector_element_kind) {
             progress = true;
         }
         if progress {
@@ -1063,6 +1288,8 @@ impl Constraint for CopyConstraint {
         let source_kind = context.binding_kind(self.source);
         let source_ownership = context.binding_ownership(self.source);
         let source_map_types = context.binding_map_value_types(self.source).cloned();
+        let source_set_element = context.binding_set_element_kind(self.source);
+        let source_vector_element = context.binding_vector_element_kind(self.source);
         let mut progress = false;
         if source_kind == ValueKind::Any {
             return ConstraintState::Stable;
@@ -1074,6 +1301,12 @@ impl Constraint for CopyConstraint {
             progress = true;
         }
         if context.update_map_value_types(self.target, source_map_types.as_ref()) {
+            progress = true;
+        }
+        if context.update_set_element_kind(self.target, source_set_element) {
+            progress = true;
+        }
+        if context.update_vector_element_kind(self.target, source_vector_element) {
             progress = true;
         }
         if progress {
@@ -1109,6 +1342,39 @@ impl Constraint for GetConstraint {
         let ownership = if kind.is_heap_kind() { HeapOwnership::Borrowed } else { HeapOwnership::None };
         let mut progress = false;
         if context.update_binding_kind(self.target, kind) {
+            progress = true;
+        }
+        if context.update_binding_ownership(self.target, ownership) {
+            progress = true;
+        }
+        if progress {
+            ConstraintState::Progress
+        } else {
+            ConstraintState::Stable
+        }
+    }
+}
+
+struct VectorElementConstraint {
+    target: BindingId,
+    vector_binding: BindingId,
+}
+
+impl VectorElementConstraint {
+    fn new(target: BindingId, vector_binding: BindingId) -> Self {
+        VectorElementConstraint { target, vector_binding }
+    }
+}
+
+impl Constraint for VectorElementConstraint {
+    fn apply(&mut self, context: &mut ConstraintContext<'_>) -> ConstraintState {
+        let Some(element_kind) = context.binding_vector_element_kind(self.vector_binding) else {
+            return ConstraintState::Stable;
+        };
+
+        let ownership = if element_kind.is_heap_kind() { HeapOwnership::Borrowed } else { HeapOwnership::None };
+        let mut progress = false;
+        if context.update_binding_kind(self.target, element_kind) {
             progress = true;
         }
         if context.update_binding_ownership(self.target, ownership) {
@@ -1257,6 +1523,55 @@ mod tests {
     }
 
     #[test]
+    fn set_literal_metadata_is_recorded() {
+        let expr = parse_expr("(defn make [] #{1 2 3})");
+        let summary = run_type_inference(std::slice::from_ref(&expr)).unwrap();
+        let key = FunctionKey::Named("make".to_string());
+        let analysis = summary.function(&key).unwrap();
+        let return_binding = analysis.return_binding.expect("missing return binding");
+        let binding = summary.binding(return_binding).unwrap();
+        assert_eq!(binding.value_kind, ValueKind::Set);
+        assert_eq!(binding.set_element_kind, Some(ValueKind::Number));
+    }
+
+    #[test]
+    fn disj_preserves_set_metadata() {
+        let expr = parse_expr("(defn trim [] (let [s #{1 2} t (disj s 2)] t))");
+        let summary = run_type_inference(std::slice::from_ref(&expr)).unwrap();
+        let key = FunctionKey::Named("trim".to_string());
+        let analysis = summary.function(&key).unwrap();
+        let locals = &analysis.local_bindings;
+        assert_eq!(locals.len(), 2);
+        let trimmed_binding = summary.binding(locals[1]).unwrap();
+        assert_eq!(trimmed_binding.value_kind, ValueKind::Set);
+        assert_eq!(trimmed_binding.set_element_kind, Some(ValueKind::Number));
+    }
+
+    #[test]
+    fn vector_literal_metadata_is_recorded() {
+        let expr = parse_expr("(defn make [] [1 2 3])");
+        let summary = run_type_inference(std::slice::from_ref(&expr)).unwrap();
+        let key = FunctionKey::Named("make".to_string());
+        let analysis = summary.function(&key).unwrap();
+        let return_binding = analysis.return_binding.expect("missing return binding");
+        let binding = summary.binding(return_binding).unwrap();
+        assert_eq!(binding.value_kind, ValueKind::Vector);
+        assert_eq!(binding.vector_element_kind, Some(ValueKind::Number));
+    }
+
+    #[test]
+    fn get_infers_value_kind_from_vector_metadata() {
+        let expr = parse_expr("(defn first-val [] (get [\"a\" \"b\"] 0))");
+        let summary = run_type_inference(std::slice::from_ref(&expr)).unwrap();
+        let key = FunctionKey::Named("first-val".to_string());
+        let analysis = summary.function(&key).unwrap();
+        let return_binding = analysis.return_binding.expect("missing return binding");
+        let binding = summary.binding(return_binding).unwrap();
+        assert_eq!(binding.value_kind, ValueKind::String);
+        assert_eq!(binding.heap_ownership, HeapOwnership::Borrowed);
+    }
+
+    #[test]
     fn heap_ownership_propagates_through_string_returns() {
         let expr = parse_expr("(defn make [] (str \"x\"))");
         let summary = run_type_inference(std::slice::from_ref(&expr)).unwrap();
@@ -1282,6 +1597,8 @@ mod tests {
             value_kind: ValueKind::Any,
             heap_ownership: HeapOwnership::None,
             map_value_types: None,
+            set_element_kind: None,
+            vector_element_kind: None,
         }];
         let constraints: Vec<Box<dyn Constraint>> = vec![Box::new(TestConstraint { id, fired: false })];
         let graph = BindingGraph {
