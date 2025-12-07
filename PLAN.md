@@ -71,11 +71,11 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
   - ⏳ **6.5.2 Constraint solving & propagation:**
     - ✅ **6.5.2.1 Binding metadata propagation:** Constraint catalog covers literals, arithmetic/comparison/string helpers, `let` symbol copies, cross-function call/parameter links, and heap ownership with `CompileContext` hydration for locals/params/returns.
     - ✅ **6.5.2.2 Map metadata & borrowed results:** Inference tracks per-key map value kinds through `assoc`/`dissoc`/`get`, compiler/builtin glue reuses that metadata to skip `_map_value_clone` for borrowed results (see `compiler::tests::{test_get_on_literal_map_skips_clone,test_get_after_assoc_skips_clone}`).
-  - ⏳ **6.5.2.3 Runtime helper coverage:**
+  - ✅ **6.5.2.3 Runtime helper coverage:**x
       - ✅ **6.5.2.3a Map helpers:** Metadata/ownership awareness now covers `contains?` and derived `assoc`/`dissoc` chains so literal-key lookups short-circuit without `_map_contains`/`_map_value_clone` (see compiler tests covering `contains?` and `get` optimisations).
       - ✅ **6.5.2.3b Set helpers:** Mirror the same treatment for set operations (`set`, `contains?`, `disj`, etc.) so borrowed semantics and metadata pruning apply beyond maps.
       - ✅ **6.5.2.3c Vector/set element metadata:** Introduce auxiliary metadata (element kinds) for vectors/sets so inference can drive future helper optimisations similar to the map flow.
-      - ⏳ **6.5.2.3d Integration/validation:** Add IR-level/integration tests plus doc updates that prove the compiler takes the optimized paths and keep PLAN/Test references up to date.
+      - ✅ **6.5.2.3d Integration/validation:** Add IR-level/integration tests plus doc updates that prove the compiler takes the optimized paths and keep PLAN/Test references up to date.
   - **6.5.3 Diagnostics & UX:** Surface actionable errors for mismatched arity/types, ambiguous branches, and unsupported coercions, with location info that plugs into existing formatter/output. Use `BindingOwner::Parameter` metadata to name/position params in messages.
   - **6.5.4 Compiler integration:** Feed inferred kinds back into lowering (skipping redundant runtime conversions, tightening liveness frees) and gate code paths that still require fallbacks.
   - **6.5.5 Test harness:** Add focused unit tests for the solver plus integration fixtures in `tests/programs/` that cover polymorphic functions, nested lets, and composite containers introduced in 6.4.

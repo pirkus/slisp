@@ -675,6 +675,59 @@ mod tests {
     }
 
     #[test]
+    fn count_get_on_map_literal_uses_vector_runtime() {
+        let program = compile_expression("(count (get {:vals [1 2 3]} :vals))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 1) if name == "_vector_count"
+        )));
+    }
+
+    #[test]
+    fn contains_on_set_from_map_calls_set_runtime() {
+        let program = compile_expression("(contains? (get {:tags #{:hot :cold}} :tags) :hot)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_get"
+        )));
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 3) if name == "_set_contains"
+        )));
+    }
+
+    #[test]
+    fn get_with_vector_default_prefers_vector_runtime() {
+        let program = compile_expression("(count (get {:tags #{:hot}} :vals [1 2]))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 1) if name == "_vector_count"
+        )));
+    }
+
+    #[test]
+    fn get_with_set_default_prefers_set_runtime() {
+        let program = compile_expression("(contains? (get {:vals [1]} :tags #{:hot}) :hot)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_get"
+        )));
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 3) if name == "_set_contains"
+        )));
+    }
+
+    #[test]
+    fn assoc_with_heap_value_clones_heap_payload() {
+        let program = compile_expression("(let [k \"x\"] (assoc {:a 1} k #{1}))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 2) if name == "_map_value_clone"
+        )));
+    }
+
+    #[test]
     fn test_compile_disj_runtime_call() {
         let program = compile_expression("(disj (set 1 2) 1)").unwrap();
         assert!(program.instructions.iter().any(|inst| matches!(

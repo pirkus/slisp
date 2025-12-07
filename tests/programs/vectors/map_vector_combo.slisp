@@ -1,0 +1,8 @@
+(defn -main []
+  (let [base {:tags #{:hot}}
+        vals (get base :vals [4 5])
+        tags (get base :tags)
+        total (+ (count vals)
+                  (get vals 0 0)
+                  (if (contains? tags :hot) 10 0))]
+    (if (= total 16) 0 1)))
