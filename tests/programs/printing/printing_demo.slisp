@@ -1,5 +1,0 @@
-(defn -main []
-  (let [_ (println "print demo start")]
-    (let [_ (print "value" 42 true)]
-      (let [_ (println " - done")]
-        (printf "printf result %s %s\n" 10 (str "units"))))))

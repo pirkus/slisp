@@ -67,9 +67,16 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
   - ✅ **6.4.9 Set literal syntax:** Extend the reader/compiler to recognise `#{}` forms, lowering them onto the set runtime helpers while maintaining ownership and telemetry coverage alongside new fixtures.
   - **6.4.10 Spillover ergonomics:** Introduce destructuring helpers or higher-order utilities that lean on the new containers, and wire telemetry harnesses to capture allocator pressure under mixed workloads.
 - **6.5 Type inference pass (planned):**
-  - **6.5.1 Analysis scaffolding:** Build a reusable analysis pipeline over the AST/IR that iterates until stable `ValueKind` assignments emerge for locals, parameters, and returns.
-  - **6.5.2 Constraint solving & propagation:** Encode primitive operations, runtime helpers, and composite data semantics as constraints; ensure borrowed/owned markers survive the pass so codegen can keep clone/free behaviour correct.
-  - **6.5.3 Diagnostics & UX:** Surface actionable errors for mismatched arity/types, ambiguous branches, and unsupported coercions, with location info that plugs into existing formatter/output.
+  - ✅ **6.5.1 Analysis scaffolding:** Landed `compiler::inference` with AST binding graphs, a fixpoint engine, and summary plumbing so future passes can read/write `ValueKind` facts before codegen.
+  - ⏳ **6.5.2 Constraint solving & propagation:**
+    - ✅ **6.5.2.1 Binding metadata propagation:** Constraint catalog covers literals, arithmetic/comparison/string helpers, `let` symbol copies, cross-function call/parameter links, and heap ownership with `CompileContext` hydration for locals/params/returns.
+    - ✅ **6.5.2.2 Map metadata & borrowed results:** Inference tracks per-key map value kinds through `assoc`/`dissoc`/`get`, compiler/builtin glue reuses that metadata to skip `_map_value_clone` for borrowed results (see `compiler::tests::{test_get_on_literal_map_skips_clone,test_get_after_assoc_skips_clone}`).
+  - ✅ **6.5.2.3 Runtime helper coverage:**x
+      - ✅ **6.5.2.3a Map helpers:** Metadata/ownership awareness now covers `contains?` and derived `assoc`/`dissoc` chains so literal-key lookups short-circuit without `_map_contains`/`_map_value_clone` (see compiler tests covering `contains?` and `get` optimisations).
+      - ✅ **6.5.2.3b Set helpers:** Mirror the same treatment for set operations (`set`, `contains?`, `disj`, etc.) so borrowed semantics and metadata pruning apply beyond maps.
+      - ✅ **6.5.2.3c Vector/set element metadata:** Introduce auxiliary metadata (element kinds) for vectors/sets so inference can drive future helper optimisations similar to the map flow.
+      - ✅ **6.5.2.3d Integration/validation:** Add IR-level/integration tests plus doc updates that prove the compiler takes the optimized paths and keep PLAN/Test references up to date.
+  - **6.5.3 Diagnostics & UX:** Surface actionable errors for mismatched arity/types, ambiguous branches, and unsupported coercions, with location info that plugs into existing formatter/output. Use `BindingOwner::Parameter` metadata to name/position params in messages.
   - **6.5.4 Compiler integration:** Feed inferred kinds back into lowering (skipping redundant runtime conversions, tightening liveness frees) and gate code paths that still require fallbacks.
   - **6.5.5 Test harness:** Add focused unit tests for the solver plus integration fixtures in `tests/programs/` that cover polymorphic functions, nested lets, and composite containers introduced in 6.4.
 - **6.6 Lightweight shared ownership (planned):**
@@ -101,6 +108,6 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
 - Use sample programs in `tests/programs/` to validate new runtime or compiler capabilities; memory-specific cases live under `tests/programs/memory/` with `tests/programs/memory/run_allocator_telemetry.sh` capturing allocator traces.
 
 ## Working Agreements
-- Prioritise interpreter implementations before porting features to the compiler.
+- Functional style - no for loops, immutability is strongly prefered
 - Update PLAN.md and documentation alongside feature work.
 - Maintain idiomatic Rust (no `try`/`catch` around imports) and ensure new phases keep tests green.

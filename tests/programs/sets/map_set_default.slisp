@@ -1,0 +1,8 @@
+(defn -main []
+  (let [fallback #{:warm}
+        base {}
+        tags (get base :tags fallback)
+        result (+ (count tags)
+                  (if (contains? tags :hot) 10 0)
+                  (if (contains? tags :warm) 1 0))]
+    (if (= result 2) 0 1)))

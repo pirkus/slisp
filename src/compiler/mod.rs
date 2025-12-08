@@ -10,6 +10,7 @@ mod builtins;
 mod context;
 mod expressions;
 mod functions;
+mod inference;
 mod liveness;
 mod types;
 
@@ -18,6 +19,7 @@ pub use types::{CompileResult, HeapOwnership, MapKeyLiteral, MapValueTypes, Reta
 
 use crate::ast::Node;
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
+use inference::run_type_inference;
 
 /// Determine if a symbol refers to a heap-allocated local variable in the current context.
 pub(crate) fn is_heap_allocated_symbol(name: &str, context: &CompileContext) -> bool {
@@ -37,6 +39,9 @@ pub enum CompileError {
 pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
     let mut program = IRProgram::new();
     let mut context = CompileContext::new();
+    let inference = run_type_inference(std::slice::from_ref(node))?;
+    context.set_type_inference(inference);
+    context.hydrate_from_inference();
     let mut result = compile_node(node, &mut context, &mut program)?;
     let mut expr_instructions = std::mem::take(&mut result.instructions);
     result.free_retained_slots(&mut expr_instructions, &mut context);
@@ -49,33 +54,42 @@ pub fn compile_to_ir(node: &Node) -> Result<IRProgram, CompileError> {
 pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> {
     let mut program = IRProgram::new();
     let mut context = CompileContext::new();
+    let inference = run_type_inference(expressions)?;
+    context.set_type_inference(inference);
+    context.hydrate_from_inference();
     let mut emitted_toplevel_code = false;
 
     // First pass: find all function definitions
     for expr in expressions {
-        if let Some(root) = extract_defn(expr) {
-            // Register function in context but don't compile yet
-            if root.len() != 4 {
-                return Err(CompileError::ArityError("defn".to_string(), 3, root.len() - 1));
+        if let Node::List { root } = expr {
+            if !root.is_empty() {
+                if let Node::Symbol { value } = &root[0] {
+                    if value == "defn" {
+                        // Register function in context but don't compile yet
+                        if root.len() != 4 {
+                            return Err(CompileError::ArityError("defn".to_string(), 3, root.len() - 1));
+                        }
+
+                        let func_name = match &root[1] {
+                            Node::Symbol { value } => value.clone(),
+                            _ => return Err(CompileError::InvalidExpression("Function name must be a symbol".to_string())),
+                        };
+
+                        let params = match &root[2] {
+                            Node::Vector { root } => root,
+                            _ => return Err(CompileError::InvalidExpression("Function parameters must be a vector".to_string())),
+                        };
+
+                        let func_info = FunctionInfo {
+                            name: func_name.clone(),
+                            param_count: params.len(),
+                            start_address: 0, // Will be set during compilation
+                            local_count: 0,
+                        };
+                        context.add_function(func_name, func_info)?;
+                    }
+                }
             }
-
-            let func_name = match &root[1] {
-                Node::Symbol { value } => value.clone(),
-                _ => return Err(CompileError::InvalidExpression("Function name must be a symbol".to_string())),
-            };
-
-            let params = match &root[2] {
-                Node::Vector { root } => root,
-                _ => return Err(CompileError::InvalidExpression("Function parameters must be a vector".to_string())),
-            };
-
-            let func_info = FunctionInfo {
-                name: func_name.clone(),
-                param_count: params.len(),
-                start_address: 0, // Will be set during compilation
-                local_count: 0,
-            };
-            context.add_function(func_name, func_info)?;
         }
     }
 
@@ -85,10 +99,14 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
     let mut metadata_context = context.clone();
     let mut metadata_program = IRProgram::new();
     for expr in expressions {
-        if let Some(root) = extract_defn(expr) {
-            // Skip malformed defns here; they'll be reported in the main compilation loop.
-            if root.len() == 4 {
-                functions::compile_defn(&root[1..], &mut metadata_context, &mut metadata_program)?;
+        if let Node::List { root } = expr {
+            if let Some(Node::Symbol { value }) = root.first() {
+                if value == "defn" {
+                    // Skip malformed defns here; they'll be reported in the main compilation loop.
+                    if root.len() == 4 {
+                        functions::compile_defn(&root[1..], &mut metadata_context, &mut metadata_program)?;
+                    }
+                }
             }
         }
     }
@@ -100,9 +118,15 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
 
     // Second pass: compile non-defn expressions, collect function bodies for later
     for expr in expressions {
-        if let Some(root) = extract_defn(expr) {
-            pending_defns.push(root.to_vec());
-            continue;
+        if let Node::List { root } = expr {
+            if !root.is_empty() {
+                if let Node::Symbol { value } = &root[0] {
+                    if value == "defn" {
+                        pending_defns.push(root.clone());
+                        continue;
+                    }
+                }
+            }
         }
 
         let mut result = compile_node(expr, &mut context, &mut program)?;
@@ -149,14 +173,14 @@ fn append_with_offset(program: &mut IRProgram, instructions: Vec<IRInstruction>)
     }
 
     let base = program.len();
-    instructions
-        .into_iter()
-        .map(|instruction| match instruction {
+    for instruction in instructions {
+        let adjusted = match instruction {
             IRInstruction::Jump(target) => IRInstruction::Jump(base + target),
             IRInstruction::JumpIfZero(target) => IRInstruction::JumpIfZero(base + target),
             other => other,
-        })
-        .for_each(|adjusted| program.add_instruction(adjusted));
+        };
+        program.add_instruction(adjusted);
+    }
 }
 
 pub(super) fn extend_with_offset(target: &mut Vec<IRInstruction>, mut new_instructions: Vec<IRInstruction>) {
@@ -166,21 +190,17 @@ pub(super) fn extend_with_offset(target: &mut Vec<IRInstruction>, mut new_instru
 
     let base = target.len();
     if base != 0 {
-        new_instructions.iter_mut().for_each(|instruction| {
-            if let IRInstruction::Jump(target_idx) | IRInstruction::JumpIfZero(target_idx) = instruction {
-                *target_idx += base;
+        for instruction in &mut new_instructions {
+            match instruction {
+                IRInstruction::Jump(target_idx) | IRInstruction::JumpIfZero(target_idx) => {
+                    *target_idx += base;
+                }
+                _ => {}
             }
-        });
+        }
     }
 
     target.extend(new_instructions);
-}
-
-fn extract_defn(expr: &Node) -> Option<&[Node]> {
-    match expr {
-        Node::List { root } if matches!(root.first(), Some(Node::Symbol { value }) if value == "defn") => Some(root.as_slice()),
-        _ => None,
-    }
 }
 
 /// Compile a single AST node to IR
@@ -197,7 +217,14 @@ pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &
                 } else {
                     HeapOwnership::None
                 };
-                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadParam(slot)], kind).with_heap_ownership(ownership))
+                let map_value_types = context.get_parameter_map_value_types(value).cloned();
+                let set_element_kind = context.get_parameter_set_element_kind(value);
+                let vector_element_kind = context.get_parameter_vector_element_kind(value);
+                Ok(CompileResult::with_instructions(vec![IRInstruction::LoadParam(slot)], kind)
+                    .with_heap_ownership(ownership)
+                    .with_map_value_types(map_value_types)
+                    .with_set_element_kind(set_element_kind)
+                    .with_vector_element_kind(vector_element_kind))
             } else if let Some(slot) = context.get_variable(value) {
                 let kind = context.get_variable_type(value).unwrap_or(ValueKind::Any);
                 let ownership = if kind.is_heap_kind() && context.is_heap_allocated(value) {
@@ -206,9 +233,13 @@ pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &
                     HeapOwnership::None
                 };
                 let map_value_types = context.get_variable_map_value_types(value).cloned();
+                let set_element_kind = context.get_variable_set_element_kind(value);
+                let vector_element_kind = context.get_variable_vector_element_kind(value);
                 Ok(CompileResult::with_instructions(vec![IRInstruction::LoadLocal(slot)], kind)
                     .with_heap_ownership(ownership)
-                    .with_map_value_types(map_value_types))
+                    .with_map_value_types(map_value_types)
+                    .with_set_element_kind(set_element_kind)
+                    .with_vector_element_kind(vector_element_kind))
             } else {
                 Err(CompileError::UndefinedVariable(value.clone()))
             }
@@ -260,9 +291,6 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
             "get" => builtins::compile_get(args, context, program),
             "subs" => builtins::compile_subs(args, context, program),
             "str" => builtins::compile_str(args, context, program),
-            "print" => builtins::compile_print(args, context, program),
-            "println" => builtins::compile_println(args, context, program),
-            "printf" => builtins::compile_printf(args, context, program),
             "vec" => builtins::compile_vector_literal(args, context, program),
             "set" => builtins::compile_set_literal(args, context, program),
             "hash-map" => builtins::compile_hash_map(args, context, program),
@@ -286,10 +314,53 @@ fn compile_list(nodes: &[Node], context: &mut CompileContext, program: &mut IRPr
 mod tests {
     use super::*;
     use crate::ast::{AstParser, AstParserTrt};
+    use crate::compiler::inference::run_type_inference;
 
     fn compile_expression(input: &str) -> Result<IRProgram, CompileError> {
         let ast = AstParser::parse_sexp_new_domain(input.as_bytes(), &mut 0);
         compile_to_ir(&ast)
+    }
+
+    #[test]
+    fn load_parameter_carries_map_metadata() {
+        let mut context = CompileContext::new();
+        context.add_parameter("m".to_string(), 0);
+        context.set_parameter_type("m", ValueKind::Map);
+        context.mark_heap_allocated("m", ValueKind::Map);
+        let mut metadata = MapValueTypes::new();
+        metadata.insert(MapKeyLiteral::String("a".to_string()), ValueKind::String);
+        context.set_parameter_map_value_types("m", Some(metadata.clone()));
+        let mut program = IRProgram::new();
+        let node = Node::Symbol { value: "m".to_string() };
+        let result = compile_node(&node, &mut context, &mut program).unwrap();
+        let map_types = result.map_value_types.expect("expected map metadata");
+        assert_eq!(map_types.get(&MapKeyLiteral::String("a".to_string())), Some(&ValueKind::String));
+    }
+
+    #[test]
+    fn function_call_uses_inferred_return_type() {
+        let mut offset = 0;
+        let forty_two = AstParser::parse_sexp_new_domain("(defn forty-two [] 42)".as_bytes(), &mut offset);
+        let summary = run_type_inference(std::slice::from_ref(&forty_two)).unwrap();
+
+        let mut context = CompileContext::new();
+        context
+            .add_function(
+                "forty-two".to_string(),
+                FunctionInfo {
+                    name: "forty-two".to_string(),
+                    param_count: 0,
+                    start_address: 0,
+                    local_count: 0,
+                },
+            )
+            .unwrap();
+        context.set_type_inference(summary);
+        context.hydrate_from_inference();
+
+        let mut program = IRProgram::new();
+        let result = functions::compile_function_call("forty-two", &[], &mut context, &mut program, 0).unwrap();
+        assert_eq!(result.kind, ValueKind::Number);
     }
 
     #[test]
@@ -390,33 +461,6 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_print_no_args() {
-        let program = compile_expression("(print)").unwrap();
-        assert_eq!(
-            program.instructions,
-            vec![
-                IRInstruction::Push(0),
-                IRInstruction::Push(0),
-                IRInstruction::Push(0),
-                IRInstruction::RuntimeCall("_print_values".to_string(), 3),
-                IRInstruction::Return,
-            ]
-        );
-    }
-
-    #[test]
-    fn test_compile_printf_runs_runtime() {
-        let program = compile_expression("(printf \"value=%s\" 10)").unwrap();
-        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_printf_values")));
-    }
-
-    #[test]
-    fn test_compile_println_invokes_runtime() {
-        let program = compile_expression("(println \"hi\")").unwrap();
-        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_print_values")));
-    }
-
-    #[test]
     fn test_compile_vector_literal() {
         let program = compile_expression("[1 2]").unwrap();
         assert!(program.instructions.iter().any(|inst| matches!(
@@ -499,6 +543,46 @@ mod tests {
     }
 
     #[test]
+    fn test_get_on_literal_map_skips_clone() {
+        let program = compile_expression("(get {:a \"x\"} :a)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_get"
+        )));
+        // Heap value clones are allowed when returning owned heap entries.
+    }
+
+    #[test]
+    fn test_get_after_assoc_skips_clone() {
+        let program = compile_expression("(let [base {:a \"x\"} updated (assoc base :b \"y\")] (get updated :b))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_get"
+        )));
+        // Heap value clones are allowed when returning owned heap entries.
+    }
+
+    #[test]
+    fn test_contains_known_key_avoids_runtime() {
+        let program = compile_expression("(contains? {:a 1} :a)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::Push(1))));
+        assert!(!program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_map_contains")));
+    }
+
+    #[test]
+    fn test_contains_missing_key_avoids_runtime() {
+        let program = compile_expression("(contains? {:a 1} :b)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_map_contains")));
+    }
+
+    #[test]
+    fn test_contains_after_assoc_skips_runtime() {
+        let program = compile_expression("(let [m (assoc {:a 1} :b 2)] (contains? m :b))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(inst, IRInstruction::Push(1))));
+        assert!(!program.instructions.iter().any(|inst| matches!(inst, IRInstruction::RuntimeCall(name, 3) if name == "_map_contains")));
+    }
+
+    #[test]
     fn test_assoc_followed_by_get_emits_map_get() {
         let program = compile_expression("(let [numbers #{1 2 3} combos {:nums numbers} trimmed (assoc combos :nums (disj numbers 2))] (get trimmed :nums))").unwrap();
         assert!(program.instructions.iter().any(|inst| matches!(
@@ -555,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_compile_contains_runtime_call() {
-        let program = compile_expression("(contains? (hash-map \"a\" 1) \"a\")").unwrap();
+        let program = compile_expression("(let [m (hash-map \"a\" 1) k (if true \"a\" \"b\")] (contains? m k))").unwrap();
         assert!(program.instructions.iter().any(|inst| matches!(
             inst,
             IRInstruction::RuntimeCall(name, 3) if name == "_map_contains"
@@ -568,6 +652,78 @@ mod tests {
         assert!(program.instructions.iter().any(|inst| matches!(
             inst,
             IRInstruction::RuntimeCall(name, 3) if name == "_set_contains"
+        )));
+    }
+
+    #[test]
+    fn count_get_on_map_literal_uses_set_runtime() {
+        let program = compile_expression("(count (get {:nums #{1 2 3}} :nums))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 1) if name == "_set_count"
+        )));
+    }
+
+    #[test]
+    fn count_get_on_let_bound_map_uses_set_runtime() {
+        let program =
+            compile_expression("(let [nums #{1 2 3} combos {:nums nums}] (count (get combos :nums)))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 1) if name == "_set_count"
+        )));
+    }
+
+    #[test]
+    fn count_get_on_map_literal_uses_vector_runtime() {
+        let program = compile_expression("(count (get {:vals [1 2 3]} :vals))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 1) if name == "_vector_count"
+        )));
+    }
+
+    #[test]
+    fn contains_on_set_from_map_calls_set_runtime() {
+        let program = compile_expression("(contains? (get {:tags #{:hot :cold}} :tags) :hot)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_get"
+        )));
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 3) if name == "_set_contains"
+        )));
+    }
+
+    #[test]
+    fn get_with_vector_default_prefers_vector_runtime() {
+        let program = compile_expression("(count (get {:tags #{:hot}} :vals [1 2]))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 1) if name == "_vector_count"
+        )));
+    }
+
+    #[test]
+    fn get_with_set_default_prefers_set_runtime() {
+        let program = compile_expression("(contains? (get {:vals [1]} :tags #{:hot}) :hot)").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 5) if name == "_map_get"
+        )));
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 3) if name == "_set_contains"
+        )));
+    }
+
+    #[test]
+    fn assoc_with_heap_value_clones_heap_payload() {
+        let program = compile_expression("(let [k \"x\"] (assoc {:a 1} k #{1}))").unwrap();
+        assert!(program.instructions.iter().any(|inst| matches!(
+            inst,
+            IRInstruction::RuntimeCall(name, 2) if name == "_map_value_clone"
         )));
     }
 

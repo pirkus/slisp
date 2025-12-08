@@ -1,6 +1,12 @@
 use super::{
     builtins::{emit_free_for_slot, free_retained_dependents, free_retained_slot},
-    extend_with_offset, CompileContext, CompileError, CompileResult, HeapOwnership, RetainedSlot, ValueKind,
+    extend_with_offset,
+    CompileContext,
+    CompileError,
+    CompileResult,
+    HeapOwnership,
+    RetainedSlot,
+    ValueKind,
 };
 /// Variable binding compilation (let expressions)
 use crate::ast::Node;
@@ -118,26 +124,58 @@ fn collect_bindings(bindings: &[Node], context: &mut CompileContext, program: &m
         let slot = context.add_variable(var_name.clone());
         collected.instructions.push(IRInstruction::StoreLocal(slot));
 
-        let value_kind = match value_result.kind {
+        let mut value_kind = match value_result.kind {
             ValueKind::Any => cloned_from_existing.unwrap_or(ValueKind::Any),
             other => other,
         };
+        let mut inferred_heap_ownership = None;
+        let mut inferred_map_value_types = None;
+        let mut inferred_set_element_kind = None;
+        let mut inferred_vector_element_kind = None;
+        if let Some((inferred_kind, inferred_owner, inferred_map_types, set_element_kind, vector_element_kind)) =
+            context.consume_local_binding_metadata(var_name)
+        {
+            if inferred_kind != ValueKind::Any {
+                value_kind = inferred_kind;
+            }
+            inferred_heap_ownership = Some(inferred_owner);
+            inferred_map_value_types = inferred_map_types;
+            inferred_set_element_kind = set_element_kind;
+            inferred_vector_element_kind = vector_element_kind;
+        }
         context.set_variable_type(var_name, value_kind);
         if value_kind == ValueKind::Map {
-            context.set_variable_map_value_types(var_name, value_map_value_types.or(cloned_map_value_types));
+            let mut combined = value_map_value_types.or(cloned_map_value_types);
+            if let Some(mut inferred) = inferred_map_value_types.filter(|m| !m.is_empty()) {
+                if let Some(existing) = combined.as_mut() {
+                    for (k, v) in inferred.drain() {
+                        existing.insert(k, v);
+                    }
+                } else {
+                    combined = Some(inferred);
+                }
+            }
+            context.set_variable_map_value_types(var_name, combined);
         } else {
             context.set_variable_map_value_types(var_name, None);
         }
+        let set_element_kind = value_result.set_element_kind.or(inferred_set_element_kind);
+        let vector_element_kind = value_result.vector_element_kind.or(inferred_vector_element_kind);
+        context.set_variable_set_element_kind(var_name, set_element_kind);
+        context.set_variable_vector_element_kind(var_name, vector_element_kind);
+        context.set_variable_set_element_kind(var_name, inferred_set_element_kind);
+        context.set_variable_vector_element_kind(var_name, inferred_vector_element_kind);
 
         // Mark variable as heap-allocated if needed
-        if value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing.is_some() {
+        let heap_owned = value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing.is_some() || matches!(inferred_heap_ownership, Some(HeapOwnership::Owned));
+        if heap_owned {
             context.mark_heap_allocated(var_name, value_kind);
         }
 
         collected.added_variables.push(var_name.clone());
         collected.binding_infos.push(BindingInfo {
             slot,
-            owns_heap: value_result.heap_ownership == HeapOwnership::Owned || cloned_from_existing.is_some(),
+            owns_heap: heap_owned,
             kind: value_kind,
             retained_slots,
         });

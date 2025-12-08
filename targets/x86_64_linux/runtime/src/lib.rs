@@ -5,7 +5,9 @@ extern crate std;
 
 use core::arch::asm;
 
+#[cfg(feature = "telemetry")]
 const SYS_WRITE: isize = 1;
+#[cfg(feature = "telemetry")]
 const STDOUT_FD: usize = 1;
 
 mod allocator;
@@ -24,9 +26,6 @@ pub use map::{_map_assoc, _map_clone, _map_contains, _map_count, _map_create, _m
 
 mod set;
 pub use set::{_set_clone, _set_contains, _set_count, _set_create, _set_disj, _set_free, _set_to_string};
-
-mod output;
-pub use output::{_print_values, _printf_values};
 
 #[cfg(not(feature = "std"))]
 mod memory;
@@ -69,7 +68,8 @@ pub(crate) unsafe fn syscall6(number: isize, arg1: usize, arg2: usize, arg3: usi
     ret
 }
 
-pub(crate) fn stdout_write(bytes: &[u8]) {
+#[cfg(feature = "telemetry")]
+fn stdout_write(bytes: &[u8]) {
     if bytes.is_empty() {
         return;
     }

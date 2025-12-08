@@ -768,7 +768,9 @@ pub unsafe extern "C" fn _map_get(map: *const u8, key: i64, key_tag: i64, out_va
             *out_value = *value_data.add(index);
             1
         }
-        None => 0,
+        None => {
+            0
+        }
     }
 }
 

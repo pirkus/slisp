@@ -1,0 +1,8 @@
+(defn -main []
+  (let [base {:tags #{:hot :cold}}
+        with-warm (assoc base :tags (disj (get base :tags) :cold))
+        tags (get with-warm :tags)
+        result (+ (count tags)
+                  (if (contains? tags :hot) 10 0)
+                  (if (contains? tags :cold) 0 1))]
+    (if (= result 12) 0 1)))

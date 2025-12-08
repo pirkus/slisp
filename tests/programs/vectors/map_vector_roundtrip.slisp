@@ -1,0 +1,6 @@
+(defn -main []
+  (let [base {:vals [1 2 3]}
+        bumped (assoc base :vals (get base :vals))
+        vals (get bumped :vals)
+        total (+ (count vals) (get vals 0 0))]
+    (if (= total 4) 0 1)))

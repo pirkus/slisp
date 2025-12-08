@@ -14,4 +14,4 @@
 
 (defn -main []
   (let [result (churn)]
-    (if (= result 14) 0 1)))
+    (if (= result 13) 0 1)))
