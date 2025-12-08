@@ -535,9 +535,7 @@ impl CompileContext {
 
     /// Remove multiple variables (for cleaning up let bindings)
     pub fn remove_variables(&mut self, names: &[String]) {
-        for name in names {
-            self.remove_variable(name);
-        }
+        names.iter().for_each(|name| { self.remove_variable(name); });
     }
 
     /// Allocate an anonymous temporary slot.
@@ -571,14 +569,7 @@ impl CompileContext {
         }
 
         if self.free_slots.len() >= count {
-            let mut popped = Vec::with_capacity(count);
-            for _ in 0..count {
-                if let Some(slot) = self.free_slots.pop() {
-                    popped.push(slot);
-                } else {
-                    break;
-                }
-            }
+            let popped: Vec<usize> = (0..count).filter_map(|_| self.free_slots.pop()).collect();
 
             if popped.len() == count {
                 let mut sorted = popped.clone();
@@ -589,14 +580,10 @@ impl CompileContext {
                 }
 
                 // Not contiguous – restore the slots for future reuse.
-                for slot in popped.into_iter().rev() {
-                    self.free_slots.push(slot);
-                }
+                popped.into_iter().rev().for_each(|slot| self.free_slots.push(slot));
             } else {
                 // Ran out of free slots; restore any we popped.
-                for slot in popped.into_iter().rev() {
-                    self.free_slots.push(slot);
-                }
+                popped.into_iter().rev().for_each(|slot| self.free_slots.push(slot));
             }
         }
 

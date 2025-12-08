@@ -228,12 +228,7 @@ impl GraphBuilder {
     }
 
     fn lookup_symbol(&self, name: &str) -> Option<BindingId> {
-        for frame in self.env.iter().rev() {
-            if let Some(id) = frame.get(name) {
-                return Some(*id);
-            }
-        }
-        None
+        self.env.iter().rev().find_map(|frame| frame.get(name).copied())
     }
 
     fn register_function_signatures(&mut self, expressions: &[Node]) {
@@ -684,9 +679,7 @@ impl GraphBuilder {
                 }
             }
         } else {
-            for arg in &nodes[1..] {
-                self.plan_assignment_for_node(arg);
-            }
+            nodes[1..].iter().for_each(|arg| self.plan_assignment_for_node(arg));
         }
     }
 
@@ -720,11 +713,9 @@ impl GraphBuilder {
             return;
         }
         let mut metadata = nodes.get(1).and_then(|expr| self.extract_map_metadata(expr)).unwrap_or_else(MapValueTypes::new);
-        for key_expr in nodes.iter().skip(2) {
-            if let Some(key_literal) = map_key_literal_from_node(key_expr) {
-                metadata.remove(&key_literal);
-            }
-        }
+        nodes.iter().skip(2).filter_map(map_key_literal_from_node).for_each(|key_literal| {
+            metadata.remove(&key_literal);
+        });
         let metadata_opt = if metadata.is_empty() { None } else { Some(metadata) };
         self.add_literal_constraint(binding, ValueKind::Map, HeapOwnership::Owned, metadata_opt);
     }
@@ -880,17 +871,15 @@ impl GraphBuilder {
                             .get(&FunctionKey::Named(value.clone()))
                             .map(|analysis| analysis.parameter_bindings.clone())
                         {
-                            for (idx, arg) in root[1..].iter().enumerate() {
+                            root[1..].iter().enumerate().for_each(|(idx, arg)| {
                                 if let Some(binding_id) = params.get(idx) {
                                     self.plan_assignment(*binding_id, arg);
                                 }
-                            }
+                            });
                         }
                     }
                 }
-                for child in root {
-                    self.plan_assignment_for_node(child);
-                }
+                root.iter().for_each(|child| self.plan_assignment_for_node(child));
             }
         }
     }
@@ -900,13 +889,10 @@ fn infer_element_kind<'a, I>(nodes: I) -> Option<ValueKind>
 where
     I: IntoIterator<Item = &'a Node>,
 {
-    let mut element_kind: Option<ValueKind> = None;
-    for node in nodes {
-        if let Some(kind) = node_literal_kind(node) {
-            merge_element_kind(&mut element_kind, kind);
-        }
-    }
-    element_kind
+    nodes.into_iter().filter_map(node_literal_kind).fold(None, |mut acc, kind| {
+        merge_element_kind(&mut acc, kind);
+        acc
+    })
 }
 
 fn infer_set_literal_kind(root: &[Node]) -> Option<ValueKind> {

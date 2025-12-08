@@ -215,14 +215,12 @@ fn resolve_default(default: Option<&Node>, env: &mut Environment) -> Result<Valu
 /// str - String concatenation (Clojure-style)
 /// Converts arguments to strings and concatenates them
 pub fn eval_str(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
-    let mut result = String::new();
-
-    for arg in args {
+    let result: Result<String, EvalError> = args.iter().try_fold(String::new(), |mut acc, arg| {
         let val = crate::evaluator::eval_with_env(arg, env)?;
-        result.push_str(&value_to_string(&val));
-    }
-
-    Ok(Value::String(result))
+        acc.push_str(&value_to_string(&val));
+        Ok(acc)
+    });
+    Ok(Value::String(result?))
 }
 
 /// count - Returns the length of a string or collection
@@ -353,22 +351,17 @@ pub fn eval_subs(args: &[Node], env: &mut Environment) -> Result<Value, EvalErro
 
 /// vec - Construct a vector from evaluated arguments
 pub fn eval_vec(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
-    let mut values = Vec::with_capacity(args.len());
-    for arg in args {
-        values.push(crate::evaluator::eval_with_env(arg, env)?);
-    }
-    Ok(Value::Vector(values))
+    let values: Result<Vec<Value>, EvalError> = args.iter().map(|arg| crate::evaluator::eval_with_env(arg, env)).collect();
+    Ok(Value::Vector(values?))
 }
 
 /// set - Construct a set from evaluated arguments (duplicates removed)
 pub fn eval_set(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
-    let mut entries = HashSet::with_capacity(args.len());
-    for arg in args {
+    let entries: Result<HashSet<MapKey>, EvalError> = args.iter().map(|arg| {
         let value = crate::evaluator::eval_with_env(arg, env)?;
-        let key = MapKey::try_from_value(&value)?;
-        entries.insert(key);
-    }
-    Ok(Value::Set(entries))
+        MapKey::try_from_value(&value)
+    }).collect();
+    Ok(Value::Set(entries?))
 }
 
 pub fn eval_hash_map(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
@@ -376,16 +369,13 @@ pub fn eval_hash_map(args: &[Node], env: &mut Environment) -> Result<Value, Eval
         return Err(EvalError::InvalidOperation("hash-map requires key/value pairs".to_string()));
     }
 
-    let mut entries = std::collections::HashMap::with_capacity(args.len() / 2);
-    let mut idx = 0usize;
-    while idx < args.len() {
-        let key_val = crate::evaluator::eval_with_env(&args[idx], env)?;
-        let value_val = crate::evaluator::eval_with_env(&args[idx + 1], env)?;
+    let entries: Result<std::collections::HashMap<MapKey, Value>, EvalError> = args.chunks(2).map(|chunk| {
+        let key_val = crate::evaluator::eval_with_env(&chunk[0], env)?;
+        let value_val = crate::evaluator::eval_with_env(&chunk[1], env)?;
         let key = MapKey::try_from_value(&key_val)?;
-        entries.insert(key, value_val);
-        idx += 2;
-    }
-    Ok(Value::Map(entries))
+        Ok((key, value_val))
+    }).collect();
+    Ok(Value::Map(entries?))
 }
 
 pub fn eval_assoc(args: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
@@ -436,11 +426,12 @@ pub fn eval_dissoc(args: &[Node], env: &mut Environment) -> Result<Value, EvalEr
         _ => return Err(EvalError::TypeError("dissoc: first argument must be a map or nil".to_string())),
     };
 
-    for key_expr in &args[1..] {
+    args[1..].iter().try_for_each(|key_expr| {
         let key_val = crate::evaluator::eval_with_env(key_expr, env)?;
         let key = MapKey::try_from_value(&key_val)?;
         entries.remove(&key);
-    }
+        Ok::<(), EvalError>(())
+    })?;
 
     Ok(Value::Map(entries))
 }
@@ -465,11 +456,12 @@ pub fn eval_disj(args: &[Node], env: &mut Environment) -> Result<Value, EvalErro
         _ => return Err(EvalError::TypeError("disj: first argument must be a set or nil".to_string())),
     };
 
-    for expr in &args[1..] {
+    args[1..].iter().try_for_each(|expr| {
         let value = crate::evaluator::eval_with_env(expr, env)?;
         let key = MapKey::try_from_value(&value)?;
         entries.remove(&key);
-    }
+        Ok::<(), EvalError>(())
+    })?;
 
     Ok(Value::Set(entries))
 }

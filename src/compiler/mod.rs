@@ -7,11 +7,13 @@ mod builtins;
 /// - expressions: Arithmetic, comparisons, conditionals, and logical operations
 /// - functions: Function definitions (defn) and function calls
 /// - bindings: Variable bindings (let expressions)
+/// - slots: Slot tracking utilities for temporary local variables
 mod context;
 mod expressions;
 mod functions;
 mod inference;
 mod liveness;
+mod slots;
 mod types;
 
 pub use context::CompileContext;
@@ -173,14 +175,14 @@ fn append_with_offset(program: &mut IRProgram, instructions: Vec<IRInstruction>)
     }
 
     let base = program.len();
-    for instruction in instructions {
+    instructions.into_iter().for_each(|instruction| {
         let adjusted = match instruction {
             IRInstruction::Jump(target) => IRInstruction::Jump(base + target),
             IRInstruction::JumpIfZero(target) => IRInstruction::JumpIfZero(base + target),
             other => other,
         };
         program.add_instruction(adjusted);
-    }
+    });
 }
 
 pub(super) fn extend_with_offset(target: &mut Vec<IRInstruction>, mut new_instructions: Vec<IRInstruction>) {
@@ -190,14 +192,14 @@ pub(super) fn extend_with_offset(target: &mut Vec<IRInstruction>, mut new_instru
 
     let base = target.len();
     if base != 0 {
-        for instruction in &mut new_instructions {
+        new_instructions.iter_mut().for_each(|instruction| {
             match instruction {
                 IRInstruction::Jump(target_idx) | IRInstruction::JumpIfZero(target_idx) => {
                     *target_idx += base;
                 }
                 _ => {}
             }
-        }
+        });
     }
 
     target.extend(new_instructions);
@@ -247,11 +249,10 @@ pub(crate) fn compile_node(node: &Node, context: &mut CompileContext, program: &
         Node::List { root } => compile_list(root, context, program),
         Node::Vector { root } => builtins::compile_vector_literal(root, context, program),
         Node::Map { entries } => {
-            let mut flattened = Vec::with_capacity(entries.len() * 2);
-            for (key, value) in entries {
-                flattened.push(key.clone());
-                flattened.push(value.clone());
-            }
+            let flattened: Vec<Node> = entries
+                .iter()
+                .flat_map(|(key, value)| [key.clone(), value.clone()])
+                .collect();
             builtins::compile_hash_map(&flattened, context, program)
         }
         Node::Set { root } => builtins::compile_set_literal(root, context, program),

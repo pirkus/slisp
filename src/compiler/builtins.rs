@@ -1,6 +1,7 @@
 use super::{
     compile_node, extend_with_offset, is_heap_allocated_symbol,
     liveness::{apply_liveness_plan, compute_liveness_plan, LivenessPlan},
+    slots::SlotTracker,
     CompileContext, CompileError, CompileResult, HeapOwnership, MapKeyLiteral, MapValueTypes, RetainedSlot, ValueKind,
 };
 use crate::ast::{Node, Primitive};
@@ -84,14 +85,10 @@ pub(super) fn compile_vector_literal(elements: &[Node], context: &mut CompileCon
 
     dedup_retained_slots(&mut retained_slots);
 
-    for slot in value_slots {
-        if !retains_slot(&retained_slots, slot) {
-            context.release_temp_slot(slot);
-        }
-    }
-    for slot in tag_slots {
+    value_slots.into_iter().filter(|slot| !retains_slot(&retained_slots, *slot)).for_each(|slot| {
         context.release_temp_slot(slot);
-    }
+    });
+    tag_slots.into_iter().for_each(|slot| context.release_temp_slot(slot));
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Vector)
         .with_heap_ownership(HeapOwnership::Owned)
@@ -165,15 +162,10 @@ pub(super) fn compile_set_literal(args: &[Node], context: &mut CompileContext, p
 
     dedup_retained_slots(&mut retained_slots);
 
-    for slot in value_slots {
-        if !retains_slot(&retained_slots, slot) {
-            context.release_temp_slot(slot);
-        }
-    }
-
-    for slot in tag_slots {
+    value_slots.into_iter().filter(|slot| !retains_slot(&retained_slots, *slot)).for_each(|slot| {
         context.release_temp_slot(slot);
-    }
+    });
+    tag_slots.into_iter().for_each(|slot| context.release_temp_slot(slot));
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Set)
         .with_heap_ownership(HeapOwnership::Owned)
@@ -189,29 +181,14 @@ pub(super) fn compile_count(args: &[Node], context: &mut CompileContext, program
 
     let mut arg_result = compile_node(&args[0], context, program)?;
     let mut instructions = std::mem::take(&mut arg_result.instructions);
-    let mut tracked_slots: HashSet<usize> = HashSet::new();
-    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
-    let mut temp_slots = Vec::new();
+    let mut tracker = SlotTracker::new();
 
-    if arg_result.heap_ownership == HeapOwnership::Owned {
-        let slot = context.allocate_temp_slot();
-        instructions.push(IRInstruction::StoreLocal(slot));
-        instructions.push(IRInstruction::LoadLocal(slot));
-        tracked_slots.insert(slot);
-        slot_kinds.insert(slot, ValueKind::Any);
-        temp_slots.push(slot);
+    if let Some(slot) = tracker.track_if_owned(&mut instructions, context, arg_result.heap_ownership, ValueKind::Any) {
+        let target_kind = resolve_value_kind(&args[0], arg_result.kind, context);
+        tracker.set_slot_kind(slot, target_kind);
     }
 
-    let mut target_kind = arg_result.kind;
-    if target_kind == ValueKind::Any {
-        if let Node::Symbol { value } = &args[0] {
-            if let Some(var_kind) = context.get_variable_type(value) {
-                target_kind = var_kind;
-            } else if let Some(param_kind) = context.get_parameter_type(value) {
-                target_kind = param_kind;
-            }
-        }
-    }
+    let target_kind = resolve_value_kind(&args[0], arg_result.kind, context);
 
     let runtime = match target_kind {
         ValueKind::Vector => "_vector_count",
@@ -221,18 +198,7 @@ pub(super) fn compile_count(args: &[Node], context: &mut CompileContext, program
     };
     instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 1));
 
-    for slot in &temp_slots {
-        slot_kinds.insert(*slot, target_kind);
-    }
-
-    if !tracked_slots.is_empty() {
-        let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
-    }
-
-    for slot in temp_slots {
-        context.release_temp_slot(slot);
-    }
+    instructions = tracker.apply_liveness_and_release(instructions, context);
     arg_result.free_retained_slots(&mut instructions, context);
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Number))
@@ -312,17 +278,17 @@ pub(super) fn emit_free_for_slot(instructions: &mut Vec<IRInstruction>, slot: us
 }
 
 pub(super) fn free_retained_slot(slot: RetainedSlot, instructions: &mut Vec<IRInstruction>, context: &mut CompileContext) {
-    for dependent in slot.dependents {
+    slot.dependents.into_iter().for_each(|dependent| {
         free_retained_slot(dependent, instructions, context);
-    }
+    });
     emit_free_for_slot(instructions, slot.slot, slot.kind);
     context.release_temp_slot(slot.slot);
 }
 
 pub(super) fn free_retained_dependents(slot: &mut RetainedSlot, instructions: &mut Vec<IRInstruction>, context: &mut CompileContext) {
-    for dependent in slot.dependents.drain(..) {
+    slot.dependents.drain(..).for_each(|dependent| {
         free_retained_slot(dependent, instructions, context);
-    }
+    });
 }
 
 fn apply_plan_with_slot_kinds(instructions: Vec<IRInstruction>, plan: &LivenessPlan, slot_kinds: &HashMap<usize, ValueKind>) -> Vec<IRInstruction> {
@@ -412,9 +378,9 @@ impl DefaultHandling {
             if default.owned {
                 emit_free_for_slot(instructions, default.slot, default.kind);
             }
-            for slot in default.retained_slots.drain(..) {
+            default.retained_slots.drain(..).for_each(|slot| {
                 free_retained_slot(slot, instructions, context);
-            }
+            });
         }
     }
 
@@ -644,9 +610,7 @@ pub(super) fn compile_get(args: &[Node], context: &mut CompileContext, program: 
         instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
     }
 
-    for slot in temp_slots {
-        context.release_temp_slot(slot);
-    }
+    temp_slots.into_iter().for_each(|slot| context.release_temp_slot(slot));
 
     default_handling.release_slot(context);
     target_result.free_retained_slots(&mut instructions, context);
@@ -752,17 +716,12 @@ pub(super) fn compile_subs(args: &[Node], context: &mut CompileContext, program:
 
     let mut arg_result = compile_node(&args[0], context, program)?;
     let mut instructions = std::mem::take(&mut arg_result.instructions);
-    let mut tracked_slots: HashSet<usize> = HashSet::new();
-    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
-    let mut temp_slots = Vec::new();
+    let mut tracker = SlotTracker::new();
 
-    if arg_result.heap_ownership == HeapOwnership::Owned {
-        let slot = context.allocate_temp_slot();
-        instructions.push(IRInstruction::StoreLocal(slot));
-        instructions.push(IRInstruction::LoadLocal(slot));
-        tracked_slots.insert(slot);
-        slot_kinds.insert(slot, ValueKind::Any);
-        temp_slots.push(slot);
+    let target_kind = resolve_value_kind(&args[0], arg_result.kind, context);
+
+    if let Some(slot) = tracker.track_if_owned(&mut instructions, context, arg_result.heap_ownership, ValueKind::Any) {
+        tracker.set_slot_kind(slot, target_kind);
     }
 
     let mut start_result = compile_node(&args[1], context, program)?;
@@ -779,33 +738,11 @@ pub(super) fn compile_subs(args: &[Node], context: &mut CompileContext, program:
         instructions.push(IRInstruction::Push(-1));
     }
 
-    let mut target_kind = arg_result.kind;
-    if target_kind == ValueKind::Any {
-        if let Node::Symbol { value } = &args[0] {
-            if let Some(var_kind) = context.get_variable_type(value) {
-                target_kind = var_kind;
-            } else if let Some(param_kind) = context.get_parameter_type(value) {
-                target_kind = param_kind;
-            }
-        }
-    }
-
     let runtime = if target_kind == ValueKind::Vector { "_vector_slice" } else { "_string_subs" };
 
     instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 3));
 
-    for slot in &temp_slots {
-        slot_kinds.insert(*slot, target_kind);
-    }
-
-    if !tracked_slots.is_empty() {
-        let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
-    }
-
-    for slot in temp_slots {
-        context.release_temp_slot(slot);
-    }
+    instructions = tracker.apply_liveness_and_release(instructions, context);
     arg_result.free_retained_slots(&mut instructions, context);
 
     let result_kind = if target_kind == ValueKind::Vector { ValueKind::Vector } else { ValueKind::String };
@@ -915,15 +852,11 @@ pub(super) fn compile_str(args: &[Node], context: &mut CompileContext, program: 
     instructions.push(IRInstruction::Push(count as i64));
     instructions.push(IRInstruction::RuntimeCall("_string_concat_n".to_string(), 2));
 
-    for (slot, free) in ordered_slots.iter().zip(needs_free.iter()) {
-        if *free {
-            instructions.push(IRInstruction::FreeLocal(*slot));
-        }
-    }
+    ordered_slots.iter().zip(needs_free.iter()).filter(|(_, free)| **free).for_each(|(slot, _)| {
+        instructions.push(IRInstruction::FreeLocal(*slot));
+    });
 
-    for slot in temp_slots {
-        context.release_temp_slot(slot);
-    }
+    temp_slots.into_iter().for_each(|slot| context.release_temp_slot(slot));
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::String).with_heap_ownership(HeapOwnership::Owned))
 }
@@ -1028,18 +961,10 @@ pub(super) fn compile_hash_map(args: &[Node], context: &mut CompileContext, prog
     instructions.push(IRInstruction::Push(pair_count as i64));
     instructions.push(IRInstruction::RuntimeCall("_map_create".to_string(), 5));
 
-    for slot in key_value_slots {
-        context.release_temp_slot(slot);
-    }
-    for slot in key_tag_slots {
-        context.release_temp_slot(slot);
-    }
-    for slot in value_slots {
-        context.release_temp_slot(slot);
-    }
-    for slot in value_tag_slots {
-        context.release_temp_slot(slot);
-    }
+    key_value_slots.into_iter().for_each(|slot| context.release_temp_slot(slot));
+    key_tag_slots.into_iter().for_each(|slot| context.release_temp_slot(slot));
+    value_slots.into_iter().for_each(|slot| context.release_temp_slot(slot));
+    value_tag_slots.into_iter().for_each(|slot| context.release_temp_slot(slot));
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Map)
         .with_heap_ownership(HeapOwnership::Owned)
@@ -1119,9 +1044,9 @@ pub(super) fn compile_assoc(args: &[Node], context: &mut CompileContext, program
         value_result.free_retained_slots(&mut instructions, context);
 
         instructions.push(IRInstruction::RuntimeCall("_map_assoc".to_string(), 5));
-        for slot in slots_to_free_after_call {
+        slots_to_free_after_call.into_iter().for_each(|slot| {
             free_retained_slot(slot, &mut instructions, context);
-        }
+        });
 
         if let Some(key_literal) = literal_map_key(&args[key_index]) {
             if value_result.kind == ValueKind::Any {
@@ -1141,9 +1066,7 @@ pub(super) fn compile_assoc(args: &[Node], context: &mut CompileContext, program
         instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
     }
 
-    for slot in temp_slots {
-        context.release_temp_slot(slot);
-    }
+    temp_slots.into_iter().for_each(|slot| context.release_temp_slot(slot));
 
     dedup_retained_slots(&mut retained_slots);
 
@@ -1217,9 +1140,7 @@ pub(super) fn compile_dissoc(args: &[Node], context: &mut CompileContext, progra
         instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
     }
 
-    for slot in temp_slots {
-        context.release_temp_slot(slot);
-    }
+    temp_slots.into_iter().for_each(|slot| context.release_temp_slot(slot));
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Map)
         .with_heap_ownership(HeapOwnership::Owned)
@@ -1288,9 +1209,7 @@ pub(super) fn compile_disj(args: &[Node], context: &mut CompileContext, program:
         instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
     }
 
-    for slot in temp_slots {
-        context.release_temp_slot(slot);
-    }
+    temp_slots.into_iter().for_each(|slot| context.release_temp_slot(slot));
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Set)
         .with_heap_ownership(HeapOwnership::Owned)
@@ -1304,24 +1223,13 @@ pub(super) fn compile_contains(args: &[Node], context: &mut CompileContext, prog
 
     let mut target_result = compile_node(&args[0], context, program)?;
     let mut instructions = std::mem::take(&mut target_result.instructions);
-    let mut tracked_slots: HashSet<usize> = HashSet::new();
-    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
-    let mut temp_slots = Vec::new();
+    let mut tracker = SlotTracker::new();
 
-    let mut owned_target_slot: Option<usize> = None;
-    if target_result.heap_ownership == HeapOwnership::Owned {
-        let slot = context.allocate_temp_slot();
-        instructions.push(IRInstruction::StoreLocal(slot));
-        instructions.push(IRInstruction::LoadLocal(slot));
-        tracked_slots.insert(slot);
-        slot_kinds.insert(slot, ValueKind::Any);
-        temp_slots.push(slot);
-        owned_target_slot = Some(slot);
-    }
+    let owned_target_slot = tracker.track_if_owned(&mut instructions, context, target_result.heap_ownership, ValueKind::Any);
 
     let target_kind = resolve_value_kind(&args[0], target_result.kind, context);
-    if let Some(slot) = temp_slots.first() {
-        slot_kinds.insert(*slot, target_kind);
+    if let Some(slot) = owned_target_slot {
+        tracker.set_slot_kind(slot, target_kind);
     }
 
     if target_kind == ValueKind::Map {
@@ -1331,14 +1239,7 @@ pub(super) fn compile_contains(args: &[Node], context: &mut CompileContext, prog
                     discard_loaded_target(&mut instructions, context, owned_target_slot);
                     instructions.push(IRInstruction::Push(1));
 
-                    if !tracked_slots.is_empty() {
-                        let plan = compute_liveness_plan(&instructions, &tracked_slots);
-                        instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
-                    }
-
-                    for slot in temp_slots {
-                        context.release_temp_slot(slot);
-                    }
+                    instructions = tracker.apply_liveness_and_release(instructions, context);
                     target_result.free_retained_slots(&mut instructions, context);
 
                     return Ok(CompileResult::with_instructions(instructions, ValueKind::Boolean));
@@ -1350,33 +1251,19 @@ pub(super) fn compile_contains(args: &[Node], context: &mut CompileContext, prog
     let mut key_result = compile_node(&args[1], context, program)?;
     let key_instructions = std::mem::take(&mut key_result.instructions);
     extend_with_offset(&mut instructions, key_instructions);
-    let mut owned_key_slot: Option<usize> = None;
-    if key_result.heap_ownership == HeapOwnership::Owned {
-        let slot = context.allocate_temp_slot();
-        instructions.push(IRInstruction::StoreLocal(slot));
-        instructions.push(IRInstruction::LoadLocal(slot));
-        tracked_slots.insert(slot);
-        slot_kinds.insert(slot, ValueKind::Any);
-        temp_slots.push(slot);
-        owned_key_slot = Some(slot);
-    }
+
+    let owned_key_slot = tracker.track_if_owned(&mut instructions, context, key_result.heap_ownership, ValueKind::Any);
+
     key_result.kind = resolve_map_key_kind(&args[1], key_result.kind, context)?;
     if let Some(slot) = owned_key_slot {
-        slot_kinds.insert(slot, key_result.kind);
+        tracker.set_slot_kind(slot, key_result.kind);
     }
     instructions.push(IRInstruction::Push(runtime_tag_for_key(key_result.kind)));
     let runtime = if target_kind == ValueKind::Set { "_set_contains" } else { "_map_contains" };
     instructions.push(IRInstruction::RuntimeCall(runtime.to_string(), 3));
     key_result.free_retained_slots(&mut instructions, context);
 
-    if !tracked_slots.is_empty() {
-        let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_plan_with_slot_kinds(instructions, &plan, &slot_kinds);
-    }
-
-    for slot in temp_slots {
-        context.release_temp_slot(slot);
-    }
+    instructions = tracker.apply_liveness_and_release(instructions, context);
     target_result.free_retained_slots(&mut instructions, context);
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Boolean))

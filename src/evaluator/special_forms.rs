@@ -46,7 +46,7 @@ pub fn eval_let(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
 
     let mut new_env = env.clone();
 
-    for chunk in bindings.chunks(2) {
+    bindings.chunks(2).try_for_each(|chunk| {
         let var_node = &chunk[0];
         let val_node = &chunk[1];
 
@@ -58,7 +58,8 @@ pub fn eval_let(args: &[Node], env: &mut Environment) -> Result<Value, EvalError
         // Sequential binding: later bindings can reference earlier ones
         let val = crate::evaluator::eval_with_env(val_node, &mut new_env)?;
         new_env.insert(var_name.clone(), val);
-    }
+        Ok(())
+    })?;
 
     crate::evaluator::eval_with_env(&args[1], &mut new_env)
 }
@@ -72,14 +73,10 @@ pub fn eval_fn(args: &[Node], env: &Environment) -> Result<Value, EvalError> {
     // Parameters format: [param1 param2 ...]
     let params = match &args[0] {
         Node::Vector { root } => {
-            let mut param_names = Vec::new();
-            for param_node in root {
-                match param_node {
-                    Node::Symbol { value } => param_names.push(value.clone()),
-                    _ => return Err(EvalError::TypeError("fn parameters must be symbols".to_string())),
-                }
-            }
-            param_names
+            root.iter().map(|param_node| match param_node {
+                Node::Symbol { value } => Ok(value.clone()),
+                _ => Err(EvalError::TypeError("fn parameters must be symbols".to_string())),
+            }).collect::<Result<Vec<_>, _>>()?
         }
         _ => return Err(EvalError::TypeError("fn requires a vector of parameters".to_string())),
     };
@@ -98,10 +95,11 @@ pub fn eval_function_call(func_value: Value, args: &[Node], env: &mut Environmen
             }
 
             let mut func_env = closure;
-            for (param, arg) in params.iter().zip(args.iter()) {
+            params.iter().zip(args.iter()).try_for_each(|(param, arg)| {
                 let arg_value = crate::evaluator::eval_with_env(arg, env)?;
                 func_env.insert(param.clone(), arg_value);
-            }
+                Ok::<(), EvalError>(())
+            })?;
 
             crate::evaluator::eval_with_env(&body, &mut func_env)
         }
@@ -143,14 +141,10 @@ pub fn eval_defn(args: &[Node], env: &mut Environment) -> Result<Value, EvalErro
     // Parameters format: [param1 param2 ...]
     let params = match &args[1] {
         Node::Vector { root } => {
-            let mut param_names = Vec::new();
-            for param_node in root {
-                match param_node {
-                    Node::Symbol { value } => param_names.push(value.clone()),
-                    _ => return Err(EvalError::TypeError("defn parameters must be symbols".to_string())),
-                }
-            }
-            param_names
+            root.iter().map(|param_node| match param_node {
+                Node::Symbol { value } => Ok(value.clone()),
+                _ => Err(EvalError::TypeError("defn parameters must be symbols".to_string())),
+            }).collect::<Result<Vec<_>, _>>()?
         }
         _ => return Err(EvalError::TypeError("defn requires a vector of parameters".to_string())),
     };
