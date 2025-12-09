@@ -109,7 +109,6 @@ mod tests {
         let slot = tracker.track_owned(&mut instructions, &mut context, ValueKind::String);
 
         assert_eq!(slot, 0);
-        assert!(tracker.has_tracked_slots());
         assert_eq!(instructions.len(), 2);
         assert!(matches!(instructions[0], IRInstruction::StoreLocal(0)));
         assert!(matches!(instructions[1], IRInstruction::LoadLocal(0)));
@@ -123,15 +122,15 @@ mod tests {
 
         let none_result = tracker.track_if_owned(&mut instructions, &mut context, HeapOwnership::None, ValueKind::String);
         assert!(none_result.is_none());
-        assert!(!tracker.has_tracked_slots());
+        assert!(instructions.is_empty());
 
         let owned_result = tracker.track_if_owned(&mut instructions, &mut context, HeapOwnership::Owned, ValueKind::String);
         assert!(owned_result.is_some());
-        assert!(tracker.has_tracked_slots());
+        assert_eq!(instructions.len(), 2);
     }
 
     #[test]
-    fn release_all_frees_slots() {
+    fn apply_liveness_releases_slots() {
         let mut context = CompileContext::new();
         let mut instructions = Vec::new();
         let mut tracker = SlotTracker::new();
@@ -140,9 +139,10 @@ mod tests {
         tracker.track_owned(&mut instructions, &mut context, ValueKind::Vector);
 
         assert_eq!(context.next_slot, 2);
-        tracker.release_all(&mut context);
+        let result = tracker.apply_liveness_and_release(instructions, &mut context);
 
-        // Slots should be returned to free pool
+        // Slots should be returned to free pool and frees emitted
+        assert!(result.iter().any(|inst| matches!(inst, IRInstruction::FreeLocal(_) | IRInstruction::FreeLocalWithRuntime(_, _))));
         assert_eq!(context.free_slots.len(), 2);
     }
 }
