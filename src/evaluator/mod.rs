@@ -153,22 +153,21 @@ fn eval_list(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> 
 }
 
 fn eval_vector(nodes: &[Node], env: &mut Environment) -> Result<Value, EvalError> {
-    let mut values = Vec::with_capacity(nodes.len());
-    for node in nodes {
-        values.push(eval_with_env(node, env)?);
-    }
-    Ok(Value::Vector(values))
+    let values: Result<Vec<Value>, EvalError> = nodes.iter().map(|node| eval_with_env(node, env)).collect();
+    Ok(Value::Vector(values?))
 }
 
 fn eval_map_literal(entries: &[(Node, Node)], env: &mut Environment) -> Result<Value, EvalError> {
-    let mut map = HashMap::with_capacity(entries.len());
-    for (key_node, value_node) in entries {
-        let key_value = eval_with_env(key_node, env)?;
-        let key = MapKey::try_from_value(&key_value)?;
-        let value = eval_with_env(value_node, env)?;
-        map.insert(key, value);
-    }
-    Ok(Value::Map(map))
+    let map: Result<HashMap<MapKey, Value>, EvalError> = entries
+        .iter()
+        .map(|(key_node, value_node)| {
+            let key_value = eval_with_env(key_node, env)?;
+            let key = MapKey::try_from_value(&key_value)?;
+            let value = eval_with_env(value_node, env)?;
+            Ok((key, value))
+        })
+        .collect();
+    Ok(Value::Map(map?))
 }
 
 #[cfg(test)]

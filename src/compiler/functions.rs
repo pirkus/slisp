@@ -1,18 +1,7 @@
-use super::{
-    builtins::{emit_free_for_slot, free_retained_dependents},
-    extend_with_offset,
-    CompileContext,
-    CompileError,
-    CompileResult,
-    HeapOwnership,
-    RetainedSlot,
-    ValueKind,
-};
+use super::{builtins::free_retained_dependents, extend_with_offset, slots::SlotTracker, CompileContext, CompileError, CompileResult, HeapOwnership, RetainedSlot, ValueKind};
 /// Function definition and call compilation
 use crate::ast::Node;
-use crate::compiler::liveness::{apply_liveness_plan, compute_liveness_plan};
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
-use std::collections::{HashMap, HashSet};
 
 /// Compile a function definition (defn)
 pub fn compile_defn(args: &[Node], context: &mut CompileContext, program: &mut IRProgram) -> Result<(Vec<IRInstruction>, FunctionInfo), CompileError> {
@@ -135,47 +124,28 @@ pub fn compile_function_call(func_name: &str, args: &[Node], context: &mut Compi
     }
 
     let mut instructions = Vec::new();
-    let mut owned_argument_slots: Vec<usize> = Vec::new();
+    let mut tracker = SlotTracker::new();
     let mut retained_argument_slots: Vec<RetainedSlot> = Vec::new();
-    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
 
-    for (index, arg) in args.iter().enumerate() {
+    args.iter().enumerate().try_for_each(|(index, arg)| {
         let mut arg_result = crate::compiler::compile_node(arg, context, program)?;
         context.record_function_parameter_type(func_name, index, arg_result.kind);
         retained_argument_slots.extend(arg_result.take_retained_slots());
         let arg_instructions = std::mem::take(&mut arg_result.instructions);
         extend_with_offset(&mut instructions, arg_instructions);
-        if arg_result.heap_ownership == HeapOwnership::Owned {
-            let slot = context.allocate_temp_slot();
-            instructions.push(IRInstruction::StoreLocal(slot));
-            instructions.push(IRInstruction::LoadLocal(slot));
-            owned_argument_slots.push(slot);
-            slot_kinds.insert(slot, arg_result.kind);
-        }
-    }
+        tracker.track_if_owned(&mut instructions, context, arg_result.heap_ownership, arg_result.kind);
+        Ok::<(), CompileError>(())
+    })?;
 
     instructions.push(IRInstruction::Call(func_name.to_string(), args.len()));
 
-    if !owned_argument_slots.is_empty() || !retained_argument_slots.is_empty() {
-        let mut tracked_slots: HashSet<usize> = owned_argument_slots.iter().copied().collect();
-        tracked_slots.extend(retained_argument_slots.iter().map(|slot| slot.slot));
-        for slot in &retained_argument_slots {
-            slot_kinds.insert(slot.slot, slot.kind);
-        }
-        let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_liveness_plan(instructions, &plan, |insts, slot| {
-            let kind = slot_kinds.get(&slot).copied().unwrap_or(ValueKind::Any);
-            emit_free_for_slot(insts, slot, kind);
-        });
-    }
+    tracker.track_retained_slots(&retained_argument_slots);
+    instructions = tracker.apply_liveness_and_release(instructions, context);
 
-    for slot in owned_argument_slots {
-        context.release_temp_slot(slot);
-    }
-    for mut slot in retained_argument_slots {
+    retained_argument_slots.into_iter().for_each(|mut slot| {
         free_retained_dependents(&mut slot, &mut instructions, context);
         context.release_temp_slot(slot.slot);
-    }
+    });
 
     // Without full type inference, assume any return kind for user-defined functions.
     let return_kind = context.get_function_return_type(func_name).unwrap_or(ValueKind::Any);

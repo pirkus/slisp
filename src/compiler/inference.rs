@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::{Node, Primitive};
 
-use super::{MapKeyLiteral, MapValueTypes, CompileError, HeapOwnership, ValueKind};
+use super::{CompileError, HeapOwnership, MapKeyLiteral, MapValueTypes, ValueKind};
 
 /// Execute the type inference scaffolding over a list of AST expressions.
 ///
@@ -73,9 +73,19 @@ impl BindingId {
 #[derive(Clone, Debug)]
 pub enum BindingOwner {
     #[allow(dead_code)]
-    Parameter { function: FunctionKey, name: String, position: usize }, // TODO(6.5.3): surface parameter names/positions in diagnostics
-    Local { function: FunctionKey, name: String, _depth: usize },
-    Return { function: FunctionKey },
+    Parameter {
+        function: FunctionKey,
+        name: String,
+        position: usize,
+    }, // TODO(6.5.3): surface parameter names/positions in diagnostics
+    Local {
+        function: FunctionKey,
+        name: String,
+        _depth: usize,
+    },
+    Return {
+        function: FunctionKey,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -207,10 +217,7 @@ impl GraphBuilder {
     }
 
     fn current_function(&self) -> FunctionKey {
-        self.function_stack
-            .last()
-            .cloned()
-            .unwrap_or_else(FunctionKey::program)
+        self.function_stack.last().cloned().unwrap_or_else(FunctionKey::program)
     }
 
     fn push_env(&mut self) {
@@ -228,12 +235,7 @@ impl GraphBuilder {
     }
 
     fn lookup_symbol(&self, name: &str) -> Option<BindingId> {
-        for frame in self.env.iter().rev() {
-            if let Some(id) = frame.get(name) {
-                return Some(*id);
-            }
-        }
-        None
+        self.env.iter().rev().find_map(|frame| frame.get(name).copied())
     }
 
     fn register_function_signatures(&mut self, expressions: &[Node]) {
@@ -301,7 +303,9 @@ impl GraphBuilder {
     }
 
     fn register_function(&mut self, node: &Node, path: &mut AstId) {
-        let Node::List { root } = node else { return; };
+        let Node::List { root } = node else {
+            return;
+        };
         if root.len() != 4 {
             return;
         }
@@ -335,12 +339,7 @@ impl GraphBuilder {
             path.pop();
         }
         path.push(3);
-        self.add_binding(
-            BindingOwner::Return {
-                function: func_key,
-            },
-            path.clone(),
-        );
+        self.add_binding(BindingOwner::Return { function: func_key }, path.clone());
         path.pop();
     }
 
@@ -355,15 +354,15 @@ impl GraphBuilder {
                 }
             }
             Node::Map { entries } => {
-        for (idx, (key, value)) in entries.iter().enumerate() {
-            path.push(idx * 2);
-            self.visit_node(key, path);
-            path.pop();
-            path.push(idx * 2 + 1);
-            self.visit_node(value, path);
-            path.pop();
-        }
-    }
+                for (idx, (key, value)) in entries.iter().enumerate() {
+                    path.push(idx * 2);
+                    self.visit_node(key, path);
+                    path.pop();
+                    path.push(idx * 2 + 1);
+                    self.visit_node(value, path);
+                    path.pop();
+                }
+            }
             Node::Primitive { .. } | Node::Symbol { .. } => {}
         }
     }
@@ -527,9 +526,7 @@ impl GraphBuilder {
     }
 
     fn get_parameter_binding(&self, function: &FunctionKey, index: usize) -> Option<BindingId> {
-        self.functions
-            .get(function)
-            .and_then(|analysis| analysis.parameter_bindings.get(index).copied())
+        self.functions.get(function).and_then(|analysis| analysis.parameter_bindings.get(index).copied())
     }
 
     fn get_return_binding(&self, function: &FunctionKey) -> Option<BindingId> {
@@ -657,14 +654,8 @@ impl GraphBuilder {
             self.binding_vector_metadata.insert(binding, kind);
             self.prime_binding_vector_metadata(binding, kind);
         }
-        self.constraints.push(Box::new(LiteralConstraint::new(
-            binding,
-            kind,
-            ownership,
-            map_value_types,
-            set_element_kind,
-            vector_element_kind,
-        )));
+        self.constraints
+            .push(Box::new(LiteralConstraint::new(binding, kind, ownership, map_value_types, set_element_kind, vector_element_kind)));
     }
 
     fn plan_function_call(&mut self, binding: BindingId, name: &str, nodes: &[Node]) {
@@ -673,20 +664,14 @@ impl GraphBuilder {
         if let Some(return_binding) = self.get_return_binding(&func_key) {
             self.constraints.push(Box::new(CopyConstraint::new(binding, return_binding)));
         }
-        if let Some(params) = self
-            .functions
-            .get(&func_key)
-            .map(|analysis| analysis.parameter_bindings.clone())
-        {
+        if let Some(params) = self.functions.get(&func_key).map(|analysis| analysis.parameter_bindings.clone()) {
             for (idx, arg) in nodes[1..].iter().enumerate() {
                 if let Some(param_binding) = params.get(idx) {
                     self.plan_assignment(*param_binding, arg);
                 }
             }
         } else {
-            for arg in &nodes[1..] {
-                self.plan_assignment_for_node(arg);
-            }
+            nodes[1..].iter().for_each(|arg| self.plan_assignment_for_node(arg));
         }
     }
 
@@ -720,11 +705,9 @@ impl GraphBuilder {
             return;
         }
         let mut metadata = nodes.get(1).and_then(|expr| self.extract_map_metadata(expr)).unwrap_or_else(MapValueTypes::new);
-        for key_expr in nodes.iter().skip(2) {
-            if let Some(key_literal) = map_key_literal_from_node(key_expr) {
-                metadata.remove(&key_literal);
-            }
-        }
+        nodes.iter().skip(2).filter_map(map_key_literal_from_node).for_each(|key_literal| {
+            metadata.remove(&key_literal);
+        });
         let metadata_opt = if metadata.is_empty() { None } else { Some(metadata) };
         self.add_literal_constraint(binding, ValueKind::Map, HeapOwnership::Owned, metadata_opt);
     }
@@ -875,22 +858,16 @@ impl GraphBuilder {
             Node::List { root } => {
                 if !root.is_empty() {
                     if let Node::Symbol { value } = &root[0] {
-                        if let Some(params) = self
-                            .functions
-                            .get(&FunctionKey::Named(value.clone()))
-                            .map(|analysis| analysis.parameter_bindings.clone())
-                        {
-                            for (idx, arg) in root[1..].iter().enumerate() {
+                        if let Some(params) = self.functions.get(&FunctionKey::Named(value.clone())).map(|analysis| analysis.parameter_bindings.clone()) {
+                            root[1..].iter().enumerate().for_each(|(idx, arg)| {
                                 if let Some(binding_id) = params.get(idx) {
                                     self.plan_assignment(*binding_id, arg);
                                 }
-                            }
+                            });
                         }
                     }
                 }
-                for child in root {
-                    self.plan_assignment_for_node(child);
-                }
+                root.iter().for_each(|child| self.plan_assignment_for_node(child));
             }
         }
     }
@@ -900,13 +877,10 @@ fn infer_element_kind<'a, I>(nodes: I) -> Option<ValueKind>
 where
     I: IntoIterator<Item = &'a Node>,
 {
-    let mut element_kind: Option<ValueKind> = None;
-    for node in nodes {
-        if let Some(kind) = node_literal_kind(node) {
-            merge_element_kind(&mut element_kind, kind);
-        }
-    }
-    element_kind
+    nodes.into_iter().filter_map(node_literal_kind).fold(None, |mut acc, kind| {
+        merge_element_kind(&mut acc, kind);
+        acc
+    })
 }
 
 fn infer_set_literal_kind(root: &[Node]) -> Option<ValueKind> {
@@ -939,9 +913,7 @@ fn extract_set_element_kind(builder: &GraphBuilder, node: &Node) -> Option<Value
 fn extract_vector_element_kind(builder: &GraphBuilder, node: &Node) -> Option<ValueKind> {
     match node {
         Node::Vector { root } => infer_vector_literal_kind(root),
-        Node::Symbol { value } => builder
-            .lookup_symbol(value)
-            .and_then(|binding| builder.binding_vector_element_kind(binding)),
+        Node::Symbol { value } => builder.lookup_symbol(value).and_then(|binding| builder.binding_vector_element_kind(binding)),
         Node::List { root } => {
             if let Some(Node::Symbol { value }) = root.first() {
                 match value.as_str() {
@@ -1052,10 +1024,7 @@ impl TypeInferenceEngine {
             })
             .collect();
 
-        TypeInferenceSummary {
-            bindings,
-            functions: self.functions,
-        }
+        TypeInferenceSummary { bindings, functions: self.functions }
     }
 }
 
@@ -1106,7 +1075,9 @@ impl<'a> ConstraintContext<'a> {
     }
 
     fn update_map_value_types(&mut self, id: BindingId, map: Option<&MapValueTypes>) -> bool {
-        let Some(incoming) = map else { return false; };
+        let Some(incoming) = map else {
+            return false;
+        };
         let node = self.nodes.get_mut(id.to_index()).expect("invalid binding id");
         merge_map_value_types(&mut node.map_value_types, incoming)
     }
@@ -1116,7 +1087,9 @@ impl<'a> ConstraintContext<'a> {
     }
 
     fn update_set_element_kind(&mut self, id: BindingId, kind: Option<ValueKind>) -> bool {
-        let Some(kind) = kind else { return false; };
+        let Some(kind) = kind else {
+            return false;
+        };
         let node = self.nodes.get_mut(id.to_index()).expect("invalid binding id");
         merge_element_kind(&mut node.set_element_kind, kind)
     }
@@ -1126,7 +1099,9 @@ impl<'a> ConstraintContext<'a> {
     }
 
     fn update_vector_element_kind(&mut self, id: BindingId, kind: Option<ValueKind>) -> bool {
-        let Some(kind) = kind else { return false; };
+        let Some(kind) = kind else {
+            return false;
+        };
         let node = self.nodes.get_mut(id.to_index()).expect("invalid binding id");
         merge_element_kind(&mut node.vector_element_kind, kind)
     }
@@ -1227,14 +1202,7 @@ struct LiteralConstraint {
 }
 
 impl LiteralConstraint {
-    fn new(
-        target: BindingId,
-        kind: ValueKind,
-        ownership: HeapOwnership,
-        map_value_types: Option<MapValueTypes>,
-        set_element_kind: Option<ValueKind>,
-        vector_element_kind: Option<ValueKind>,
-    ) -> Self {
+    fn new(target: BindingId, kind: ValueKind, ownership: HeapOwnership, map_value_types: Option<MapValueTypes>, set_element_kind: Option<ValueKind>, vector_element_kind: Option<ValueKind>) -> Self {
         LiteralConstraint {
             target,
             kind,
@@ -1590,9 +1558,7 @@ mod tests {
         let id = BindingId(0);
         let nodes = vec![BindingNode {
             id,
-            owner: BindingOwner::Return {
-                function: FunctionKey::program(),
-            },
+            owner: BindingOwner::Return { function: FunctionKey::program() },
             ast_id: AstId::root(),
             value_kind: ValueKind::Any,
             heap_ownership: HeapOwnership::None,
@@ -1601,11 +1567,7 @@ mod tests {
             vector_element_kind: None,
         }];
         let constraints: Vec<Box<dyn Constraint>> = vec![Box::new(TestConstraint { id, fired: false })];
-        let graph = BindingGraph {
-            nodes,
-            functions,
-            constraints,
-        };
+        let graph = BindingGraph { nodes, functions, constraints };
         let mut engine = TypeInferenceEngine::new(graph);
         engine.solve();
         let summary = engine.into_summary();

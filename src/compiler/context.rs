@@ -1,9 +1,7 @@
 /// Compilation context for tracking variables, parameters, and functions
 use super::{
     inference::{BindingOwner, FunctionKey, TypeInferenceSummary},
-    HeapOwnership,
-    MapValueTypes,
-    ValueKind,
+    HeapOwnership, MapValueTypes, ValueKind,
 };
 use crate::ir::FunctionInfo;
 use std::collections::HashMap;
@@ -12,28 +10,28 @@ use std::collections::HashMap;
 /// Tracks variables, parameters, and function definitions
 #[derive(Debug, Clone)]
 pub struct CompileContext {
-    pub variables: HashMap<String, usize>,                               // variable name -> local slot index
-    pub heap_allocated_vars: HashMap<String, bool>,                      // tracks if variable holds heap pointer
-    pub variable_types: HashMap<String, ValueKind>,                      // tracks inferred variable types
-    pub variable_map_value_types: HashMap<String, MapValueTypes>,        // tracks map entry metadata for locals
-    pub variable_set_element_kinds: HashMap<String, ValueKind>,          // set element kinds for locals
-    pub variable_vector_element_kinds: HashMap<String, ValueKind>,       // vector element kinds for locals
-    pub parameters: HashMap<String, usize>,                              // parameter name -> param slot index
-    pub parameter_types: HashMap<String, ValueKind>,                     // inferred parameter types
-    pub parameter_map_value_types: HashMap<String, MapValueTypes>,       // map metadata for parameters
-    pub parameter_set_element_kinds: HashMap<String, ValueKind>,         // set element kinds for parameters
-    pub parameter_vector_element_kinds: HashMap<String, ValueKind>,      // vector element kinds for parameters
-    pub functions: HashMap<String, FunctionInfo>,                        // function name -> function info
-    pub function_return_types: HashMap<String, ValueKind>,               // function name -> return kind
-    pub function_return_map_value_types: HashMap<String, MapValueTypes>, // function name -> map metadata
-    pub function_return_set_element_kinds: HashMap<String, ValueKind>,   // function name -> set element kind
-    pub function_return_vector_element_kinds: HashMap<String, ValueKind>, // function name -> vector element kind
-    pub function_parameter_types: HashMap<String, Vec<ValueKind>>,       // function name -> parameter kinds
-    pub function_parameter_map_value_types: HashMap<String, Vec<Option<MapValueTypes>>>, // function name -> parameter map metadata
-    pub function_parameter_set_element_kinds: HashMap<String, Vec<Option<ValueKind>>>, // function name -> parameter set element kind
+    pub variables: HashMap<String, usize>,                                                // variable name -> local slot index
+    pub heap_allocated_vars: HashMap<String, bool>,                                       // tracks if variable holds heap pointer
+    pub variable_types: HashMap<String, ValueKind>,                                       // tracks inferred variable types
+    pub variable_map_value_types: HashMap<String, MapValueTypes>,                         // tracks map entry metadata for locals
+    pub variable_set_element_kinds: HashMap<String, ValueKind>,                           // set element kinds for locals
+    pub variable_vector_element_kinds: HashMap<String, ValueKind>,                        // vector element kinds for locals
+    pub parameters: HashMap<String, usize>,                                               // parameter name -> param slot index
+    pub parameter_types: HashMap<String, ValueKind>,                                      // inferred parameter types
+    pub parameter_map_value_types: HashMap<String, MapValueTypes>,                        // map metadata for parameters
+    pub parameter_set_element_kinds: HashMap<String, ValueKind>,                          // set element kinds for parameters
+    pub parameter_vector_element_kinds: HashMap<String, ValueKind>,                       // vector element kinds for parameters
+    pub functions: HashMap<String, FunctionInfo>,                                         // function name -> function info
+    pub function_return_types: HashMap<String, ValueKind>,                                // function name -> return kind
+    pub function_return_map_value_types: HashMap<String, MapValueTypes>,                  // function name -> map metadata
+    pub function_return_set_element_kinds: HashMap<String, ValueKind>,                    // function name -> set element kind
+    pub function_return_vector_element_kinds: HashMap<String, ValueKind>,                 // function name -> vector element kind
+    pub function_parameter_types: HashMap<String, Vec<ValueKind>>,                        // function name -> parameter kinds
+    pub function_parameter_map_value_types: HashMap<String, Vec<Option<MapValueTypes>>>,  // function name -> parameter map metadata
+    pub function_parameter_set_element_kinds: HashMap<String, Vec<Option<ValueKind>>>,    // function name -> parameter set element kind
     pub function_parameter_vector_element_kinds: HashMap<String, Vec<Option<ValueKind>>>, // function name -> parameter vector element kind
-    pub function_return_ownership: HashMap<String, HeapOwnership>,       // function name -> heap ownership semantics
-    pub type_inference: Option<TypeInferenceSummary>,                    // cached inference summary for current compilation unit
+    pub function_return_ownership: HashMap<String, HeapOwnership>,                        // function name -> heap ownership semantics
+    pub type_inference: Option<TypeInferenceSummary>,                                     // cached inference summary for current compilation unit
     pub current_function: FunctionKey,
     pub local_binding_offsets: HashMap<FunctionKey, usize>,
     pub next_slot: usize,
@@ -404,10 +402,7 @@ impl CompileContext {
         }
     }
 
-    pub fn consume_local_binding_metadata(
-        &mut self,
-        var_name: &str,
-    ) -> Option<(ValueKind, HeapOwnership, Option<MapValueTypes>, Option<ValueKind>, Option<ValueKind>)> {
+    pub fn consume_local_binding_metadata(&mut self, var_name: &str) -> Option<(ValueKind, HeapOwnership, Option<MapValueTypes>, Option<ValueKind>, Option<ValueKind>)> {
         let summary = self.type_inference.as_ref()?;
         let analysis = summary.function(&self.current_function)?;
         let offset = self.local_binding_offsets.entry(self.current_function.clone()).or_insert(0);
@@ -450,10 +445,7 @@ impl CompileContext {
     }
 
     pub fn set_function_parameter_map_value_types(&mut self, name: &str, index: usize, types: Option<MapValueTypes>) {
-        let entry = self
-            .function_parameter_map_value_types
-            .entry(name.to_string())
-            .or_insert_with(Vec::new);
+        let entry = self.function_parameter_map_value_types.entry(name.to_string()).or_insert_with(Vec::new);
         if entry.len() <= index {
             entry.resize(index + 1, None);
         }
@@ -464,17 +456,11 @@ impl CompileContext {
     }
 
     pub fn get_function_parameter_map_value_types(&self, name: &str, index: usize) -> Option<&MapValueTypes> {
-        self.function_parameter_map_value_types
-            .get(name)
-            .and_then(|values| values.get(index))
-            .and_then(|slot| slot.as_ref())
+        self.function_parameter_map_value_types.get(name).and_then(|values| values.get(index)).and_then(|slot| slot.as_ref())
     }
 
     pub fn set_function_parameter_set_element_kind(&mut self, name: &str, index: usize, kind: Option<ValueKind>) {
-        let entry = self
-            .function_parameter_set_element_kinds
-            .entry(name.to_string())
-            .or_insert_with(Vec::new);
+        let entry = self.function_parameter_set_element_kinds.entry(name.to_string()).or_insert_with(Vec::new);
         if entry.len() <= index {
             entry.resize(index + 1, None);
         }
@@ -493,10 +479,7 @@ impl CompileContext {
     }
 
     pub fn set_function_parameter_vector_element_kind(&mut self, name: &str, index: usize, kind: Option<ValueKind>) {
-        let entry = self
-            .function_parameter_vector_element_kinds
-            .entry(name.to_string())
-            .or_insert_with(Vec::new);
+        let entry = self.function_parameter_vector_element_kinds.entry(name.to_string()).or_insert_with(Vec::new);
         if entry.len() <= index {
             entry.resize(index + 1, None);
         }
@@ -535,9 +518,9 @@ impl CompileContext {
 
     /// Remove multiple variables (for cleaning up let bindings)
     pub fn remove_variables(&mut self, names: &[String]) {
-        for name in names {
+        names.iter().for_each(|name| {
             self.remove_variable(name);
-        }
+        });
     }
 
     /// Allocate an anonymous temporary slot.
@@ -571,14 +554,7 @@ impl CompileContext {
         }
 
         if self.free_slots.len() >= count {
-            let mut popped = Vec::with_capacity(count);
-            for _ in 0..count {
-                if let Some(slot) = self.free_slots.pop() {
-                    popped.push(slot);
-                } else {
-                    break;
-                }
-            }
+            let popped: Vec<usize> = (0..count).filter_map(|_| self.free_slots.pop()).collect();
 
             if popped.len() == count {
                 let mut sorted = popped.clone();
@@ -589,14 +565,10 @@ impl CompileContext {
                 }
 
                 // Not contiguous – restore the slots for future reuse.
-                for slot in popped.into_iter().rev() {
-                    self.free_slots.push(slot);
-                }
+                popped.into_iter().rev().for_each(|slot| self.free_slots.push(slot));
             } else {
                 // Ran out of free slots; restore any we popped.
-                for slot in popped.into_iter().rev() {
-                    self.free_slots.push(slot);
-                }
+                popped.into_iter().rev().for_each(|slot| self.free_slots.push(slot));
             }
         }
 
@@ -785,9 +757,7 @@ mod tests {
         context.set_type_inference(summary);
         context.hydrate_from_inference();
 
-        let metadata = context
-            .get_function_parameter_map_value_types("foo", 0)
-            .expect("expected map metadata");
+        let metadata = context.get_function_parameter_map_value_types("foo", 0).expect("expected map metadata");
         assert_eq!(metadata.get(&MapKeyLiteral::String("a".to_string())), Some(&ValueKind::String));
     }
 

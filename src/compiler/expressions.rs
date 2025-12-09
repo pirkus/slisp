@@ -1,19 +1,8 @@
-use super::{
-    builtins::runtime_free_for_kind,
-    extend_with_offset,
-    CompileContext,
-    CompileError,
-    CompileResult,
-    HeapOwnership,
-    RetainedSlot,
-    ValueKind,
-};
+use super::{extend_with_offset, slots::SlotTracker, CompileContext, CompileError, CompileResult, HeapOwnership, RetainedSlot, ValueKind};
 /// Expression compilation - arithmetic, comparisons, conditionals, logical operations
 use crate::ast::{Node, Primitive};
 use crate::compiler::is_heap_allocated_symbol;
-use crate::compiler::liveness::{apply_liveness_plan, compute_liveness_plan};
 use crate::ir::{IRInstruction, IRProgram};
-use std::collections::{HashMap, HashSet};
 
 /// Compile a primitive value (numbers, strings)
 pub fn compile_primitive(primitive: &Primitive, program: &mut IRProgram) -> Result<CompileResult, CompileError> {
@@ -59,43 +48,21 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
         return Err(CompileError::ArityError(op_name.to_string(), 2, args.len()));
     }
 
-    let mut tracked_slots: HashSet<usize> = HashSet::new();
-    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
-    let mut left_slot: Option<usize> = None;
-    let mut right_slot: Option<usize> = None;
-    let mut temp_slots = Vec::new();
+    let mut tracker = SlotTracker::new();
 
     let mut left_result = crate::compiler::compile_node(&args[0], context, program)?;
     let mut instructions = std::mem::take(&mut left_result.instructions);
-    let left_ownership = left_result.heap_ownership;
     let mut left_kind = left_result.kind;
 
-    if left_ownership == HeapOwnership::Owned {
-        let slot = context.allocate_temp_slot();
-        instructions.push(IRInstruction::StoreLocal(slot));
-        instructions.push(IRInstruction::LoadLocal(slot));
-        tracked_slots.insert(slot);
-        slot_kinds.insert(slot, ValueKind::Any);
-        temp_slots.push(slot);
-        left_slot = Some(slot);
-    }
+    let left_slot = tracker.track_if_owned(&mut instructions, context, left_result.heap_ownership, ValueKind::Any);
 
     let mut right_result = crate::compiler::compile_node(&args[1], context, program)?;
-    let right_ownership = right_result.heap_ownership;
     let mut right_kind = right_result.kind;
 
     let right_instructions = std::mem::take(&mut right_result.instructions);
     extend_with_offset(&mut instructions, right_instructions);
 
-    if right_ownership == HeapOwnership::Owned {
-        let slot = context.allocate_temp_slot();
-        instructions.push(IRInstruction::StoreLocal(slot));
-        instructions.push(IRInstruction::LoadLocal(slot));
-        tracked_slots.insert(slot);
-        slot_kinds.insert(slot, ValueKind::Any);
-        temp_slots.push(slot);
-        right_slot = Some(slot);
-    }
+    let right_slot = tracker.track_if_owned(&mut instructions, context, right_result.heap_ownership, ValueKind::Any);
 
     if left_kind == ValueKind::Any {
         left_kind = resolve_operand_kind(&args[0], left_kind, context);
@@ -105,10 +72,10 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
     }
 
     if let Some(slot) = left_slot {
-        slot_kinds.insert(slot, left_kind);
+        tracker.set_slot_kind(slot, left_kind);
     }
     if let Some(slot) = right_slot {
-        slot_kinds.insert(slot, right_kind);
+        tracker.set_slot_kind(slot, right_kind);
     }
 
     let string_equality =
@@ -123,27 +90,9 @@ pub fn compile_comparison_op(args: &[Node], context: &mut CompileContext, progra
     left_result.free_retained_slots(&mut instructions, context);
     right_result.free_retained_slots(&mut instructions, context);
 
-    if !tracked_slots.is_empty() {
-        let plan = compute_liveness_plan(&instructions, &tracked_slots);
-        instructions = apply_liveness_plan(instructions, &plan, |insts, slot| {
-            let kind = slot_kinds.get(&slot).copied().unwrap_or(ValueKind::Any);
-            emit_free_for_slot(insts, slot, kind);
-        });
-    }
-
-    for slot in temp_slots {
-        context.release_temp_slot(slot);
-    }
+    instructions = tracker.apply_liveness_and_release(instructions, context);
 
     Ok(CompileResult::with_instructions(instructions, ValueKind::Boolean))
-}
-
-fn emit_free_for_slot(instructions: &mut Vec<IRInstruction>, slot: usize, kind: ValueKind) {
-    if let Some(runtime) = runtime_free_for_kind(kind) {
-        instructions.push(IRInstruction::FreeLocalWithRuntime(slot, runtime.to_string()));
-    } else {
-        instructions.push(IRInstruction::FreeLocal(slot));
-    }
 }
 
 fn resolve_operand_kind(node: &Node, fallback: ValueKind, context: &CompileContext) -> ValueKind {

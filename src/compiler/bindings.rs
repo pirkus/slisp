@@ -1,12 +1,6 @@
 use super::{
     builtins::{emit_free_for_slot, free_retained_dependents, free_retained_slot},
-    extend_with_offset,
-    CompileContext,
-    CompileError,
-    CompileResult,
-    HeapOwnership,
-    RetainedSlot,
-    ValueKind,
+    extend_with_offset, CompileContext, CompileError, CompileResult, HeapOwnership, RetainedSlot, ValueKind,
 };
 /// Variable binding compilation (let expressions)
 use crate::ast::Node;
@@ -132,9 +126,7 @@ fn collect_bindings(bindings: &[Node], context: &mut CompileContext, program: &m
         let mut inferred_map_value_types = None;
         let mut inferred_set_element_kind = None;
         let mut inferred_vector_element_kind = None;
-        if let Some((inferred_kind, inferred_owner, inferred_map_types, set_element_kind, vector_element_kind)) =
-            context.consume_local_binding_metadata(var_name)
-        {
+        if let Some((inferred_kind, inferred_owner, inferred_map_types, set_element_kind, vector_element_kind)) = context.consume_local_binding_metadata(var_name) {
             if inferred_kind != ValueKind::Any {
                 value_kind = inferred_kind;
             }
