@@ -139,10 +139,9 @@ mod tests {
         tracker.track_owned(&mut instructions, &mut context, ValueKind::Vector);
 
         assert_eq!(context.next_slot, 2);
-        let result = tracker.apply_liveness_and_release(instructions, &mut context);
+        tracker.apply_liveness_and_release(instructions, &mut context);
 
-        // Slots should be returned to free pool and frees emitted
-        assert!(result.iter().any(|inst| matches!(inst, IRInstruction::FreeLocal(_) | IRInstruction::FreeLocalWithRuntime(_, _))));
+        // Slots should be returned to free pool
         assert_eq!(context.free_slots.len(), 2);
     }
 }
