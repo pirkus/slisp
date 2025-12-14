@@ -85,6 +85,12 @@ The roadmap is organised as multi-phase efforts. Completed phases are retained f
   - ⏳ Teach the compiler’s liveness planner to emit reference bumps/drops alongside current `Allocate`/`FreeLocal` logic and ensure borrow-on-argument semantics still hold.
   - ⏳ Extend telemetry workloads and add focused `tests/programs/` fixtures that stress shared ownership, double-free protection, and long-lived captures.
   - ⏳ Benchmark representative programs to gauge ref counting overhead, adjust heuristics, and document guidance in `README.md` or follow-up tickets.
+- **6.7 Numeric semantics parity (planned):**
+  - **6.7.1 Numeric model:** Align number handling with Clojure/Lojure conventions: default ints stay fast 64-bit until overflow promotes to bigints; decimals are IEEE-754 doubles unless suffixed with `M` for `BigDecimal`; integer division yields ratios when not evenly divisible; equality/ordering follows the numeric tower.
+  - **6.7.2 Reader support:** Parse `M`-suffixed decimals, ratio literals (e.g., `1/3`), and optional `N`/`M` suffixes on ints/decimals while keeping existing syntax valid.
+  - **6.7.3 Runtime surface:** Add tags/layouts and helpers for `BigDecimal` and ratio values, plus coercion rules across ints, doubles, bigints, and big decimals; mirror the conversions in the interpreter for parity.
+  - **6.7.4 Compiler lowering:** Emit promotions/ratio operations with ownership-aware lowering so liveness and borrow-on-pass rules hold; ensure mixed-type arithmetic respects the numeric tower.
+  - **6.7.5 Coverage & docs:** Add regression programs under `tests/programs/numbers/` for promotion, ratio math, equality, and interactions with helpers (`str`, map/set keys, etc.), and document the numeric model in README/CLI help.
 
 ### Phase 7 – I/O and System Interaction 🗂️
 - **7.1 Terminal I/O:** `print`/`println`, stderr helpers, and simple formatting.
