@@ -21,6 +21,7 @@ cargo run          # Start the default interpreter REPL
 - `slisp --compile [--keep-obj] -o <output> <file.slisp>` – Compile a `.slisp`/`.lisp` file that defines `(-main ...)` into a native executable; pass `--keep-obj` to retain the intermediate object file for inspection.
 - `slisp --compile --trace-alloc` – Emit allocator telemetry logs in the compiler REPL (build with `--features allocator-telemetry`).
 - `slisp --compile --trace-alloc [--keep-obj] -o <output> <file.slisp>` – Compile to an executable that prints allocator telemetry to stdout on exit.
+- `slisp --compile --dump-ir <file.slisp>` – Print the compiled IR to stdout instead of linking; useful for debugging without producing a binary.
 
 ## Supported Functionality
 

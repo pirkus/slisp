@@ -20,6 +20,7 @@ pub use context::CompileContext;
 pub use types::{CompileResult, HeapOwnership, MapKeyLiteral, MapValueTypes, RetainedSlot, ValueKind};
 
 use crate::ast::Node;
+use crate::compiler::liveness::{apply_liveness_plan, compute_liveness_plan};
 use crate::ir::{FunctionInfo, IRInstruction, IRProgram};
 use inference::run_type_inference;
 
@@ -139,6 +140,7 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
     }
 
     if emitted_toplevel_code && program.instructions.last() != Some(&IRInstruction::Return) {
+        insert_toplevel_liveness(&mut program.instructions, &context);
         program.add_instruction(IRInstruction::Return);
     }
 
@@ -167,6 +169,35 @@ pub fn compile_program(expressions: &[Node]) -> Result<IRProgram, CompileError> 
     }
 
     Ok(program)
+}
+
+fn insert_toplevel_liveness(instructions: &mut Vec<IRInstruction>, context: &CompileContext) {
+    use std::collections::{HashMap, HashSet};
+
+    if instructions.is_empty() {
+        return;
+    }
+
+    let mut tracked_slots: HashSet<usize> = HashSet::new();
+    let mut slot_kinds: HashMap<usize, ValueKind> = HashMap::new();
+
+    for (name, slot) in &context.variables {
+        let kind = context.get_variable_type(name).unwrap_or(ValueKind::Any);
+        if kind.is_heap_kind() || context.is_heap_allocated(name) {
+            tracked_slots.insert(*slot);
+            slot_kinds.insert(*slot, kind);
+        }
+    }
+
+    if tracked_slots.is_empty() {
+        return;
+    }
+
+    let plan = compute_liveness_plan(instructions, &tracked_slots);
+    *instructions = apply_liveness_plan(std::mem::take(instructions), &plan, |insts, slot| {
+        let kind = slot_kinds.get(&slot).copied().unwrap_or(ValueKind::Any);
+        builtins::emit_free_for_slot(insts, slot, kind);
+    });
 }
 
 fn append_with_offset(program: &mut IRProgram, instructions: Vec<IRInstruction>) {
